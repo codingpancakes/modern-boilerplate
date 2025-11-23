@@ -1,0 +1,9 @@
+{
+  "name": "image-processor",
+  "version": "1.0.0",
+  "description": "Lambda function for dynamic image processing",
+  "main": "index.js",
+  "dependencies": {
+    "sharp": "^0.33.0"
+  }
+}
