@@ -13,11 +13,10 @@ import { handler as workosWebhookHandler } from '../src/node/handlers/webhooks/w
 import { handler as uploadImageHandler } from '../src/node/handlers/media/upload-image';
 import { handler as uploadImageDirectHandler } from '../src/node/handlers/media/upload-image-direct';
 import { handler as listImagesHandler } from '../src/node/handlers/media/list-images';
-import { handler as dailySessionStartedHandler } from '../src/node/handlers/webhooks/daily-session-started';
-import { handler as dailySessionEndedHandler } from '../src/node/handlers/webhooks/daily-session-ended';
-import { handler as dailyParticipantJoinedHandler } from '../src/node/handlers/webhooks/daily-participant-joined';
-import { handler as dailyParticipantLeftHandler } from '../src/node/handlers/webhooks/daily-participant-left';
-import { handler as dailyRecordingReadyHandler } from '../src/node/handlers/webhooks/daily-recording-ready';
+import { handler as usersMeHandler } from '../src/node/handlers/users/me';
+import { handler as usersUpdateHandler } from '../src/node/handlers/users/update';
+import { handler as testApiKeyHandler } from '../src/node/handlers/test/api-key';
+import { handler as testWebhookHandler } from '../src/node/handlers/test/webhook';
 
 // Disable AWS Lambda Powertools tracing in local mode
 process.env._X_AMZN_TRACE_ID = 'Root=1-00000000-000000000000000000000000';
@@ -195,11 +194,10 @@ const handlerMap: Record<string, Function> = {
   '../src/node/handlers/media/upload-image': uploadImageHandler,
   '../src/node/handlers/media/upload-image-direct': uploadImageDirectHandler,
   '../src/node/handlers/media/list-images': listImagesHandler,
-  '../src/node/handlers/webhooks/daily-session-started': dailySessionStartedHandler,
-  '../src/node/handlers/webhooks/daily-session-ended': dailySessionEndedHandler,
-  '../src/node/handlers/webhooks/daily-participant-joined': dailyParticipantJoinedHandler,
-  '../src/node/handlers/webhooks/daily-participant-left': dailyParticipantLeftHandler,
-  '../src/node/handlers/webhooks/daily-recording-ready': dailyRecordingReadyHandler,
+  '../src/node/handlers/users/me': usersMeHandler,
+  '../src/node/handlers/users/update': usersUpdateHandler,
+  '../src/node/handlers/test/api-key': testApiKeyHandler,
+  '../src/node/handlers/test/webhook': testWebhookHandler,
 };
 
 async function loadHandler(path: string) {
@@ -256,17 +254,18 @@ function wrapHandler(handlerPath: string) {
 app.get('/v1/health', wrapHandler('../src/node/handlers/health'));
 app.post('/v1/webhooks/workos', wrapHandler('../src/node/handlers/webhooks/workos'));
 
-// Daily.co webhook endpoints (no auth required - public webhooks)
-app.post('/v1/webhooks/daily/session-started', wrapHandler('../src/node/handlers/webhooks/daily-session-started'));
-app.post('/v1/webhooks/daily/session-ended', wrapHandler('../src/node/handlers/webhooks/daily-session-ended'));
-app.post('/v1/webhooks/daily/participant-joined', wrapHandler('../src/node/handlers/webhooks/daily-participant-joined'));
-app.post('/v1/webhooks/daily/participant-left', wrapHandler('../src/node/handlers/webhooks/daily-participant-left'));
-app.post('/v1/webhooks/daily/recording-ready', wrapHandler('../src/node/handlers/webhooks/daily-recording-ready'));
-
 // Media endpoints (protected)
 app.post('/v1/media/upload-image', requireAuth, wrapHandler('../src/node/handlers/media/upload-image'));
 app.post('/v1/media/upload-image-direct', requireAuth, wrapHandler('../src/node/handlers/media/upload-image-direct'));
 app.get('/v1/media/images', requireAuth, wrapHandler('../src/node/handlers/media/list-images'));
+
+// User endpoints (protected)
+app.get('/v1/users/me', requireAuth, wrapHandler('../src/node/handlers/users/me'));
+app.patch('/v1/users/me', requireAuth, wrapHandler('../src/node/handlers/users/update'));
+
+// Test endpoints (various middleware)
+app.get('/v1/test/api-key', wrapHandler('../src/node/handlers/test/api-key'));
+app.post('/v1/test/webhook', wrapHandler('../src/node/handlers/test/webhook'));
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Local API server running on http://localhost:${PORT}`);

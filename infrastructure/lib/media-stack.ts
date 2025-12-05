@@ -11,7 +11,7 @@ import { Construct } from 'constructs';
 
 export interface MediaStackProps extends cdk.StackProps {
   stage: string;
-  domainName: string; // e.g., 'railbranch.services'
+  domainName: string; // e.g., 'postway.services'
   hostedZoneId?: string; // Route53 hosted zone ID
   imagesCertArn?: string; // Existing ACM certificate ARN for CloudFront
 }
@@ -24,7 +24,7 @@ export class MediaStack extends cdk.Stack {
     super(scope, id, props);
 
     const { stage, domainName, hostedZoneId, imagesCertArn } = props;
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
     const bucketName = process.env.IMAGES_BUCKET || 
       (stage === 'production' 
         ? `${projectName}-images-depot` 
@@ -56,8 +56,8 @@ export class MediaStack extends cdk.Stack {
               : [
                   'http://localhost:*',
                   'http://127.0.0.1:*',
-                  'https://*.railbranch.ai',
-                  'https://*.railbranch.com'
+                  'https://*.postway.ai',
+                  'https://*.postway.co'
                 ],
             exposedHeaders: ['ETag', 'x-amz-server-side-encryption', 'x-amz-request-id'],
             maxAge: 3000,

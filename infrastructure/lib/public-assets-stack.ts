@@ -11,7 +11,7 @@ import { Construct } from 'constructs';
 
 export interface PublicAssetsStackProps extends cdk.StackProps {
   stage: string;
-  domainName: string; // e.g., 'railbranch.ai'
+  domainName: string; // e.g., 'postway.ai'
   hostedZoneId?: string; // Route53 hosted zone ID
   assetsCertArn?: string; // Existing ACM certificate ARN for CloudFront
 }
@@ -25,7 +25,7 @@ export class PublicAssetsStack extends cdk.Stack {
     super(scope, id, props);
 
     const { stage, domainName, hostedZoneId, assetsCertArn } = props;
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
     
     // Create bucket name for public assets
     const bucketName = stage === 'production' 
@@ -258,7 +258,7 @@ export class PublicAssetsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ExampleAssetUrls', {
       value: JSON.stringify({
         emailTemplate: `https://${this.assetsDomain}/emails/templates/welcome.html`,
-        logo: `https://${this.assetsDomain}/static/logos/railbranch-logo.png`,
+        logo: `https://${this.assetsDomain}/static/logos/postway-logo.png`,
         css: `https://${this.assetsDomain}/static/css/styles.css`,
         marketingImage: `https://${this.assetsDomain}/marketing/images/hero-banner.jpg`,
       }),

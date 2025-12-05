@@ -1,10 +1,15 @@
-import { neon } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-http';
+import { neon, NeonQueryFunction } from '@neondatabase/serverless';
+import { drizzle, NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import * as schema from '../db/schema';
 
-let dbInstance: ReturnType<typeof drizzle> | null = null;
+type DbInstance = NeonHttpDatabase<typeof schema>;
+
+let dbInstance: DbInstance | null = null;
 let dbUrl: string | null = null;
+let connectionAttempts = 0;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 100;
 
 async function getDbUrl(): Promise<string> {
   // Return cached URL if available
@@ -40,13 +45,67 @@ async function getDbUrl(): Promise<string> {
   throw new Error('DATABASE_URL or DB_SECRET_ARN must be configured');
 }
 
-export async function getDb() {
+/**
+ * Get database instance with connection pooling and retry logic
+ * 
+ * @throws Error if connection fails after retries
+ * @returns Drizzle database instance
+ */
+export async function getDb(): Promise<DbInstance> {
   if (!dbInstance) {
     const url = await getDbUrl();
-    const sql = neon(url);
-    dbInstance = drizzle(sql as any, { schema });
+    dbInstance = await createDbConnection(url);
   }
   return dbInstance;
+}
+
+/**
+ * Create database connection with optimized settings for serverless
+ */
+async function createDbConnection(url: string, retryCount = 0): Promise<DbInstance> {
+  try {
+    const sql: NeonQueryFunction<boolean, boolean> = neon(url, {
+      fetchOptions: {
+        cache: 'no-store', // Disable caching for fresh data
+      },
+      // Optimize for serverless - query via fetch for better cold starts
+      fullResults: false,
+    });
+    
+    const db = drizzle(sql, { 
+      schema,
+      logger: process.env.NODE_ENV === 'development',
+    });
+    
+    connectionAttempts = 0; // Reset on success
+    return db;
+  } catch (error) {
+    connectionAttempts++;
+    
+    if (retryCount < MAX_RETRIES) {
+      // Exponential backoff
+      const delay = RETRY_DELAY_MS * Math.pow(2, retryCount);
+      console.warn(`Database connection attempt ${retryCount + 1} failed, retrying in ${delay}ms...`, error);
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return createDbConnection(url, retryCount + 1);
+    }
+    
+    console.error('Database connection failed after retries', { 
+      attempts: connectionAttempts,
+      error 
+    });
+    throw new Error('Failed to connect to database after multiple attempts');
+  }
+}
+
+/**
+ * Reset database connection (useful for testing or connection issues)
+ */
+export function resetDbConnection(): void {
+  dbInstance = null;
+  dbUrl = null;
+  connectionAttempts = 0;
 }
 
 export { schema };

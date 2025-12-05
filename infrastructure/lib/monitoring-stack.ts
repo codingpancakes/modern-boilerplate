@@ -13,7 +13,7 @@ export class MonitoringStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
 
     // SNS topic for alarms
     const alarmTopic = new sns.Topic(this, 'AlarmTopic', {

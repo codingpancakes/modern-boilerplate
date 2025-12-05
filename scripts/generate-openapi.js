@@ -6,14 +6,14 @@ const { glob } = require('glob');
 const openApiSpec = {
   openapi: '3.0.0',
   info: {
-    title: 'RailBranch API',
+    title: 'postway API',
     version: '1.0.0',
     description: 'Auto-generated API documentation'
   },
   servers: [
     { url: 'http://localhost:3000/v1', description: 'Local' },
-    { url: 'https://api-staging.railbranch.com/v1', description: 'Staging' },
-    { url: 'https://api.railbranch.com/v1', description: 'Production' }
+    { url: 'https://api-staging.postway.services/v1', description: 'Staging' },
+    { url: 'https://api.postway.services/v1', description: 'Production' }
   ],
   paths: {},
   components: {

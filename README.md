@@ -1,6 +1,13 @@
-# Serverless Backend (CDK + WorkOS + Neon)
+# RailBranch Backend
 
-Production-grade HTTP API on API Gateway v2 with Lambda (Node.js 20), WorkOS OIDC JWT auth, and Neon Postgres via Drizzle ORM.
+> Production-grade serverless REST API built with AWS Lambda, TypeScript, and WorkOS authentication.
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20.x-green)](https://nodejs.org/)
+[![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-orange)](https://aws.amazon.com/lambda/)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](./tests/)
+
+**Tech Stack:** AWS Lambda + API Gateway v2 + PostgreSQL (Neon) + Drizzle ORM + WorkOS Auth + TypeScript
 
 ## Architecture
 
@@ -10,18 +17,78 @@ Production-grade HTTP API on API Gateway v2 with Lambda (Node.js 20), WorkOS OID
 - **Secrets**: AWS Secrets Manager (WorkOS + DB)
 - **Observability**: CloudWatch + AWS X-Ray + Lambda Powertools
 
-## Project Structure
+## 📚 Documentation
+
+### For Developers
+- **[Getting Started](#quick-start)** - Set up your local environment
+- **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
+- **[Creating Handlers](./.ai/TEMPLATES.md)** - Step-by-step guide
+- **[Code Patterns](./.ai/PATTERNS.md)** - Standards and best practices
+- **[Testing Guide](./tests/README.md)** - How to test
+
+### For AI Assistants
+- **[AI Context](./.ai/CONTEXT.md)** - Project overview for AI
+- **[AI Patterns](./.ai/PATTERNS.md)** - Code patterns to follow
+- **[AI Templates](./.ai/TEMPLATES.md)** - How to use templates
+
+### Architecture
+- **[Architecture Guide](./docs/architecture/README.md)** - Complete architecture overview
+- **[API Documentation](./docs/api/)** - OpenAPI/Swagger specification
+
+---
+
+## 📁 Project Structure
 
 ```
-backend/
-├─ infrastructure/                # CDK stacks
-├─ src/node/
-│  ├─ authorizers/                # WorkOS JWT authorizer
-│  ├─ handlers/                   # API handlers
-│  ├─ lib/                        # Shared libs (auth, db, errors)
-│  └─ db/                         # Schema & migrations
-├─ scripts/                       # migrate/seed/deploy scripts
-└─ test/                          # Local server (parity with Lambda)
+RailBranchBackend/
+├── .ai/                      # 🤖 AI assistant guides
+│   ├── PATTERNS.md          # Code patterns
+│   ├── TEMPLATES.md         # Template usage
+│   └── CONTEXT.md           # Project context
+│
+├── templates/               # 📝 Handler templates
+│   ├── user-scoped.ts.template
+│   ├── org-scoped.ts.template
+│   ├── public.ts.template
+│   └── README.md
+│
+├── src/node/
+│   ├── handlers/           # 🎯 API endpoint handlers
+│   │   ├── users/         # User management
+│   │   ├── media/         # Image uploads
+│   │   ├── webhooks/      # Webhook handlers
+│   │   ├── test/          # Test endpoints
+│   │   └── utils/         # Utility handlers
+│   ├── lib/               # 🔧 Shared libraries
+│   │   ├── validation/    # Domain-organized Zod schemas
+│   │   │   ├── users.ts
+│   │   │   ├── media.ts
+│   │   │   ├── organizations.ts
+│   │   │   ├── webhooks.ts
+│   │   │   ├── common.ts
+│   │   │   └── index.ts
+│   │   ├── response.ts    # Response helpers
+│   │   ├── update-helper.ts # Update helpers
+│   │   ├── middleware.ts  # Auth & error handling
+│   │   ├── cors.ts        # CORS handling
+│   │   ├── db.ts          # Database connection
+│   │   └── errors.ts      # Error helpers
+│   └── db/
+│       └── schema.ts      # Drizzle schema
+│
+├── tests/                  # ✅ Test scripts
+│   ├── integration/       # Integration tests
+│   └── README.md          # Testing guide
+│
+├── docs/                   # 📖 Documentation
+│   ├── api/               # API docs (OpenAPI)
+│   ├── architecture/      # Architecture docs
+│   └── guides/            # How-to guides
+│
+├── infrastructure/         # ☁️ AWS CDK stacks
+├── local-dev/             # 🔨 Local development server
+├── scripts/               # 🚀 Build & deploy scripts
+└── CONTRIBUTING.md        # Contributing guide
 ```
 
 ## Environment
@@ -33,11 +100,11 @@ Required:
 - `STAGE=staging`
 - `WORKOS_CLIENT_ID=...`
 - `DATABASE_URL=postgresql://...` (Neon)
-- `CORS_ORIGIN=https://*.railbranch.com`
-- `API_DOMAIN=api-staging.railbranch.services`
+- `CORS_ORIGIN=https://*.postway.co`
+- `API_DOMAIN=api-staging.postway.services`
 
 Custom domain options:
-- `HOSTED_ZONE_NAME=railbranch.services` (Route 53 managed)
+- `HOSTED_ZONE_NAME=postway.services` (Route 53 managed)
 - `API_CERT_ARN=arn:aws:acm:us-east-1:...` (use existing ACM cert; omit if using HOSTED_ZONE_NAME)
 
 Notes:
@@ -53,30 +120,56 @@ Notes:
 - `SKIP_DB=false` (set true for auth-only testing)
 - `PORT=3000`
 
-## Local Development (parity with Lambda)
+## 🚀 Quick Start
 
-Local server uses the real Lambda handlers and validates WorkOS tokens against JWKS (same as authorizer).
+### Prerequisites
+- Node.js 20.x or higher
+- pnpm 8.x or higher
+- PostgreSQL 14.x or higher
+- AWS CLI configured
+- WorkOS account
+
+### Installation
 
 ```bash
+# 1. Install dependencies
 pnpm install
 
-# Start local Postgres
+# 2. Set up environment
+cp .env.local.example .env.local
+# Edit .env.local with your credentials
+
+# 3. Start local database
 pnpm local:db
 
-# Run migrations
-pnpm local:migrate
+# 4. Run migrations
+pnpm migrate
 
-# Start local API (http://localhost:3000)
-pnpm local:server
+# 5. Start development server
+pnpm dev
+```
 
-# Health
-curl http://localhost:3000/v1/health
+### Testing
 
-# With a real WorkOS access token
+```bash
+# Get JWT token from WorkOS (see docs/guides/AUTHENTICATION.md)
+
+# Run integration tests
+./tests/integration/test-handlers.sh "YOUR_JWT_TOKEN"
+
+# Test specific endpoint
 curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/v1/users/me
 ```
 
-Tip: obtain a token from your frontend using WorkOS AuthKit or WorkOS dashboard test tools.
+### Creating Your First Handler
+
+```bash
+# 1. Copy template (note: .ts.template → .ts)
+cp templates/user-scoped.ts.template src/node/handlers/resource/action.ts
+
+# 2. Follow the guide
+# See .ai/TEMPLATES.md for detailed instructions
+```
 
 ## Deployment (staging)
 
@@ -94,72 +187,28 @@ pnpm deploy:staging
 - Route 53: created automatically when `HOSTED_ZONE_NAME` is set
 - External DNS: create a CNAME from `API_DOMAIN` to `ApiCustomDomainRegionalDomainName`
 
-## Function Creation Standards
+## 🎯 Key Features
 
-### Handler Pattern
-All handlers MUST follow this exact pattern:
+### ✅ Production-Ready
+- **Type-Safe** - Full TypeScript with Zod validation
+- **Tested** - Comprehensive integration tests
+- **Documented** - OpenAPI/Swagger specs
+- **Monitored** - CloudWatch + X-Ray tracing
+- **Secure** - JWT authentication + input validation
 
-```ts
-// src/node/handlers/<feature>/<action>.ts
-import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
-import { Logger } from '@aws-lambda-powertools/logger';
-import { Tracer } from '@aws-lambda-powertools/tracer';
-import { getClaims, getOrgId } from '../../lib/auth';
-import { getDb } from '../../lib/db';
-import { formatError } from '../../lib/errors';
+### 🚀 Developer Experience
+- **Templates** - Quick-start templates for new handlers
+- **Patterns** - Consistent code patterns
+- **Local Dev** - Full Lambda parity locally
+- **Hot Reload** - Fast development cycle
+- **AI-Friendly** - Guides for AI code assistants
 
-const logger = new Logger({ serviceName: 'feature-action' });
-const tracer = new Tracer({ serviceName: 'feature-action' });
-
-export const handler: APIGatewayProxyHandlerV2 = async (event, context) => {
-  const requestId = context.awsRequestId;
-  logger.addContext(context);
-
-  try {
-    const claims = getClaims(event);
-    const orgId = getOrgId(event); // if needed
-    
-    // Handler logic here
-    
-    return {
-      statusCode: 200,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify({
-        success: true,
-        data: { /* response data */ }
-      })
-    };
-  } catch (error) {
-    logger.error('Error in handler', { error });
-    return formatError(error, requestId);
-  }
-};
-```
-
-### Required Steps for New Endpoints
-
-1. **Create Handler**: Follow exact pattern above in `src/node/handlers/<feature>/<action>.ts`
-2. **Add to Local Server**: Update `test/local-server.ts`:
-   - Import: `import { handler as featureActionHandler } from '../src/node/handlers/feature/action'`
-   - Add to `handlerMap`: `'../src/node/handlers/feature/action': featureActionHandler`
-3. **Add to CDK**: Update `infrastructure/lib/api-stack.ts`:
-   - Create handler: `const featureActionHandler = createHandler('FeatureActionHandler', 'handlers/feature/action.ts')`
-   - Add route: `this.httpApi.addRoutes({ path: '/v1/feature', methods: [...], integration: ..., authorizer: customAuthorizer })`
-4. **Update OpenAPI**: Add endpoint documentation to `docs/openapi.yaml`
-5. **Test**: `pnpm local:server` then `pnpm deploy:staging`
-
-### Response Format Standards
-- **Success**: `{success: true, data: {...}}`
-- **Error**: `{success: false, error: "message", details: {...}}`
-- **Headers**: Always include `Content-Type: application/json` and `Access-Control-Allow-Origin: *`
-
-### Special Cases
-- **Multiple handlers per file**: Use named exports like `organizations/analytics.ts`
-- **Admin endpoints**: Require operator-level authorization
-- **Public endpoints**: Omit `customAuthorizer` in CDK routes
+### 🏗️ Architecture
+- **Serverless** - AWS Lambda + API Gateway
+- **Database** - PostgreSQL (Neon) + Drizzle ORM
+- **Auth** - WorkOS JWT authentication
+- **Storage** - S3 + CloudFront CDN
+- **IaC** - AWS CDK for infrastructure
 
 ## WorkOS Auth (JWT)
 
@@ -262,10 +311,56 @@ All responses include:
 - Unused local shim (`test/local-handlers.ts`) has been replaced by real handlers. You can remove it.
 - Local docs are consolidated here to avoid drift.
 
-## Checklist
+## 📊 Current Status
 
-- ✅ GET /v1/health → 200
-- ✅ GET /v1/users/me with valid WorkOS JWT → 200
-- ✅ Custom domain resolves and serves `/v1/health`
-- ✅ Migrations succeed on Neon
-- ✅ Structured logs + X-Ray traces
+### Implemented
+- ✅ User authentication (WorkOS)
+- ✅ User profile management
+- ✅ Image upload (S3 + CloudFront)
+- ✅ Health check endpoint
+- ✅ Middleware variants (auth, API key, webhook)
+- ✅ Comprehensive validation (Zod)
+- ✅ Structured logging (Lambda Powertools)
+- ✅ Error handling
+- ✅ Integration tests
+
+### In Progress
+- 🚧 Journey management
+- 🚧 Campaign management
+- 🚧 Contact management
+
+### Planned
+- 📋 Analytics
+- 📋 Webhooks
+- 📋 Email integration
+- 📋 SMS integration
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md) for details.
+
+### Quick Links
+- [Code Patterns](./.ai/PATTERNS.md)
+- [Template Usage](./.ai/TEMPLATES.md)
+- [Testing Guide](./tests/README.md)
+
+---
+
+## 📝 License
+
+MIT License - see LICENSE file for details
+
+---
+
+## 🆘 Need Help?
+
+- **Documentation:** Check `.ai/` and `docs/` directories
+- **Examples:** Look at existing handlers in `src/node/handlers/`
+- **Issues:** Create an issue on GitHub
+- **Questions:** Ask in team chat
+
+---
+
+**Built with ❤️ using AWS Lambda, TypeScript, and modern best practices.**

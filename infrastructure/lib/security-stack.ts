@@ -14,7 +14,7 @@ export class SecurityStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: SecurityStackProps) {
     super(scope, id, props);
 
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
 
     // WorkOS credentials secret
     this.workosSecret = new secretsmanager.Secret(this, 'WorkOSSecret', {

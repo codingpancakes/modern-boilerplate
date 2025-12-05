@@ -9,6 +9,78 @@ export interface CustomHeaderConfig {
 }
 
 /**
+ * Validate header value against config
+ * @throws BadRequest if header is missing or invalid
+ */
+function validateHeader(
+  event: APIGatewayProxyEventV2,
+  config: CustomHeaderConfig
+): void {
+  // Check for header (case-insensitive)
+  const headerValue = event.headers[config.headerName] || 
+                     event.headers[config.headerName.toLowerCase()] ||
+                     event.headers[config.headerName.toUpperCase()];
+  
+  if (!headerValue) {
+    throw Errors.BadRequest(`Missing required header: ${config.headerName}`);
+  }
+  
+  // Validate header value
+  let isValid = false;
+  if (config.expectedValue) {
+    isValid = headerValue === config.expectedValue;
+  } else if (config.validateFn) {
+    isValid = config.validateFn(headerValue);
+  } else {
+    isValid = true;
+  }
+  
+  if (!isValid) {
+    throw Errors.BadRequest(`Invalid ${config.headerName} header value`);
+  }
+}
+
+interface HandlerResult {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body: string;
+}
+
+function isHandlerResult(value: unknown): value is HandlerResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'statusCode' in value &&
+    'body' in value
+  );
+}
+
+/**
+ * Wrap response with CORS headers
+ */
+function wrapResponse(
+  response: HandlerResult | unknown,
+  corsHeaders: Record<string, string>
+): HandlerResult {
+  if (isHandlerResult(response)) {
+    return {
+      statusCode: response.statusCode,
+      headers: {
+        ...(response.headers || {}),
+        ...corsHeaders,
+      },
+      body: response.body,
+    };
+  }
+  
+  return {
+    statusCode: 200,
+    headers: corsHeaders,
+    body: JSON.stringify(response),
+  };
+}
+
+/**
  * Middleware for open endpoints that require a custom header for security
  * Validates a specific header while providing CORS support
  * No JWT authentication required
@@ -26,64 +98,14 @@ export const withCustomHeader = (
     }
     
     try {
-      // Check for required header (case-insensitive)
-      const headerValue = event.headers[config.headerName] || 
-                         event.headers[config.headerName.toLowerCase()] ||
-                         event.headers[config.headerName.toUpperCase()];
-      
-      if (!headerValue) {
-        throw Errors.BadRequest(`Missing required header: ${config.headerName}`);
-      }
-      
-      // Validate header value
-      let isValid = false;
-      
-      if (config.expectedValue) {
-        // Simple string comparison
-        isValid = headerValue === config.expectedValue;
-      } else if (config.validateFn) {
-        // Custom validation function
-        isValid = config.validateFn(headerValue);
-      } else {
-        // Just check that header exists
-        isValid = true;
-      }
-      
-      if (!isValid) {
-        throw Errors.BadRequest(`Invalid ${config.headerName} header value`);
-      }
-      
+      validateHeader(event, config);
       const response = await handlerFn(event, context);
       const corsHeaders = getCorsHeaders(origin);
-      
-      // Ensure response has headers
-      if (typeof response === 'object' && response !== null) {
-        return {
-          ...response,
-          headers: {
-            ...(response.headers || {}),
-            ...corsHeaders,
-          },
-        };
-      }
-      
-      // For simple responses
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify(response),
-      };
-    } catch (error: any) {
+      return wrapResponse(response, corsHeaders);
+    } catch (error: unknown) {
       const corsHeaders = getCorsHeaders(origin);
       const errorResponse = formatError(error, context.awsRequestId);
-      
-      return {
-        ...errorResponse,
-        headers: {
-          ...(errorResponse.headers || {}),
-          ...corsHeaders,
-        },
-      };
+      return wrapResponse(errorResponse, corsHeaders);
     }
   };
 };
@@ -153,57 +175,14 @@ export const withExternalHeader = (
     }
     
     try {
-      // Same header validation logic
-      const headerValue = event.headers[config.headerName] || 
-                         event.headers[config.headerName.toLowerCase()] ||
-                         event.headers[config.headerName.toUpperCase()];
-      
-      if (!headerValue) {
-        throw Errors.BadRequest(`Missing required header: ${config.headerName}`);
-      }
-      
-      let isValid = false;
-      if (config.expectedValue) {
-        isValid = headerValue === config.expectedValue;
-      } else if (config.validateFn) {
-        isValid = config.validateFn(headerValue);
-      } else {
-        isValid = true;
-      }
-      
-      if (!isValid) {
-        throw Errors.BadRequest(`Invalid ${config.headerName} header value`);
-      }
-      
+      validateHeader(event, config);
       const response = await handlerFn(event, context);
-      const corsHeaders = getExternalCorsHeaders(origin); // Use external CORS
-      
-      if (typeof response === 'object' && response !== null) {
-        return {
-          ...response,
-          headers: {
-            ...(response.headers || {}),
-            ...corsHeaders,
-          },
-        };
-      }
-      
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify(response),
-      };
-    } catch (error: any) {
+      const corsHeaders = getExternalCorsHeaders(origin);
+      return wrapResponse(response, corsHeaders);
+    } catch (error: unknown) {
       const corsHeaders = getExternalCorsHeaders(origin);
       const errorResponse = formatError(error, context.awsRequestId);
-      
-      return {
-        ...errorResponse,
-        headers: {
-          ...(errorResponse.headers || {}),
-          ...corsHeaders,
-        },
-      };
+      return wrapResponse(errorResponse, corsHeaders);
     }
   };
 };
@@ -223,57 +202,14 @@ export const withOpenHeader = (
     }
     
     try {
-      // Same header validation logic
-      const headerValue = event.headers[config.headerName] || 
-                         event.headers[config.headerName.toLowerCase()] ||
-                         event.headers[config.headerName.toUpperCase()];
-      
-      if (!headerValue) {
-        throw Errors.BadRequest(`Missing required header: ${config.headerName}`);
-      }
-      
-      let isValid = false;
-      if (config.expectedValue) {
-        isValid = headerValue === config.expectedValue;
-      } else if (config.validateFn) {
-        isValid = config.validateFn(headerValue);
-      } else {
-        isValid = true;
-      }
-      
-      if (!isValid) {
-        throw Errors.BadRequest(`Invalid ${config.headerName} header value`);
-      }
-      
+      validateHeader(event, config);
       const response = await handlerFn(event, context);
-      const corsHeaders = getOpenCorsHeaders(); // Allow any origin
-      
-      if (typeof response === 'object' && response !== null) {
-        return {
-          ...response,
-          headers: {
-            ...(response.headers || {}),
-            ...corsHeaders,
-          },
-        };
-      }
-      
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify(response),
-      };
-    } catch (error: any) {
+      const corsHeaders = getOpenCorsHeaders();
+      return wrapResponse(response, corsHeaders);
+    } catch (error: unknown) {
       const corsHeaders = getOpenCorsHeaders();
       const errorResponse = formatError(error, context.awsRequestId);
-      
-      return {
-        ...errorResponse,
-        headers: {
-          ...(errorResponse.headers || {}),
-          ...corsHeaders,
-        },
-      };
+      return wrapResponse(errorResponse, corsHeaders);
     }
   };
 };

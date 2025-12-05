@@ -18,6 +18,7 @@ export class ProtectedRoutes {
     bucketName: string
   ) {
     this.setupMediaRoutes(httpApi, routeBuilder, authorizer, bucketName);
+    this.setupMemberRoutes(httpApi, routeBuilder, authorizer);
   }
 
   private setupMediaRoutes(
@@ -70,6 +71,44 @@ export class ProtectedRoutes {
       });
     });
   }
+
+  private setupMemberRoutes(
+    httpApi: apigwv2.HttpApi,
+    routeBuilder: RouteBuilder,
+    authorizer: apigwv2Authorizers.HttpLambdaAuthorizer
+  ) {
+    const memberRoutes = [
+      {
+        name: "Me",
+        path: "me",
+        file: "me.ts",
+        method: apigwv2.HttpMethod.GET,
+      },
+      {
+        name: "UpdateMe",
+        path: "me",
+        file: "update.ts",
+        method: apigwv2.HttpMethod.PATCH,
+      },
+    ];
+
+    memberRoutes.forEach(({ name, path, file, method }) => {
+      const handler = routeBuilder.createHandler({
+        name: `User${name}Handler`,
+        path: `handlers/users/${file}`,
+      });
+
+      httpApi.addRoutes({
+        path: `/v1/users/${path}`,
+        methods: [method],
+        integration: new apigwv2Integrations.HttpLambdaIntegration(
+          `User${name}Integration`,
+          handler
+        ),
+        authorizer, // WorkOS JWT required
+      });
+    });
+  }
 }
 
 // Export handler paths for local testing
@@ -77,4 +116,6 @@ export const PROTECTED_HANDLER_PATHS = {
   mediaUploadImage: "handlers/media/upload-image.ts",
   mediaUploadImageDirect: "handlers/media/upload-image-direct.ts",
   mediaListImages: "handlers/media/list-images.ts",
+  userMe: "handlers/users/me.ts",
+  userUpdateMe: "handlers/users/update.ts",
 };

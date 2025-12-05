@@ -10,7 +10,7 @@ import { PublicAssetsStack } from '../lib/public-assets-stack';
 
 const app = new cdk.App();
 
-const projectName = process.env.PROJECT_NAME || 'railbranch';
+const projectName = process.env.PROJECT_NAME || 'postway';
 const stage = process.env.STAGE || 'dev';
 const stackPrefix = `${projectName}-${stage}`;
 
@@ -42,7 +42,7 @@ const monitoringStack = new MonitoringStack(app, `${stackPrefix}-MonitoringStack
 const mediaStack = new MediaStack(app, `${stackPrefix}-MediaStack`, {
   env,
   stage,
-  domainName: process.env.HOSTED_ZONE_NAME || 'railbranch.services',
+  domainName: process.env.HOSTED_ZONE_NAME || 'postway.services',
   hostedZoneId: process.env.HOSTED_ZONE_ID,
   // imagesCertArn: undefined (CDK will create certificate automatically)
 });
@@ -51,7 +51,7 @@ const mediaStack = new MediaStack(app, `${stackPrefix}-MediaStack`, {
 const publicAssetsStack = new PublicAssetsStack(app, `${stackPrefix}-PublicAssetsStack`, {
   env,
   stage,
-  domainName: process.env.HOSTED_ZONE_NAME || 'railbranch.services',
+  domainName: process.env.HOSTED_ZONE_NAME || 'postway.services',
   hostedZoneId: process.env.HOSTED_ZONE_ID,
   // assetsCertArn: undefined (CDK will create certificate automatically)
 });

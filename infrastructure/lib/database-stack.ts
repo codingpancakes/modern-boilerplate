@@ -67,7 +67,7 @@ export class DatabaseStack extends cdk.Stack {
 
     props.dbSecret.grantRead(migrationRole);
 
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
     const migrationRunner = new lambdaNodejs.NodejsFunction(this, 'MigrationRunner', {
       functionName: `${projectName}-${props.stage}-migration-runner`,
       runtime: lambda.Runtime.NODEJS_20_X,

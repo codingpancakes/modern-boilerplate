@@ -26,9 +26,12 @@ if (!BUCKET_NAME) {
   process.exit(1);
 }
 
+// Set AWS profile in environment for SDK to use
+process.env.AWS_PROFILE = AWS_PROFILE;
+
 const s3Client = new S3Client({ 
   region: AWS_REGION,
-  credentials: undefined // Will use AWS CLI profile from environment
+  // Will automatically use AWS_PROFILE from environment
 });
 
 async function testImageUpload() {

@@ -7,14 +7,14 @@ export class ApiError extends Error {
     public statusCode: number,
     public code: string,
     message: string,
-    public details?: any
+    public details?: unknown
   ) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-export function formatError(error: any, requestId?: string) {
+export function formatError(error: unknown, requestId?: string) {
   const timestamp = new Date().toISOString();
   
   if (error instanceof ApiError) {
@@ -22,7 +22,7 @@ export function formatError(error: any, requestId?: string) {
       statusCode: error.statusCode,
       headers: { 
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
+        // CORS headers added by middleware
       },
       body: JSON.stringify({
         success: false,
@@ -44,7 +44,7 @@ export function formatError(error: any, requestId?: string) {
     statusCode: 500,
     headers: { 
       'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
+      // CORS headers added by middleware
     },
     body: JSON.stringify({
       success: false,
@@ -63,9 +63,9 @@ export const Errors = {
   Unauthorized: () => new ApiError(401, 'UNAUTHORIZED', 'Authentication required'),
   Forbidden: () => new ApiError(403, 'FORBIDDEN', 'Access denied'),
   NotFound: (resource: string) => new ApiError(404, 'NOT_FOUND', `${resource} not found`),
-  BadRequest: (message: string, details?: any) => new ApiError(400, 'BAD_REQUEST', message, details),
+  BadRequest: (message: string, details?: unknown) => new ApiError(400, 'BAD_REQUEST', message, details),
   Conflict: (message: string) => new ApiError(409, 'CONFLICT', message),
-  ValidationError: (details: any) => new ApiError(400, 'VALIDATION_ERROR', 'Validation failed', details),
+  ValidationError: (details: unknown) => new ApiError(400, 'VALIDATION_ERROR', 'Validation failed', details),
   RateLimited: () => new ApiError(429, 'RATE_LIMITED', 'Too many requests'),
   InternalServerError: (message?: string) => new ApiError(500, 'INTERNAL_ERROR', message || 'Internal server error'),
 };

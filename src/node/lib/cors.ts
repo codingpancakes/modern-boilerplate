@@ -4,7 +4,7 @@
 
 // Environment-based configuration
 const EXACT_ORIGINS = new Set(
-  (process.env.CORS_EXACT_ORIGINS ?? 'https://railbranch.ai,https://railbranch.com')
+  (process.env.CORS_EXACT_ORIGINS ?? 'https://postway.ai,https://postway.co')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
@@ -12,7 +12,7 @@ const EXACT_ORIGINS = new Set(
 );
 
 const PARENT_DOMAINS = new Set(
-  (process.env.CORS_PARENT_DOMAINS ?? 'railbranch.ai,railbranch.com')
+  (process.env.CORS_PARENT_DOMAINS ?? 'postway.ai,postway.co')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean)
@@ -105,9 +105,9 @@ export function getExternalCorsHeaders(origin: string | undefined): Record<strin
   const isAllowedExternalOrigin = 
     // Your existing allowed origins
     /^https:\/\/[a-zA-Z0-9-]+\.sesion\.day$/.test(origin) ||
-    /^https:\/\/[a-zA-Z0-9-]+\.railbranch\.com$/.test(origin) ||
-    origin === 'https://railbranch.ai' ||
-    origin === 'https://railbranch.com' ||
+    /^https:\/\/[a-zA-Z0-9-]+\.postway\.com$/.test(origin) ||
+    origin === 'https://postway.ai' ||
+    origin === 'https://postway.co' ||
     /^http:\/\/localhost:\d+$/.test(origin) ||
     // External service origins
     /^https:\/\/.*\.stripe\.com$/.test(origin) ||

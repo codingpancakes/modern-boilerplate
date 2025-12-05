@@ -82,7 +82,7 @@ async function deploy() {
     }
     
     // Deploy infrastructure
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
     console.log(`☁️ Deploying ${projectName}-${stage} infrastructure...`);
     execSync(`npx cdk deploy "${projectName}-${stage}-*" --require-approval never --profile ${awsProfile}`, { 
       stdio: 'inherit',

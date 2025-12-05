@@ -1,0 +1,108 @@
+/**
+ * API Handler Template (Improved)
+ * 
+ * USAGE:
+ * 1. Copy this file to handlers/{resource}/{action}.ts
+ * 2. Update serviceName, swagger tags, and handler logic
+ * 3. Add to API routes in infrastructure
+ * 
+ * STANDARDS:
+ * - Use withAuth middleware for authentication
+ * - Use helper functions for common operations
+ * - Let middleware handle errors (don't catch/rethrow)
+ * - Return standardized response format
+ * - Add swagger documentation
+ */
+
+import { Logger } from '@aws-lambda-powertools/logger';
+import { withAuth } from '../lib/middleware';
+import type { AuthenticatedEvent } from '../lib/middleware';
+import type { Context } from 'aws-lambda';
+
+// Uncomment as needed:
+// import { getOrgId } from '../lib/auth';
+// import { getDb } from '../lib/db';
+// import { parseBody, organizationSchemas } from '../lib/validation';
+// import { createSuccessResponse } from '../lib/response';
+// import { requireOrgMembership } from '../lib/permissions';
+// import { Errors } from '../lib/errors';
+// import { requireResourceAccess } from '../lib/permissions';
+
+const logger = new Logger({ serviceName: 'template-org-scoped' });
+
+/**
+ * @swagger
+ * /api/v1/resource/{id}:
+ *   get:
+ *     tags: [Resource]
+ *     summary: Get resource by ID
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *     responses:
+ *       200:
+ *         description: Success
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ */
+const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
+  // Setup logging context
+  logger.addContext(context);
+  const userId = event.claims.sub;
+  logger.appendKeys({ userId });
+
+  logger.info('Operation started');
+
+  // TODO: Uncomment and implement your logic:
+  
+  // 1. Get organization ID from path
+  // const orgId = getOrgId(event);
+  // logger.appendKeys({ orgId });
+  
+  // 2. Validate request body (if POST/PATCH/PUT)
+  // const input = parseBody(event, organizationSchemas.create);
+  
+  // 3. Check organization membership
+  // await requireOrgMembership(userId, orgId);
+  
+  // 4. Database operations
+  // const db = await getDb();
+  // const result = await db
+  //   .select()
+  //   .from(yourTable)
+  //   .where(and(
+  //     eq(yourTable.id, id),
+  //     eq(yourTable.orgId, orgId)
+  //   ))
+  //   .limit(1);
+  
+  // 5. Check if found
+  // if (!result.length) throw Errors.NotFound('Resource');
+  
+  // 5. Return result using response helper
+  // logger.info('Operation completed', { resourceId: result.id });
+  // return createSuccessResponse(result);
+
+  // Placeholder response (replace with actual logic)
+  logger.info('Operation completed');
+  return createSuccessResponse({
+    message: 'Replace this with your actual implementation',
+    userId,
+    organizationId
+  });
+};
+
+export const handler = withAuth(handlerFn);

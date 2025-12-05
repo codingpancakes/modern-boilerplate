@@ -1,14 +1,13 @@
 import { Context } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Logger } from '@aws-lambda-powertools/logger';
-import { Tracer } from '@aws-lambda-powertools/tracer';
-import { withAuth } from '../../lib/middleware';
-import { AuthenticatedEvent } from '../../lib/middleware';
+import { withAuth, AuthenticatedEvent } from '../../lib/middleware';
+import { parseBody, mediaSchemas } from '../../lib/validation';
+import { createSuccessResponse } from '../../lib/response';
 import { Errors } from '../../lib/errors';
 import { v4 as uuidv4 } from 'uuid';
 
 const logger = new Logger({ serviceName: 'media-upload-direct' });
-const tracer = new Tracer({ serviceName: 'media-upload-direct' });
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
@@ -41,7 +40,6 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  *                 example: "image/jpeg"
  *               imageData:
  *                 type: string
- *                 description: Base64 encoded image data
  *               category:
  *                 type: string
  *                 description: Category for organizing images
@@ -77,139 +75,91 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  */
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  const requestId = context.awsRequestId;
   logger.addContext(context);
+  const claims = event.claims;
+  const userId = claims.sub;
 
-  try {
-    // Get bucket name and CDN URL from environment variables
-    const BUCKET_NAME = process.env.IMAGES_BUCKET;
-    const CDN_URL = process.env.IMAGES_CDN_URL;
-    
-    if (!BUCKET_NAME || !CDN_URL) {
-      throw new Error('IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set');
-    }
-    
-    // 1. CLAIMS USAGE - Always use claims from middleware
-    const claims = event.claims; // Claims provided by withAuth middleware
-    const userId = claims.sub;
-    
-    if (!userId) {
-      throw Errors.Unauthorized();
-    }
+  // Add persistent context to all logs
+  logger.appendKeys({ userId });
 
-    // Parse request body
-    const body = typeof event.body === 'string' ? JSON.parse(event.body) : event.body;
-    const { 
-      filename, 
-      contentType, 
-      imageData, 
-      baseDir = 'users',
-      userId: customUserId,
-      nameRoute = 'general' 
-    } = body;
-
-    // Log the incoming request
-    logger.info('Upload request received', {
-      hasCustomUserId: !!customUserId,
-      customUserId,
-      claimsUserId: userId,
-      baseDir,
-      nameRoute,
-      filename
-    });
-
-    // Validate required fields
-    if (!filename || !contentType || !imageData) {
-      throw Errors.BadRequest('Missing required fields: filename, contentType, and imageData are required');
-    }
-
-    // Validate content type
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(contentType)) {
-      throw Errors.BadRequest(`Invalid content type. Allowed types: ${allowedTypes.join(', ')}`);
-    }
-
-    // Use custom userId if provided, otherwise use claims userId
-    const finalUserId = customUserId || userId;
-
-    // Decode base64 image data
-    let imageBuffer: Buffer;
-    try {
-      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-      const base64Data = imageData.replace(/^data:image\/\w+;base64,/, '');
-      imageBuffer = Buffer.from(base64Data, 'base64');
-    } catch (error) {
-      throw Errors.BadRequest('Invalid base64 image data');
-    }
-
-    // Validate image size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (imageBuffer.length > maxSize) {
-      throw Errors.BadRequest(`Image size exceeds maximum allowed size of 10MB`);
-    }
-
-    // Generate unique S3 key
-    const timestamp = Date.now();
-    const uniqueId = uuidv4();
-    const sanitizedFilename = filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
-
-    logger.info('Uploading image to S3', { 
-      claimsUserId: userId,
-      customUserId: customUserId,
-      finalUserId: finalUserId, 
-      baseDir,
-      nameRoute,
-      key,
-      size: imageBuffer.length,
-      contentType,
-      BUCKET_NAME,
-      IMAGES_BUCKET_ENV: process.env.IMAGES_BUCKET
-    });
-
-    // Upload to S3
-    const uploadCommand = new PutObjectCommand({
-      Bucket: BUCKET_NAME,
-      Key: key,
-      Body: imageBuffer,
-      ContentType: contentType,
-      ServerSideEncryption: 'AES256',
-      Metadata: {
-        userId: finalUserId,
-        baseDir,
-        nameRoute,
-        originalFilename: filename,
-        uploadedAt: new Date().toISOString(),
-      },
-    });
-
-    await s3Client.send(uploadCommand);
-
-    // Generate the image URL using CloudFront CDN
-    const imageUrl = `${CDN_URL}/${key}`;
-
-    logger.info('Image uploaded successfully', {
-      key,
-      imageUrl,
-    });
-
-    // 5. RESPONSE STRUCTURE - Return standardized success response
-    return {
-      statusCode: 200,
-      body: JSON.stringify({
-        success: true,
-        data: {
-          imageUrl,
-          key,
-          bucket: BUCKET_NAME
-        }
-      }),
-    };
-  } catch (error: any) {
-    // 2. ERROR HANDLING - Proper error handling
-    logger.error('Failed to upload image', { error: error.message, stack: error.stack });
-    throw error; // Middleware handles formatting
+  if (!userId) {
+    throw Errors.Unauthorized();
   }
+
+  // Get bucket name and CDN URL from environment variables
+  const BUCKET_NAME = process.env.IMAGES_BUCKET;
+  const CDN_URL = process.env.IMAGES_CDN_URL;
+  
+  if (!BUCKET_NAME || !CDN_URL) {
+    throw new Error('IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set');
+  }
+
+  // Validate request body with Zod
+  const input = parseBody(event, mediaSchemas.uploadImageDirect);
+
+  const baseDir = 'users';
+  const finalUserId = userId;
+  const nameRoute = input.category || 'general';
+
+  // Decode base64 image data
+  let imageBuffer: Buffer;
+  try {
+    // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+    const base64Data = input.imageData.replace(/^data:image\/\w+;base64,/, '');
+    imageBuffer = Buffer.from(base64Data, 'base64');
+  } catch (error) {
+    throw Errors.BadRequest('Invalid base64 image data');
+  }
+
+  // Validate image size (max 10MB)
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (imageBuffer.length > maxSize) {
+    throw Errors.BadRequest(`Image size exceeds maximum allowed size of 10MB`);
+  }
+
+  // Generate unique S3 key
+  const timestamp = Date.now();
+  const uniqueId = uuidv4();
+  const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
+
+  logger.info('Uploading image to S3', { 
+    finalUserId, 
+    baseDir,
+    nameRoute,
+    key,
+    size: imageBuffer.length,
+    contentType: input.contentType
+  });
+
+  // Upload to S3
+  const uploadCommand = new PutObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: key,
+    Body: imageBuffer,
+    ContentType: input.contentType,
+    ServerSideEncryption: 'AES256',
+    Metadata: {
+      userId: finalUserId,
+      baseDir,
+      nameRoute,
+      originalFilename: input.filename,
+      uploadedAt: new Date().toISOString(),
+    },
+  });
+
+  await s3Client.send(uploadCommand);
+
+  // Generate the image URL using CloudFront CDN
+  const imageUrl = `${CDN_URL}/${key}`;
+
+  logger.info('Image uploaded successfully', { key, imageUrl });
+
+  return createSuccessResponse({
+    imageUrl,
+    key,
+    bucket: BUCKET_NAME,
+  });
 };
 
 // 5. ARCHITECTURE - Consistent pattern with withAuth

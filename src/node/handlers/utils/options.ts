@@ -1,18 +1,12 @@
 import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
-import { getCorsHeaders } from '../../lib/cors';
+import { createNoContentResponse } from '../../lib/response';
 
 /**
  * Handler for OPTIONS preflight requests
  * Returns proper CORS headers without requiring authentication
  */
-const optionsHandler: APIGatewayProxyHandlerV2 = async (event) => {
-  const origin = event.headers.origin || event.headers.Origin;
-  
-  return {
-    statusCode: 200,
-    headers: getCorsHeaders(origin),
-    body: '',
-  };
+const optionsHandler: APIGatewayProxyHandlerV2 = async (_event) => {
+  return createNoContentResponse();
 };
 
 export const handler = optionsHandler;

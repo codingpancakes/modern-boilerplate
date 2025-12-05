@@ -5,13 +5,28 @@ import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-sec
 import { createHmac } from 'crypto';
 import { getDb } from '../../lib/db';
 import { users, organizations, authIdentities, idempotencyKeys } from '../../db/schema';
-import { validate, schemas } from '../../lib/validation';
+import { validate, webhookSchemas } from '../../lib/validation';
+import { createSuccessResponse } from '../../lib/response';
 import { formatError, Errors } from '../../lib/errors';
 import { withPublicCors } from '../../lib/withPublicCors';
 import { eq, and } from 'drizzle-orm';
 
 const logger = new Logger({ serviceName: 'workos-webhook' });
 const tracer = new Tracer({ serviceName: 'workos-webhook' });
+
+// WorkOS webhook data types
+interface WorkOSUserData {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  [key: string]: unknown;
+}
+
+interface WorkOSOrgData {
+  name: string;
+  [key: string]: unknown;
+}
 
 let webhookSecret: string | null = null;
 
@@ -64,7 +79,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
     }
 
     // Parse and validate webhook event
-    const webhookEvent = validate(schemas.workosWebhookEvent, JSON.parse(payload));
+    const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
     
     logger.info('Processing WorkOS webhook', { 
       eventId: webhookEvent.id, 
@@ -83,10 +98,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
 
     if (existing) {
       logger.info('Webhook event already processed', { eventId: webhookEvent.id });
-      return {
-        statusCode: 200,
-        body: JSON.stringify({ status: 'already_processed' }),
-      };
+      return createSuccessResponse({ status: 'already_processed' });
     }
 
     // Store idempotency key
@@ -101,7 +113,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
     switch (webhookEvent.event) {
       case 'user.created':
       case 'user.updated': {
-        const userData = webhookEvent.data as any;
+        const userData = webhookEvent.data as WorkOSUserData;
         
         // First, check if user exists via auth_identities
         const [existingAuth] = await db
@@ -149,7 +161,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
       }
 
       case 'user.deleted': {
-        const userData = webhookEvent.data as any;
+        const userData = webhookEvent.data as WorkOSUserData;
         
         // Find user via auth_identities and delete
         const [authIdentity] = await db
@@ -172,7 +184,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
 
       case 'organization.created':
       case 'organization.updated': {
-        const orgData = webhookEvent.data as any;
+        const orgData = webhookEvent.data as WorkOSOrgData;
         
         // For organizations, we'll use name as identifier since no workosId or slug column
         // Note: This may create duplicates if multiple orgs have same name
@@ -185,7 +197,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
       }
 
       case 'organization.deleted': {
-        const orgData = webhookEvent.data as any;
+        const orgData = webhookEvent.data as WorkOSOrgData;
         
         // Delete organization by name (not ideal but no other identifier available)
         await db
@@ -206,10 +218,7 @@ const webhookHandler = async (event: APIGatewayProxyEventV2, context: Context) =
 
     logger.info('Webhook processed successfully', { eventId: webhookEvent.id });
 
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ status: 'processed' }),
-    };
+    return createSuccessResponse({ status: 'processed' });
   } catch (error) {
     logger.error('Error processing webhook', { error });
     return formatError(error, requestId);

@@ -32,9 +32,9 @@ export class RouteBuilder {
    * Create a Lambda handler with standard configuration
    */
   createHandler(config: HandlerConfig): lambdaNodejs.NodejsFunction {
-    // Generate clean function name: railbranch-production-workos-webhook
+    // Generate clean function name: postway-production-workos-webhook
     const stage = config.stage || this.stage;
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
     const functionName = stage 
       ? `${projectName}-${stage}-${config.name.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '')}`
       : undefined;

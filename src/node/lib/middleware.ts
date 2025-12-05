@@ -3,7 +3,7 @@ import type {
   APIGatewayProxyEventV2,
   Context,
 } from 'aws-lambda';
-import { getClaims as localVerifyForDevOnly } from './auth';
+// Auth claims are now provided by API Gateway authorizer
 import { formatError } from './errors';
 import { getCorsHeaders, handleOptionsRequest } from './cors';
 
@@ -18,21 +18,27 @@ export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
     exp?: number;
     iat?: number;
     // WorkOS custom claims with URN format
-    'urn:railbranch:email'?: string;
-    'urn:railbranch:first_name'?: string;
-    'urn:railbranch:last_name'?: string;
-    'urn:railbranch:metadata'?: string;
-    'urn:railbranch:external_id'?: string;
-    'urn:railbranch:org_unit'?: string;
+    'urn:postway:email'?: string;
+    'urn:postway:first_name'?: string;
+    'urn:postway:last_name'?: string;
+    'urn:postway:metadata'?: string;
+    'urn:postway:external_id'?: string;
+    'urn:postway:org_unit'?: string;
     // Allow any additional claims
-    [key: string]: any;
+    [key: string]: string | number | boolean | undefined;
   };
+}
+
+export interface HandlerResponse {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body: string;
 }
 
 export type AuthenticatedHandler = (
   event: AuthenticatedEvent,
   context: Context
-) => Promise<any>;
+) => Promise<HandlerResponse>;
 
 export const withAuth = (handlerFn: AuthenticatedHandler): APIGatewayProxyHandlerV2 => {
   return async (event, context) => {
@@ -45,9 +51,11 @@ export const withAuth = (handlerFn: AuthenticatedHandler): APIGatewayProxyHandle
 
     try {
       // Require claims from API Gateway's authorizer (no local fallback)
-      const requestContext = event.requestContext as any;
+      const requestContext = event.requestContext as {
+        authorizer?: { lambda?: Record<string, unknown> };
+      } & typeof event.requestContext;
       const lambdaCtx = requestContext?.authorizer?.lambda;
-      let claims = lambdaCtx as AuthenticatedEvent['claims'] | undefined;
+      const claims = lambdaCtx as AuthenticatedEvent['claims'] | undefined;
 
       if (!claims?.sub) {
         return {
@@ -60,11 +68,12 @@ export const withAuth = (handlerFn: AuthenticatedHandler): APIGatewayProxyHandle
       const result = await handlerFn({ ...event, claims } as AuthenticatedEvent, context);
 
       return {
-        ...result,
+        statusCode: result.statusCode,
         headers: {
-          ...(result.headers ?? {}),
+          ...(result.headers || {}),
           ...corsHeaders(origin),
         },
+        body: result.body,
       };
     } catch (err) {
       const errorResponse = formatError(err, context.awsRequestId);

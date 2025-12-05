@@ -81,7 +81,7 @@ export class ApiStack extends cdk.Stack {
     const { stage } = props;
 
     // CORS is now handled dynamically in Lambda functions to support
-    // multi-tenant wildcard domains (*.railbranch.ai, *.railbranch.com)
+    // multi-tenant wildcard domains (*.postway.ai, *.postway.co)
     // See src/node/lib/cors.ts for the CORS configuration
 
     // Create HTTP API
@@ -94,7 +94,7 @@ export class ApiStack extends cdk.Stack {
     });
 
     // Project name for resource naming
-    const projectName = process.env.PROJECT_NAME || 'railbranch';
+    const projectName = process.env.PROJECT_NAME || 'postway';
 
     // Common Lambda environment variables
     const commonEnv = {
@@ -178,6 +178,12 @@ export class ApiStack extends cdk.Stack {
               actions: ["s3:ListBucket"],
               resources: [`arn:aws:s3:::${process.env.IMAGES_BUCKET_PREFIX || `${projectName}-images-depot`}*`],
             }),
+            // Lambda invoke for TypeScript -> Python proxy pattern
+            new iam.PolicyStatement({
+              effect: iam.Effect.ALLOW,
+              actions: ["lambda:InvokeFunction"],
+              resources: [`arn:aws:lambda:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:function:${projectName}-${props.stage}-*`],
+            }),
           ],
         }),
       },
@@ -231,13 +237,47 @@ export class ApiStack extends cdk.Stack {
       ),
     });
 
+    // Python user profile handler (invoked by TypeScript proxy)
+    const pythonUserProfileHandler = new lambda.Function(this, "PythonUserProfileHandler", {
+      functionName: `${projectName}-${props.stage}-python-user-profile`,
+      runtime: lambda.Runtime.PYTHON_3_11,
+      code: lambda.Code.fromAsset(path.join(__dirname, "../../src/python")),
+      handler: "handlers.users.profile.handler",
+      architecture: lambda.Architecture.ARM_64,
+      memorySize: 256,
+      timeout: cdk.Duration.seconds(10),
+      environment: commonEnv,
+      tracing: lambda.Tracing.ACTIVE,
+      logRetention: undefined,
+    });
+
+    // TypeScript proxy handler for authenticated Python profile endpoint
+    const tsProxyProfileHandler = routeBuilder.createHandler({
+      name: "PythonProfileProxyHandler",
+      path: "handlers/users/python-profile.ts",
+      environment: {
+        ...commonEnv,
+        PYTHON_PROFILE_FUNCTION_NAME: pythonUserProfileHandler.functionName,
+      },
+    });
+
+    this.httpApi.addRoutes({
+      path: "/v1/users/python-profile",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "PythonProfileProxyIntegration",
+        tsProxyProfileHandler
+      ),
+      authorizer: customAuthorizer,
+    });
+
     // Note: Throttling can be configured later via AWS Console if needed
     // API Gateway v2 throttling is managed differently than v1
 
     // Custom domain configuration (optional)
     if (process.env.API_DOMAIN) {
       const apiDomain = process.env.API_DOMAIN;
-      const zoneName = process.env.HOSTED_ZONE_NAME; // e.g. railbranch.services
+      const zoneName = process.env.HOSTED_ZONE_NAME; // e.g. postway.services
       const certArn = process.env.API_CERT_ARN; // optional: existing ACM cert ARN
 
       let hostedZone: route53.IHostedZone | undefined;
