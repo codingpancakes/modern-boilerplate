@@ -1,7 +1,7 @@
-import { customType } from 'drizzle-orm/pg-core';
+import { customType } from "drizzle-orm/pg-core";
 
 export const citext = customType<{ data: string; driverData: string }>({
-  dataType() {
-    return 'citext';
-  },
+	dataType() {
+		return "citext";
+	},
 });

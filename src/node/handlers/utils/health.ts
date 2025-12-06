@@ -1,6 +1,6 @@
-import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
-import { withPublicCors } from '../../lib/withPublicCors';
-import { createSuccessResponse } from '../../lib/response';
+import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { createSuccessResponse } from "../../lib/response";
+import { withPublicCors } from "../../lib/withPublicCors";
 
 /**
  * @swagger
@@ -38,13 +38,16 @@ import { createSuccessResponse } from '../../lib/response';
  *                       type: string
  *                       example: production
  */
-const healthHandler = async (event: APIGatewayProxyEventV2, context: Context) => {
-  return createSuccessResponse({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    version: process.env.API_VERSION || 'v1',
-    stage: process.env.STAGE || 'dev',
-  });
+const healthHandler = async (
+	_event: APIGatewayProxyEventV2,
+	_context: Context,
+) => {
+	return createSuccessResponse({
+		status: "ok",
+		timestamp: new Date().toISOString(),
+		version: process.env.API_VERSION || "v1",
+		stage: process.env.STAGE || "dev",
+	});
 };
 
 export const handler = withPublicCors(healthHandler);

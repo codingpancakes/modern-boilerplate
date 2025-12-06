@@ -1,15 +1,15 @@
-import { Context } from 'aws-lambda';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withAuth, AuthenticatedEvent } from '../../lib/middleware';
-import { parseBody, mediaSchemas } from '../../lib/validation';
-import { createSuccessResponse } from '../../lib/response';
-import { Errors } from '../../lib/errors';
-import { v4 as uuidv4 } from 'uuid';
-import { sanitizeFilename, FILE_SIZE_LIMITS, ALLOWED_FILE_EXTENSIONS } from '../../lib/sanitize';
+import { Logger } from "@aws-lambda-powertools/logger";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import type { Context } from "aws-lambda";
+import { v4 as uuidv4 } from "uuid";
+import { Errors } from "../../lib/errors";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
+import { ALLOWED_FILE_EXTENSIONS, sanitizeFilename } from "../../lib/sanitize";
+import { mediaSchemas, parseBody } from "../../lib/validation";
 
-const logger = new Logger({ serviceName: 'media-upload-image' });
+const logger = new Logger({ serviceName: "media-upload-image" });
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
 const UPLOAD_EXPIRY_SECONDS = 300; // 5 minutes
@@ -78,95 +78,101 @@ const UPLOAD_EXPIRY_SECONDS = 300; // 5 minutes
  *         schema: { $ref: '#/definitions/StandardErrorResponse' }
  */
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  logger.addContext(context);
-  const claims = event.claims;
-  const userId = claims.sub;
+	logger.addContext(context);
+	const claims = event.claims;
+	const userId = claims.sub;
 
-  // Add persistent context to all logs
-  logger.appendKeys({ userId });
+	// Add persistent context to all logs
+	logger.appendKeys({ userId });
 
-  if (!userId) {
-    throw Errors.Unauthorized();
-  }
+	if (!userId) {
+		throw Errors.Unauthorized();
+	}
 
-  // Get bucket name and CDN URL from environment variables
-  const BUCKET_NAME = process.env.IMAGES_BUCKET;
-  const CDN_URL = process.env.IMAGES_CDN_URL;
-  
-  if (!BUCKET_NAME || !CDN_URL) {
-    throw new Error('IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set');
-  }
+	// Get bucket name and CDN URL from environment variables
+	const BUCKET_NAME = process.env.IMAGES_BUCKET;
+	const CDN_URL = process.env.IMAGES_CDN_URL;
 
-  // Validate request body with Zod
-  const input = parseBody(event, mediaSchemas.uploadImage);
+	if (!BUCKET_NAME || !CDN_URL) {
+		throw new Error(
+			"IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set",
+		);
+	}
 
-  // Validate file extension
-  const fileExtension = input.filename.split('.').pop()?.toLowerCase() || '';
-  if (!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(fileExtension as any)) {
-    throw Errors.BadRequest(`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(', ')}`);
-  }
+	// Validate request body with Zod
+	const input = parseBody(event, mediaSchemas.uploadImage);
 
-  // Validate content type matches extension
-  const contentTypeMap: Record<string, string[]> = {
-    'image/jpeg': ['jpg', 'jpeg'],
-    'image/png': ['png'],
-    'image/gif': ['gif'],
-    'image/webp': ['webp'],
-  };
-  const allowedExtensions = contentTypeMap[input.contentType] || [];
-  if (!allowedExtensions.includes(fileExtension)) {
-    throw Errors.BadRequest(`Content type ${input.contentType} does not match file extension .${fileExtension}`);
-  }
+	// Validate file extension
+	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
+	if (!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(fileExtension as any)) {
+		throw Errors.BadRequest(
+			`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(", ")}`,
+		);
+	}
 
-  const baseDir = 'users';
-  const finalUserId = userId;
-  const nameRoute = input.category || 'general';
+	// Validate content type matches extension
+	const contentTypeMap: Record<string, string[]> = {
+		"image/jpeg": ["jpg", "jpeg"],
+		"image/png": ["png"],
+		"image/gif": ["gif"],
+		"image/webp": ["webp"],
+	};
+	const allowedExtensions = contentTypeMap[input.contentType] || [];
+	if (!allowedExtensions.includes(fileExtension)) {
+		throw Errors.BadRequest(
+			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
+		);
+	}
 
-  // Sanitize filename
-  const safeName = sanitizeFilename(input.filename, {
-    maxLength: 100,
-    allowedExtensions: ALLOWED_FILE_EXTENSIONS.IMAGE as unknown as string[],
-  });
+	const baseDir = "users";
+	const finalUserId = userId;
+	const nameRoute = input.category || "general";
 
-  // Generate unique image key
-  const timestamp = Date.now();
-  const uniqueId = uuidv4();
-  const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${safeName}`;
+	// Sanitize filename
+	const safeName = sanitizeFilename(input.filename, {
+		maxLength: 100,
+		allowedExtensions: ALLOWED_FILE_EXTENSIONS.IMAGE as unknown as string[],
+	});
 
-  logger.info('Generating presigned URL for image upload', {
-    finalUserId,
-    baseDir,
-    nameRoute,
-    key,
-    contentType: input.contentType,
-  });
+	// Generate unique image key
+	const timestamp = Date.now();
+	const uniqueId = uuidv4();
+	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${safeName}`;
 
-  // Create presigned URL for upload
-  const command = new PutObjectCommand({
-    Bucket: BUCKET_NAME,
-    Key: key,
-    ContentType: input.contentType,
-    Metadata: {
-      userId: finalUserId,
-      baseDir,
-      nameRoute,
-      originalFilename: input.filename,
-      uploadedAt: new Date().toISOString()
-    }
-  });
+	logger.info("Generating presigned URL for image upload", {
+		finalUserId,
+		baseDir,
+		nameRoute,
+		key,
+		contentType: input.contentType,
+	});
 
-  const uploadUrl = await getSignedUrl(s3Client, command, {
-    expiresIn: UPLOAD_EXPIRY_SECONDS
-  });
+	// Create presigned URL for upload
+	const command = new PutObjectCommand({
+		Bucket: BUCKET_NAME,
+		Key: key,
+		ContentType: input.contentType,
+		Metadata: {
+			userId: finalUserId,
+			baseDir,
+			nameRoute,
+			originalFilename: input.filename,
+			uploadedAt: new Date().toISOString(),
+		},
+	});
 
-  logger.info('Presigned URL generated successfully', { key });
+	const uploadUrl = await getSignedUrl(s3Client, command, {
+		expiresIn: UPLOAD_EXPIRY_SECONDS,
+	});
 
-  return createSuccessResponse({
-    uploadUrl,
-    imageUrl: `${CDN_URL}/${key}`,
-    key,
-    bucket: BUCKET_NAME,
-  });
+	logger.info("Presigned URL generated successfully", { key });
+
+	return createSuccessResponse({
+		uploadUrl,
+		imageUrl: `${CDN_URL}/${key}`,
+		key,
+		bucket: BUCKET_NAME,
+	});
 };
 
 // 5. ARCHITECTURE - Export with withAuth wrapper

@@ -1,9 +1,9 @@
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withApiKey } from '../../lib/withCustomHeader';
-import { createSuccessResponse } from '../../lib/response';
-import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { Logger } from "@aws-lambda-powertools/logger";
+import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { createSuccessResponse } from "../../lib/response";
+import { withApiKey } from "../../lib/withCustomHeader";
 
-const logger = new Logger({ serviceName: 'test-api-key' });
+const logger = new Logger({ serviceName: "test-api-key" });
 
 /**
  * @swagger
@@ -26,17 +26,17 @@ const logger = new Logger({ serviceName: 'test-api-key' });
  *       401:
  *         description: Invalid or missing API key
  */
-const handlerFn = async (event: APIGatewayProxyEventV2, _context: Context) => {
-  logger.addContext(_context);
-  logger.info('API key endpoint accessed');
+const handlerFn = async (_event: APIGatewayProxyEventV2, _context: Context) => {
+	logger.addContext(_context);
+	logger.info("API key endpoint accessed");
 
-  return createSuccessResponse({
-    message: 'API key authentication successful',
-    timestamp: new Date().toISOString(),
-  });
+	return createSuccessResponse({
+		message: "API key authentication successful",
+		timestamp: new Date().toISOString(),
+	});
 };
 
 // Use withApiKey middleware - validates X-API-Key header
 // In production, this should come from environment variable
-const EXPECTED_API_KEY = process.env.TEST_API_KEY || 'test-api-key-12345';
+const EXPECTED_API_KEY = process.env.TEST_API_KEY || "test-api-key-12345";
 export const handler = withApiKey(EXPECTED_API_KEY, handlerFn);

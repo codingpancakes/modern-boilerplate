@@ -1,13 +1,13 @@
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withAuth, AuthenticatedEvent } from '../../lib/middleware';
-import { getDb } from '../../lib/db';
-import { Errors } from '../../lib/errors';
-import { createSuccessResponse } from '../../lib/response';
-import { authIdentities, users, profiles } from '../../db/schema';
-import { eq } from 'drizzle-orm';
-import type { Context } from 'aws-lambda';
+import { Logger } from "@aws-lambda-powertools/logger";
+import type { Context } from "aws-lambda";
+import { eq } from "drizzle-orm";
+import { authIdentities, profiles, users } from "../../db/schema";
+import { getDb } from "../../lib/db";
+import { Errors } from "../../lib/errors";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
 
-const logger = new Logger({ serviceName: 'users-me' });
+const logger = new Logger({ serviceName: "users-me" });
 
 /**
  * @swagger
@@ -45,70 +45,70 @@ const logger = new Logger({ serviceName: 'users-me' });
  */
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  logger.addContext(context);
-  const claims = event.claims;
-  const providerSubject = claims?.sub;
+	logger.addContext(context);
+	const claims = event.claims;
+	const providerSubject = claims?.sub;
 
-  // Add persistent context to all logs
-  logger.appendKeys({ providerSubject });
+	// Add persistent context to all logs
+	logger.appendKeys({ providerSubject });
 
-  if (!providerSubject) {
-    throw Errors.Unauthorized();
-  }
+	if (!providerSubject) {
+		throw Errors.Unauthorized();
+	}
 
-  logger.info('Getting user profile');
+	logger.info("Getting user profile");
 
-  const db = await getDb();
+	const db = await getDb();
 
-  // Get user ID from auth_identities
-  const authResult = await db
-    .select({ userId: authIdentities.userId })
-    .from(authIdentities)
-    .where(eq(authIdentities.providerSubject, providerSubject))
-    .limit(1);
+	// Get user ID from auth_identities
+	const authResult = await db
+		.select({ userId: authIdentities.userId })
+		.from(authIdentities)
+		.where(eq(authIdentities.providerSubject, providerSubject))
+		.limit(1);
 
-  if (authResult.length === 0) {
-    logger.warn('User not provisioned yet - valid JWT but no database record');
-    throw Errors.Unauthorized();
-  }
+	if (authResult.length === 0) {
+		logger.warn("User not provisioned yet - valid JWT but no database record");
+		throw Errors.Unauthorized();
+	}
 
-  const userId = authResult[0].userId;
-  
-  if (!userId) {
-    logger.error('User ID is null in auth_identities');
-    throw Errors.Unauthorized();
-  }
+	const userId = authResult[0].userId;
 
-  logger.appendKeys({ userId });
+	if (!userId) {
+		logger.error("User ID is null in auth_identities");
+		throw Errors.Unauthorized();
+	}
 
-  // Get user data
-  const userResult = await db
-    .select()
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+	logger.appendKeys({ userId });
 
-  if (userResult.length === 0) {
-    logger.error('User record not found after auth lookup');
-    throw Errors.Unauthorized();
-  }
+	// Get user data
+	const userResult = await db
+		.select()
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1);
 
-  // Get profile data (may not exist yet)
-  const profileResult = await db
-    .select()
-    .from(profiles)
-    .where(eq(profiles.userId, userId))
-    .limit(1);
+	if (userResult.length === 0) {
+		logger.error("User record not found after auth lookup");
+		throw Errors.Unauthorized();
+	}
 
-  const user = userResult[0];
-  const profile = profileResult[0] || null;
+	// Get profile data (may not exist yet)
+	const profileResult = await db
+		.select()
+		.from(profiles)
+		.where(eq(profiles.userId, userId))
+		.limit(1);
 
-  logger.info('User profile retrieved successfully', { userId: user.id });
+	const user = userResult[0];
+	const profile = profileResult[0] || null;
 
-  return createSuccessResponse({
-    user,
-    profile,
-  });
+	logger.info("User profile retrieved successfully", { userId: user.id });
+
+	return createSuccessResponse({
+		user,
+		profile,
+	});
 };
 
 export const handler = withAuth(handlerFn);

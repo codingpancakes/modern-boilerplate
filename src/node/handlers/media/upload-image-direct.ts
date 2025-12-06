@@ -1,13 +1,13 @@
-import { Context } from 'aws-lambda';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withAuth, AuthenticatedEvent } from '../../lib/middleware';
-import { parseBody, mediaSchemas } from '../../lib/validation';
-import { createSuccessResponse } from '../../lib/response';
-import { Errors } from '../../lib/errors';
-import { v4 as uuidv4 } from 'uuid';
+import { Logger } from "@aws-lambda-powertools/logger";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import type { Context } from "aws-lambda";
+import { v4 as uuidv4 } from "uuid";
+import { Errors } from "../../lib/errors";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
+import { mediaSchemas, parseBody } from "../../lib/validation";
 
-const logger = new Logger({ serviceName: 'media-upload-direct' });
+const logger = new Logger({ serviceName: "media-upload-direct" });
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
@@ -75,91 +75,93 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  */
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  logger.addContext(context);
-  const claims = event.claims;
-  const userId = claims.sub;
+	logger.addContext(context);
+	const claims = event.claims;
+	const userId = claims.sub;
 
-  // Add persistent context to all logs
-  logger.appendKeys({ userId });
+	// Add persistent context to all logs
+	logger.appendKeys({ userId });
 
-  if (!userId) {
-    throw Errors.Unauthorized();
-  }
+	if (!userId) {
+		throw Errors.Unauthorized();
+	}
 
-  // Get bucket name and CDN URL from environment variables
-  const BUCKET_NAME = process.env.IMAGES_BUCKET;
-  const CDN_URL = process.env.IMAGES_CDN_URL;
-  
-  if (!BUCKET_NAME || !CDN_URL) {
-    throw new Error('IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set');
-  }
+	// Get bucket name and CDN URL from environment variables
+	const BUCKET_NAME = process.env.IMAGES_BUCKET;
+	const CDN_URL = process.env.IMAGES_CDN_URL;
 
-  // Validate request body with Zod
-  const input = parseBody(event, mediaSchemas.uploadImageDirect);
+	if (!BUCKET_NAME || !CDN_URL) {
+		throw new Error(
+			"IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set",
+		);
+	}
 
-  const baseDir = 'users';
-  const finalUserId = userId;
-  const nameRoute = input.category || 'general';
+	// Validate request body with Zod
+	const input = parseBody(event, mediaSchemas.uploadImageDirect);
 
-  // Decode base64 image data
-  let imageBuffer: Buffer;
-  try {
-    // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-    const base64Data = input.imageData.replace(/^data:image\/\w+;base64,/, '');
-    imageBuffer = Buffer.from(base64Data, 'base64');
-  } catch (error) {
-    throw Errors.BadRequest('Invalid base64 image data');
-  }
+	const baseDir = "users";
+	const finalUserId = userId;
+	const nameRoute = input.category || "general";
 
-  // Validate image size (max 10MB)
-  const maxSize = 10 * 1024 * 1024; // 10MB
-  if (imageBuffer.length > maxSize) {
-    throw Errors.BadRequest(`Image size exceeds maximum allowed size of 10MB`);
-  }
+	// Decode base64 image data
+	let imageBuffer: Buffer;
+	try {
+		// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+		const base64Data = input.imageData.replace(/^data:image\/\w+;base64,/, "");
+		imageBuffer = Buffer.from(base64Data, "base64");
+	} catch (_error) {
+		throw Errors.BadRequest("Invalid base64 image data");
+	}
 
-  // Generate unique S3 key
-  const timestamp = Date.now();
-  const uniqueId = uuidv4();
-  const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
+	// Validate image size (max 10MB)
+	const maxSize = 10 * 1024 * 1024; // 10MB
+	if (imageBuffer.length > maxSize) {
+		throw Errors.BadRequest(`Image size exceeds maximum allowed size of 10MB`);
+	}
 
-  logger.info('Uploading image to S3', { 
-    finalUserId, 
-    baseDir,
-    nameRoute,
-    key,
-    size: imageBuffer.length,
-    contentType: input.contentType
-  });
+	// Generate unique S3 key
+	const timestamp = Date.now();
+	const uniqueId = uuidv4();
+	const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
+	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
 
-  // Upload to S3
-  const uploadCommand = new PutObjectCommand({
-    Bucket: BUCKET_NAME,
-    Key: key,
-    Body: imageBuffer,
-    ContentType: input.contentType,
-    ServerSideEncryption: 'AES256',
-    Metadata: {
-      userId: finalUserId,
-      baseDir,
-      nameRoute,
-      originalFilename: input.filename,
-      uploadedAt: new Date().toISOString(),
-    },
-  });
+	logger.info("Uploading image to S3", {
+		finalUserId,
+		baseDir,
+		nameRoute,
+		key,
+		size: imageBuffer.length,
+		contentType: input.contentType,
+	});
 
-  await s3Client.send(uploadCommand);
+	// Upload to S3
+	const uploadCommand = new PutObjectCommand({
+		Bucket: BUCKET_NAME,
+		Key: key,
+		Body: imageBuffer,
+		ContentType: input.contentType,
+		ServerSideEncryption: "AES256",
+		Metadata: {
+			userId: finalUserId,
+			baseDir,
+			nameRoute,
+			originalFilename: input.filename,
+			uploadedAt: new Date().toISOString(),
+		},
+	});
 
-  // Generate the image URL using CloudFront CDN
-  const imageUrl = `${CDN_URL}/${key}`;
+	await s3Client.send(uploadCommand);
 
-  logger.info('Image uploaded successfully', { key, imageUrl });
+	// Generate the image URL using CloudFront CDN
+	const imageUrl = `${CDN_URL}/${key}`;
 
-  return createSuccessResponse({
-    imageUrl,
-    key,
-    bucket: BUCKET_NAME,
-  });
+	logger.info("Image uploaded successfully", { key, imageUrl });
+
+	return createSuccessResponse({
+		imageUrl,
+		key,
+		bucket: BUCKET_NAME,
+	});
 };
 
 // 5. ARCHITECTURE - Consistent pattern with withAuth

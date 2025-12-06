@@ -1,7 +1,11 @@
-import type { Context } from 'aws-lambda';
-import { withAuth, type AuthenticatedEvent, type HandlerResponse } from '../../lib/middleware';
-import { invokePythonLambda } from '../../lib/invokePythonLambda';
-import { createSuccessResponse } from '../../lib/response';
+import type { Context } from "aws-lambda";
+import { invokePythonLambda } from "../../lib/invokePythonLambda";
+import {
+	type AuthenticatedEvent,
+	type HandlerResponse,
+	withAuth,
+} from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
 
 /**
  * @swagger
@@ -12,14 +16,14 @@ import { createSuccessResponse } from '../../lib/response';
  *     description: |
  *       Example endpoint demonstrating TypeScript → Python Lambda proxy pattern.
  *       TypeScript handles authentication, Python handles business logic.
- *       
+ *
  *       **Architecture:**
  *       1. API Gateway validates JWT via WorkOS authorizer
  *       2. TypeScript proxy receives authenticated claims
  *       3. TypeScript invokes Python Lambda with claims
  *       4. Python processes request and returns data
  *       5. TypeScript returns response to client
- *       
+ *
  *       **Security:** Python Lambda is NOT publicly accessible.
  *     security:
  *       - BearerAuth: []
@@ -59,23 +63,23 @@ import { createSuccessResponse } from '../../lib/response';
  *         description: Internal server error
  */
 const handlerFn = async (
-  event: AuthenticatedEvent,
-  _context: Context
+	event: AuthenticatedEvent,
+	_context: Context,
 ): Promise<HandlerResponse> => {
-  const { claims } = event;
+	const { claims } = event;
 
-  // Invoke Python Lambda with authenticated claims
-  const result = await invokePythonLambda(
-    process.env.PYTHON_PROFILE_FUNCTION_NAME || 'python-user-profile',
-    {
-      claims,
-      queryStringParameters: event.queryStringParameters || {},
-      pathParameters: event.pathParameters || {},
-    }
-  );
+	// Invoke Python Lambda with authenticated claims
+	const result = await invokePythonLambda(
+		process.env.PYTHON_PROFILE_FUNCTION_NAME || "python-user-profile",
+		{
+			claims,
+			queryStringParameters: event.queryStringParameters || {},
+			pathParameters: event.pathParameters || {},
+		},
+	);
 
-  // Python Lambda returns { success: true, data: {...} }
-  return createSuccessResponse(result.data);
+	// Python Lambda returns { success: true, data: {...} }
+	return createSuccessResponse(result.data);
 };
 
 export const handler = withAuth(handlerFn);

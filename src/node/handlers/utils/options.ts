@@ -1,5 +1,5 @@
-import type { APIGatewayProxyHandlerV2 } from 'aws-lambda';
-import { createNoContentResponse } from '../../lib/response';
+import type { APIGatewayProxyHandlerV2 } from "aws-lambda";
+import { createNoContentResponse } from "../../lib/response";
 
 /**
  * @swagger
@@ -14,7 +14,7 @@ import { createNoContentResponse } from '../../lib/response';
  *         description: No content - CORS preflight successful
  */
 const optionsHandler: APIGatewayProxyHandlerV2 = async (_event) => {
-  return createNoContentResponse();
+	return createNoContentResponse();
 };
 
 export const handler = optionsHandler;

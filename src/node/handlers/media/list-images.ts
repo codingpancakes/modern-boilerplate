@@ -1,12 +1,16 @@
-import { Context } from 'aws-lambda';
-import { S3Client, ListObjectsV2Command, _Object } from '@aws-sdk/client-s3';
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withAuth, AuthenticatedEvent } from '../../lib/middleware';
-import { parseQuery, mediaSchemas } from '../../lib/validation';
-import { createSuccessResponse } from '../../lib/response';
-import { Errors } from '../../lib/errors';
+import { Logger } from "@aws-lambda-powertools/logger";
+import {
+	type _Object,
+	ListObjectsV2Command,
+	S3Client,
+} from "@aws-sdk/client-s3";
+import type { Context } from "aws-lambda";
+import { Errors } from "../../lib/errors";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
+import { mediaSchemas, parseQuery } from "../../lib/validation";
 
-const logger = new Logger({ serviceName: 'media-list-images' });
+const logger = new Logger({ serviceName: "media-list-images" });
 
 const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
@@ -77,74 +81,74 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  *         $ref: '#/components/responses/Unauthorized'
  */
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  logger.addContext(context);
-  const claims = event.claims;
-  const userId = claims.sub;
+	logger.addContext(context);
+	const claims = event.claims;
+	const userId = claims.sub;
 
-  // Add persistent context to all logs
-  logger.appendKeys({ userId });
+	// Add persistent context to all logs
+	logger.appendKeys({ userId });
 
-  if (!userId) {
-    throw Errors.Unauthorized();
-  }
+	if (!userId) {
+		throw Errors.Unauthorized();
+	}
 
-  // Validate environment variables
-  const BUCKET_NAME = process.env.IMAGES_BUCKET;
-  if (!BUCKET_NAME) {
-    throw new Error('IMAGES_BUCKET environment variable must be set');
-  }
+	// Validate environment variables
+	const BUCKET_NAME = process.env.IMAGES_BUCKET;
+	if (!BUCKET_NAME) {
+		throw new Error("IMAGES_BUCKET environment variable must be set");
+	}
 
-  // Parse and validate query parameters
-  const query = parseQuery(event, mediaSchemas.listImages);
-  const category = query.prefix; // Using prefix instead of category for flexibility
-  const limit = query.limit;
-  const continuationToken = query.continuationToken;
+	// Parse and validate query parameters
+	const query = parseQuery(event, mediaSchemas.listImages);
+	const category = query.prefix; // Using prefix instead of category for flexibility
+	const limit = query.limit;
+	const continuationToken = query.continuationToken;
 
-  // Build S3 prefix based on parameters
-  let prefix = `users/${userId}/`;
-  if (category) {
-    prefix += `${category}/`;
-  }
+	// Build S3 prefix based on parameters
+	let prefix = `users/${userId}/`;
+	if (category) {
+		prefix += `${category}/`;
+	}
 
-  logger.info('Listing user images', { category, limit, prefix });
+	logger.info("Listing user images", { category, limit, prefix });
 
-  // List objects from S3
-  const command = new ListObjectsV2Command({
-    Bucket: BUCKET_NAME,
-    Prefix: prefix,
-    MaxKeys: limit,
-    ContinuationToken: continuationToken
-  });
+	// List objects from S3
+	const command = new ListObjectsV2Command({
+		Bucket: BUCKET_NAME,
+		Prefix: prefix,
+		MaxKeys: limit,
+		ContinuationToken: continuationToken,
+	});
 
-  const response = await s3Client.send(command);
-  
-  // Format the response
-  const images = (response.Contents || []).map((obj: _Object) => {
-    const key = obj.Key || '';
-    const parts = key.split('/');
-    const categoryFromPath = parts.length > 3 ? parts[3] : 'general';
-    
-    return {
-      key,
-      url: `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`,
-      size: obj.Size,
-      lastModified: obj.LastModified?.toISOString(),
-      category: categoryFromPath,
-      filename: parts[parts.length - 1]
-    };
-  });
+	const response = await s3Client.send(command);
 
-  logger.info('Images listed successfully', {
-    imageCount: images.length,
-    hasMore: response.IsTruncated
-  });
+	// Format the response
+	const images = (response.Contents || []).map((obj: _Object) => {
+		const key = obj.Key || "";
+		const parts = key.split("/");
+		const categoryFromPath = parts.length > 3 ? parts[3] : "general";
 
-  return createSuccessResponse({
-    images,
-    count: images.length,
-    continuationToken: response.NextContinuationToken,
-    hasMore: response.IsTruncated || false,
-  });
+		return {
+			key,
+			url: `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`,
+			size: obj.Size,
+			lastModified: obj.LastModified?.toISOString(),
+			category: categoryFromPath,
+			filename: parts[parts.length - 1],
+		};
+	});
+
+	logger.info("Images listed successfully", {
+		imageCount: images.length,
+		hasMore: response.IsTruncated,
+	});
+
+	return createSuccessResponse({
+		images,
+		count: images.length,
+		continuationToken: response.NextContinuationToken,
+		hasMore: response.IsTruncated || false,
+	});
 };
 
 // 5. ARCHITECTURE - Export with withAuth wrapper

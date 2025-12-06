@@ -1,0 +1,41 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.2.3/schema.json",
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"suspicious": {
+				"noExplicitAny": "warn"
+			}
+		}
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 2,
+		"lineWidth": 80
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"trailingCommas": "all"
+		}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"src/node/lib/withCustomHeader.ts",
+				"src/node/lib/withPublicCors.ts",
+				"src/node/lib/auth.ts",
+				"src/node/handlers/media/upload-image.ts"
+			],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
+}
