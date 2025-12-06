@@ -22,5 +22,11 @@
     "emitDecoratorMetadata": true,
     "typeRoots": ["./node_modules/@types"]
   },
-  "exclude": ["node_modules", "cdk.out", "dist", "src/node/db/migrations/schema.ts"]
+  "exclude": [
+    "node_modules",
+    "cdk.out",
+    "dist",
+    "docs",
+    "src/node/db/migrations/schema.ts"
+  ]
 }

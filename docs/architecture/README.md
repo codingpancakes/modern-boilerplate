@@ -1,7 +1,7 @@
 # Backend Architecture
 
 **Status:** Production Ready ✅  
-**Last Updated:** December 5, 2025
+**Last Updated:** December 6, 2025
 
 ---
 
@@ -14,6 +14,9 @@ This is a production-ready AWS Lambda backend boilerplate with TypeScript, featu
 - ✅ **Scalable** - Domain-organized structure
 - ✅ **Maintainable** - Clean, well-documented code
 - ✅ **Production-ready** - CORS, retry logic, error handling
+- ✅ **Secure** - XSS prevention, file validation, input sanitization
+- ✅ **Monitored** - CloudWatch alarms, X-Ray tracing, dashboards
+- ✅ **Protected** - API Gateway throttling, Lambda concurrency monitoring
 
 ---
 
@@ -21,23 +24,24 @@ This is a production-ready AWS Lambda backend boilerplate with TypeScript, featu
 
 ```
 src/node/
-├── handlers/              # Lambda handlers (11 total)
-│   ├── media/            # Image upload/list handlers
+├── handlers/              # Lambda handlers (13 total)
+│   ├── media/            # Image upload/list handlers (with validation)
 │   ├── users/            # User profile handlers
 │   ├── webhooks/         # Webhook handlers (WorkOS)
 │   ├── test/             # Test endpoints
-│   └── utils/            # Health check, OPTIONS
+│   └── utils/            # Health checks (simple + detailed), OPTIONS
 │
 ├── lib/                  # Shared libraries
 │   ├── validation/       # Domain-organized Zod schemas
 │   │   ├── users.ts     # User validation schemas
-│   │   ├── media.ts     # Media validation schemas
+│   │   ├── media.ts     # Media validation schemas (with file size limits)
 │   │   ├── organizations.ts
 │   │   ├── webhooks.ts
 │   │   ├── common.ts    # Shared schemas (pagination, etc.)
 │   │   ├── helpers.ts   # Validation helper functions
 │   │   └── index.ts     # Main exports
 │   │
+│   ├── sanitize.ts       # XSS prevention, file validation, input sanitization
 │   ├── response.ts       # Response helpers
 │   ├── update-helper.ts  # Generic update helpers
 │   ├── cors.ts           # Centralized CORS handling
@@ -294,17 +298,164 @@ pnpm deploy:prod      # Deploy to production
 
 ---
 
+## Security Features
+
+### **Input Sanitization**
+
+Comprehensive protection against common attacks in `lib/sanitize.ts`:
+
+```typescript
+import { 
+  sanitizeString,
+  sanitizeFilename,
+  sanitizeUrl,
+  sanitizeEmail,
+  sanitizeObject
+} from '../../lib/sanitize';
+
+// XSS prevention
+const clean = sanitizeString(userInput);
+
+// Filename sanitization (removes path traversal, special chars)
+const safeName = sanitizeFilename(uploadedFilename);
+
+// URL validation
+const safeUrl = sanitizeUrl(externalLink);
+
+// Deep object sanitization
+const cleanData = sanitizeObject(requestBody);
+```
+
+### **File Upload Validation**
+
+Secure file handling with size and type validation:
+
+```typescript
+import { 
+  validateFileSize,
+  validateFileExtension,
+  validateContentType 
+} from '../../lib/sanitize';
+
+// Validate file size (10MB limit for images)
+validateFileSize(fileSize, 10 * 1024 * 1024);
+
+// Validate extension
+validateFileExtension(filename, ['jpg', 'jpeg', 'png', 'gif', 'webp']);
+
+// Validate content type matches extension
+validateContentType(contentType, filename);
+```
+
+**Features:**
+- File size limits (configurable per type)
+- Extension whitelist
+- Content-Type validation
+- Path traversal prevention
+- Special character removal
+
+---
+
+## Monitoring & Observability
+
+### **Health Checks**
+
+Two-tier health check system:
+
+**Simple Health Check** (`GET /v1/health`):
+- Quick status check
+- Returns: status, timestamp, version, stage
+- Use for: Load balancer health checks, uptime monitoring
+
+**Detailed Health Check** (`GET /v1/health/detailed`):
+- Comprehensive system status
+- Checks: Database connectivity, WorkOS config, S3 config
+- Returns: Individual component status + response times
+- Use for: Debugging, detailed monitoring
+
+```typescript
+// Example detailed response
+{
+  "status": "healthy",
+  "checks": {
+    "database": { "status": "ok", "responseTime": 343 },
+    "workos": { "status": "ok", "configured": true },
+    "s3": { "status": "ok", "configured": true }
+  }
+}
+```
+
+### **CloudWatch Alarms**
+
+Comprehensive monitoring with 6 alarms per environment:
+
+| Alarm | Threshold | Purpose |
+|-------|-----------|---------|
+| **API 5xx Errors** | > 1% | Detect server errors |
+| **API 4xx Errors** | > 10% | Detect client errors |
+| **Lambda Errors** | > 10 in 5min | Function failures |
+| **Lambda Latency** | > 3s (p95) | Performance issues |
+| **Lambda Concurrency** | > 700 (70%) | Approaching limits |
+| **Lambda Throttles** | > 10 in 5min | Capacity issues |
+
+**All alarms:**
+- Send notifications to SNS topic
+- Visible in CloudWatch dashboard
+- State: OK / ALARM / INSUFFICIENT_DATA
+
+### **CloudWatch Dashboard**
+
+Real-time monitoring dashboard with widgets:
+- Lambda concurrent executions (with limit visualization)
+- API Gateway requests
+- API Gateway errors (4xx + 5xx)
+- Lambda errors
+- Lambda duration (p95)
+- Lambda throttles
+
+**Access:**
+- Staging: `https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=postway-staging-api-dashboard`
+- Production: `https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:name=postway-production-api-dashboard`
+
+### **X-Ray Tracing**
+
+Distributed tracing enabled on all Lambda functions:
+- Trace requests across services
+- Identify performance bottlenecks
+- Debug errors with full context
+- Automatic service map generation
+
+### **API Gateway Throttling**
+
+Rate limiting to protect against abuse:
+
+| Environment | Rate Limit | Burst Limit |
+|-------------|------------|-------------|
+| **Staging** | 500 req/s | 1,000 |
+| **Production** | 1,000 req/s | 2,000 |
+
+**Benefits:**
+- Prevents DDoS attacks
+- Protects Lambda concurrency
+- Returns HTTP 429 (Too Many Requests)
+- Cheaper than Lambda throttling
+
+---
+
 ## Metrics
 
 | Metric | Value |
 |--------|-------|
-| **Total handlers** | 11 |
+| **Total handlers** | 13 (11 + 2 health checks) |
 | **Validation domains** | 5 (users, media, orgs, webhooks, common) |
 | **Response helpers** | 4 |
 | **Update helpers** | 3 |
+| **Security utilities** | 8 (sanitization + validation) |
+| **CloudWatch alarms** | 6 per environment |
 | **Type safety** | 100% (no `any` in handlers) |
 | **Pattern consistency** | 100% |
 | **Build status** | ✅ Passing |
+| **Deployment status** | ✅ Staging + Production |
 
 ---
 

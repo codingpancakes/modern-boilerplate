@@ -148,6 +148,15 @@ Standardized error handling:
 - Use `Errors.*` helpers (BadRequest, Unauthorized, NotFound, etc.)
 - Middleware converts to proper HTTP responses
 
+### 7. Monitoring & Observability
+Production-grade monitoring with CloudWatch and X-Ray:
+- **CloudWatch Alarms**: Lambda errors, duration, throttles, API Gateway errors
+- **X-Ray Tracing**: Distributed tracing with user/org annotations
+- **Rate Limiting**: API Gateway throttling (1000 req/s production, 500 req/s staging)
+- **Dashboard**: CloudWatch dashboard with key metrics
+- **Tracer Helpers**: `traceQuery()`, `traceExternalCall()`, `traceLambdaInvoke()`
+- See `infrastructure/lib/monitoring.ts` and `src/node/lib/tracer.ts`
+
 ### 7. Python Lambda Proxy Pattern
 For Python-specific workloads (ML, data processing):
 - **TypeScript handles authentication** using `withAuth` middleware

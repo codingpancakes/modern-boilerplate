@@ -25,6 +25,7 @@ export class PublicRoutes {
     httpApi: apigwv2.HttpApi,
     routeBuilder: RouteBuilder
   ) {
+    // Simple health check
     const healthHandler = routeBuilder.createHandler({
       name: "HealthHandler",
       path: "handlers/utils/health.ts",
@@ -38,6 +39,23 @@ export class PublicRoutes {
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "HealthIntegration",
         healthHandler
+      ),
+    });
+
+    // Detailed health check (includes DB and external service checks)
+    const healthDetailedHandler = routeBuilder.createHandler({
+      name: "HealthDetailedHandler",
+      path: "handlers/utils/health-detailed.ts",
+      memorySize: 512,
+      timeout: cdk.Duration.seconds(10),
+    });
+
+    httpApi.addRoutes({
+      path: "/v1/health/detailed",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "HealthDetailedIntegration",
+        healthDetailedHandler
       ),
     });
   }
@@ -90,6 +108,7 @@ export class PublicRoutes {
 // Export handler paths for local testing
 export const PUBLIC_HANDLER_PATHS = {
   health: "handlers/utils/health.ts",
+  healthDetailed: "handlers/utils/health-detailed.ts",
   options: "handlers/utils/options.ts",
   workosWebhook: "handlers/webhooks/workos.ts",
 };

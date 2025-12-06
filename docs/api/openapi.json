@@ -3,455 +3,33 @@
   "info": {
     "title": "postway API",
     "version": "1.0.0",
-    "description": "Auto-generated API documentation"
+    "description": "Production-grade serverless REST API with TypeScript and Python Lambda support",
+    "contact": {
+      "name": "API Support",
+      "email": "support@postway.services"
+    }
   },
   "servers": [
     {
-      "url": "http://localhost:3000/v1",
-      "description": "Local"
+      "url": "http://localhost:3000",
+      "description": "Local development server"
     },
     {
-      "url": "https://api-staging.postway.co/v1",
-      "description": "Staging"
+      "url": "https://api-staging.postway.services",
+      "description": "Staging environment"
     },
     {
-      "url": "https://api.postway.co/v1",
-      "description": "Production"
+      "url": "https://api.postway.services",
+      "description": "Production environment"
     }
   ],
-  "paths": {
-    "/webhooks/workos": {
-      "get": {
-        "summary": "GET /webhooks/workos",
-        "description": "GET operation for /webhooks/workos",
-        "operationId": "get_webhooks_workos",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-session-started": {
-      "get": {
-        "summary": "GET /webhooks/daily-session-started",
-        "description": "GET operation for /webhooks/daily-session-started",
-        "operationId": "get_webhooks_daily-session-started",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-session-event": {
-      "get": {
-        "summary": "GET /webhooks/daily-session-event",
-        "description": "GET operation for /webhooks/daily-session-event",
-        "operationId": "get_webhooks_daily-session-event",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-session-ended": {
-      "get": {
-        "summary": "GET /webhooks/daily-session-ended",
-        "description": "GET operation for /webhooks/daily-session-ended",
-        "operationId": "get_webhooks_daily-session-ended",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-recording-ready": {
-      "get": {
-        "summary": "GET /webhooks/daily-recording-ready",
-        "description": "GET operation for /webhooks/daily-recording-ready",
-        "operationId": "get_webhooks_daily-recording-ready",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-participant-left": {
-      "get": {
-        "summary": "GET /webhooks/daily-participant-left",
-        "description": "GET operation for /webhooks/daily-participant-left",
-        "operationId": "get_webhooks_daily-participant-left",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/webhooks/daily-participant-joined": {
-      "get": {
-        "summary": "GET /webhooks/daily-participant-joined",
-        "description": "GET operation for /webhooks/daily-participant-joined",
-        "operationId": "get_webhooks_daily-participant-joined",
-        "tags": [
-          "webhooks"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/media/upload-image": {
-      "post": {
-        "summary": "Generate presigned URL for image upload",
-        "description": "Creates a presigned S3 URL for uploading user images",
-        "operationId": "post_media_upload-image",
-        "tags": [
-          "media"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "400": {
-            "description": "Bad Request - Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "success": false,
-                  "error": "Invalid input data"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "required": {},
-                  "filename": {
-                    "type": "string"
-                  },
-                  "contentType": {
-                    "type": "string"
-                  },
-                  "category": {
-                    "type": "string"
-                  }
-                }
-              },
-              "example": {}
-            }
-          }
-        }
-      }
-    },
-    "/media/upload-image-direct": {
-      "post": {
-        "summary": "Upload an image directly to S3",
-        "description": "Original filename",
-        "operationId": "post_media_upload-image-direct",
-        "tags": [
-          "Media"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "400": {
-            "description": "Bad Request - Invalid input",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "success": false,
-                  "error": "Invalid input data"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "required": {},
-                  "filename": {
-                    "type": "string"
-                  },
-                  "contentType": {
-                    "type": "string"
-                  },
-                  "imageData": {
-                    "type": "string"
-                  },
-                  "category": {
-                    "type": "string"
-                  }
-                }
-              },
-              "example": {}
-            }
-          }
-        }
-      }
-    },
-    "/media/images": {
-      "get": {
-        "summary": "List user images",
-        "description": "Retrieves a list of images uploaded by the authenticated user",
-        "operationId": "get_media_images",
-        "tags": [
-          "media"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": []
-      }
-    },
-    "/utils/options": {
-      "get": {
-        "summary": "GET /utils/options",
-        "description": "GET operation for /utils/options",
-        "operationId": "get_utils_options",
-        "tags": [
-          "utils"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/utils/janitor": {
-      "get": {
-        "summary": "GET /utils/janitor",
-        "description": "GET operation for /utils/janitor",
-        "operationId": "get_utils_janitor",
-        "tags": [
-          "utils"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/utils/health": {
-      "get": {
-        "summary": "GET /utils/health",
-        "description": "GET operation for /utils/health",
-        "operationId": "get_utils_health",
-        "tags": [
-          "utils"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [],
-        "parameters": []
-      }
-    },
-    "/members/me/id": {
-      "get": {
-        "summary": "Get current user's ID only",
-        "description": "Returns only the userId of the authenticated user",
-        "operationId": "get_members_me_id",
-        "tags": [
-          "Members"
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/components/responses/Success"
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "403": {
-            "$ref": "#/components/responses/Forbidden"
-          },
-          "500": {
-            "$ref": "#/components/responses/ServerError"
-          }
-        },
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": []
-      }
-    }
-  },
   "components": {
     "securitySchemes": {
       "BearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "bearerFormat": "JWT"
+        "bearerFormat": "JWT",
+        "description": "WorkOS JWT token obtained from authentication"
       }
     },
     "schemas": {
@@ -463,7 +41,8 @@
             "example": true
           },
           "data": {
-            "type": "object"
+            "type": "object",
+            "description": "Response data"
           }
         },
         "required": [
@@ -479,10 +58,17 @@
             "example": false
           },
           "error": {
-            "type": "string"
-          },
-          "details": {
-            "type": "object"
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string",
+                "example": "Error message"
+              },
+              "code": {
+                "type": "string",
+                "example": "ERROR_CODE"
+              }
+            }
           }
         },
         "required": [
@@ -508,10 +94,12 @@
               },
               "nextCursor": {
                 "type": "string",
-                "nullable": true
+                "nullable": true,
+                "description": "Cursor for next page"
               },
               "hasMore": {
-                "type": "boolean"
+                "type": "boolean",
+                "description": "Whether more items exist"
               }
             }
           }
@@ -529,8 +117,8 @@
           }
         }
       },
-      "Unauthorized": {
-        "description": "Authentication required",
+      "BadRequest": {
+        "description": "Bad Request - Invalid input",
         "content": {
           "application/json": {
             "schema": {
@@ -538,13 +126,33 @@
             },
             "example": {
               "success": false,
-              "error": "Authentication required"
+              "error": {
+                "message": "Invalid input data",
+                "code": "BAD_REQUEST"
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Unauthorized - Authentication required",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "success": false,
+              "error": {
+                "message": "Authentication required",
+                "code": "UNAUTHORIZED"
+              }
             }
           }
         }
       },
       "Forbidden": {
-        "description": "Insufficient permissions",
+        "description": "Forbidden - Insufficient permissions",
         "content": {
           "application/json": {
             "schema": {
@@ -552,13 +160,16 @@
             },
             "example": {
               "success": false,
-              "error": "Insufficient permissions"
+              "error": {
+                "message": "Insufficient permissions",
+                "code": "FORBIDDEN"
+              }
             }
           }
         }
       },
       "NotFound": {
-        "description": "Resource not found",
+        "description": "Not Found - Resource does not exist",
         "content": {
           "application/json": {
             "schema": {
@@ -566,13 +177,16 @@
             },
             "example": {
               "success": false,
-              "error": "Resource not found"
+              "error": {
+                "message": "Resource not found",
+                "code": "NOT_FOUND"
+              }
             }
           }
         }
       },
       "ServerError": {
-        "description": "Internal server error",
+        "description": "Internal Server Error",
         "content": {
           "application/json": {
             "schema": {
@@ -580,38 +194,863 @@
             },
             "example": {
               "success": false,
-              "error": "Internal server error"
+              "error": {
+                "message": "Internal server error",
+                "code": "INTERNAL_ERROR"
+              }
             }
           }
         }
       }
     }
   },
-  "security": [
-    {
-      "BearerAuth": []
-    }
-  ],
   "tags": [
     {
-      "name": "webhooks",
-      "description": "Webhooks related operations"
-    },
-    {
-      "name": "media",
-      "description": "Media related operations"
+      "name": "Users",
+      "description": "User management and profile operations"
     },
     {
       "name": "Media",
-      "description": "Media related operations"
+      "description": "File upload and media management"
     },
     {
-      "name": "utils",
-      "description": "Utils related operations"
+      "name": "Test",
+      "description": "Test endpoints for development"
     },
     {
-      "name": "Members",
-      "description": "Members related operations"
+      "name": "Utils",
+      "description": "Utility endpoints (health checks, etc.)"
+    },
+    {
+      "name": "Webhooks",
+      "description": "Webhook handlers for external services"
     }
-  ]
+  ],
+  "paths": {
+    "/v1/media/images": {
+      "get": {
+        "summary": "List user images",
+        "description": "Retrieves a list of images uploaded by the authenticated user",
+        "tags": [
+          "Media"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "category",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter images by category"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "maximum": 1000
+            },
+            "description": "Maximum number of images to return"
+          },
+          {
+            "in": "query",
+            "name": "continuationToken",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Token for pagination"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of user images",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "images": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "size": {
+                                "type": "number"
+                              },
+                              "lastModified": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "category": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "continuationToken": {
+                          "type": "string",
+                          "description": "Token for retrieving next page"
+                        },
+                        "hasMore": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/media/upload-image-direct": {
+      "post": {
+        "summary": "Upload an image directly to S3",
+        "tags": [
+          "Media"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "filename",
+                  "contentType",
+                  "imageData"
+                ],
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "description": "Original filename",
+                    "example": "profile-photo.jpg"
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "description": "MIME type of the image",
+                    "example": "image/jpeg"
+                  },
+                  "imageData": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string",
+                    "description": "Category for organizing images",
+                    "example": "profile"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Image uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string",
+                          "description": "S3 key of the uploaded image"
+                        },
+                        "url": {
+                          "type": "string",
+                          "description": "Public URL of the uploaded image"
+                        },
+                        "size": {
+                          "type": "number",
+                          "description": "Size of the uploaded image in bytes"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/v1/media/upload-image": {
+      "post": {
+        "summary": "Generate presigned URL for image upload",
+        "description": "Creates a presigned S3 URL for uploading user images",
+        "tags": [
+          "Media"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "filename",
+                  "contentType"
+                ],
+                "properties": {
+                  "filename": {
+                    "type": "string",
+                    "description": "Original filename of the image",
+                    "example": "profile-photo.jpg"
+                  },
+                  "contentType": {
+                    "type": "string",
+                    "description": "MIME type of the image",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/gif",
+                      "image/webp"
+                    ],
+                    "example": "image/jpeg"
+                  },
+                  "category": {
+                    "type": "string",
+                    "description": "Category of the image (profile, document, etc.)",
+                    "example": "profile"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Presigned upload URL generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "uploadUrl": {
+                          "type": "string",
+                          "description": "Presigned URL for uploading the image"
+                        },
+                        "imageKey": {
+                          "type": "string",
+                          "description": "S3 key where the image will be stored"
+                        },
+                        "expiresIn": {
+                          "type": "number",
+                          "description": "URL expiry time in seconds"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request parameters",
+            "schema": {
+              "$ref": "#/definitions/StandardErrorResponse"
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "schema": {
+              "$ref": "#/definitions/StandardErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "/v1/test/api-key": {
+      "get": {
+        "summary": "Test API key authentication",
+        "description": "Tests the withApiKey middleware",
+        "tags": [
+          "Test"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "API key for authentication"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API key valid"
+          },
+          "401": {
+            "description": "Invalid or missing API key"
+          }
+        }
+      }
+    },
+    "/v1/test/webhook": {
+      "post": {
+        "summary": "Test webhook signature validation",
+        "description": "Tests the withWebhookSignature middleware",
+        "tags": [
+          "Test"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Webhook-Signature",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "HMAC signature of the request body"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook signature valid"
+          },
+          "401": {
+            "description": "Invalid signature"
+          }
+        }
+      }
+    },
+    "/v1/users/me": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get current user profile",
+        "description": "Returns the authenticated user's complete profile including user and profile data",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "object"
+                        },
+                        "profile": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing JWT token"
+          },
+          "404": {
+            "description": "User not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update current user profile",
+        "description": "Updates the authenticated user's profile. Only sends fields that need to be updated.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "object",
+                    "properties": {
+                      "firstName": {
+                        "type": "string"
+                      },
+                      "lastName": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": "string"
+                      },
+                      "defaultTimezone": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "profile": {
+                    "type": "object",
+                    "properties": {
+                      "preferredName": {
+                        "type": "string"
+                      },
+                      "pronouns": {
+                        "type": "string"
+                      },
+                      "location": {
+                        "type": "string"
+                      },
+                      "countryCode": {
+                        "type": "string"
+                      },
+                      "photoUrl": {
+                        "type": "string"
+                      },
+                      "gender": {
+                        "type": "string"
+                      },
+                      "lgbtq": {
+                        "type": "boolean"
+                      },
+                      "ethnicity": {
+                        "type": "string"
+                      },
+                      "languages": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "onboardingCompleted": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User profile updated successfully"
+          },
+          "400": {
+            "description": "Bad request - no fields to update"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/v1/users/python-profile": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get user profile (Python example)",
+        "description": "Example endpoint demonstrating TypeScript → Python Lambda proxy pattern.\nTypeScript handles authentication, Python handles business logic.\n\n**Architecture:**\n1. API Gateway validates JWT via WorkOS authorizer\n2. TypeScript proxy receives authenticated claims\n3. TypeScript invokes Python Lambda with claims\n4. Python processes request and returns data\n5. TypeScript returns response to client\n\n**Security:** Python Lambda is NOT publicly accessible.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile data from Python Lambda",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "userId": {
+                          "type": "string",
+                          "example": "user_01KAYCTKV0Y8SDSABDMQNP60XB"
+                        },
+                        "email": {
+                          "type": "string",
+                          "example": "user@example.com"
+                        },
+                        "processedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "example": "2025-12-05T19:29:10.081867Z"
+                        },
+                        "processedBy": {
+                          "type": "string",
+                          "example": "Python Lambda"
+                        },
+                        "claims": {
+                          "type": "object",
+                          "description": "Full JWT claims from WorkOS"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing JWT token"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      }
+    },
+    "/v1/utils/health/detailed": {
+      "get": {
+        "tags": [
+          "Utils"
+        ],
+        "summary": "Detailed health check endpoint",
+        "description": "Returns comprehensive health status including database connectivity and external service checks. No authentication required.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Health check results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "healthy",
+                            "degraded",
+                            "unhealthy"
+                          ],
+                          "example": "healthy"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "version": {
+                          "type": "string",
+                          "example": "v1"
+                        },
+                        "stage": {
+                          "type": "string",
+                          "example": "production"
+                        },
+                        "checks": {
+                          "type": "object",
+                          "properties": {
+                            "database": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ok",
+                                    "error"
+                                  ]
+                                },
+                                "responseTime": {
+                                  "type": "number",
+                                  "description": "Response time in milliseconds"
+                                },
+                                "message": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "workos": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ok",
+                                    "error",
+                                    "skipped"
+                                  ]
+                                },
+                                "configured": {
+                                  "type": "boolean"
+                                }
+                              }
+                            },
+                            "s3": {
+                              "type": "object",
+                              "properties": {
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "ok",
+                                    "error",
+                                    "skipped"
+                                  ]
+                                },
+                                "configured": {
+                                  "type": "boolean"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/utils/health": {
+      "get": {
+        "tags": [
+          "Utils"
+        ],
+        "summary": "Health check endpoint",
+        "description": "Returns API health status, version, and environment information. No authentication required.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "API is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "example": "ok"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time",
+                          "example": "2025-12-05T20:00:00.000Z"
+                        },
+                        "version": {
+                          "type": "string",
+                          "example": "v1"
+                        },
+                        "stage": {
+                          "type": "string",
+                          "example": "production"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/utils/options": {
+      "options": {
+        "tags": [
+          "Utils"
+        ],
+        "summary": "CORS preflight handler",
+        "description": "Handles OPTIONS preflight requests for CORS. Returns 204 No Content with proper CORS headers.",
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content - CORS preflight successful"
+          }
+        }
+      }
+    },
+    "/v1/webhooks/workos": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "WorkOS webhook handler",
+        "description": "Handles WorkOS webhook events for user and organization lifecycle management.\nVerifies webhook signature and processes events idempotently.\n\n**Supported Events:**\n- `user.created` - Creates new user and auth identity\n- `user.updated` - Updates existing user data\n- `user.deleted` - Removes user and auth identity\n- `organization.created` - Creates new organization\n- `organization.updated` - Updates organization data\n- `organization.deleted` - Removes organization\n\n**Security:** Requires valid WorkOS webhook signature in headers.\n",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Unique event ID",
+                    "example": "evt_01H1234567890ABCDEFGHIJK"
+                  },
+                  "event": {
+                    "type": "string",
+                    "description": "Event type",
+                    "enum": [
+                      "user.created",
+                      "user.updated",
+                      "user.deleted",
+                      "organization.created",
+                      "organization.updated",
+                      "organization.deleted"
+                    ],
+                    "example": "user.created"
+                  },
+                  "data": {
+                    "type": "object",
+                    "description": "Event payload (varies by event type)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook processed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "processed",
+                            "already_processed"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    }
+  }
 }

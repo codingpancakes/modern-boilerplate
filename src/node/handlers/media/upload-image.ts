@@ -7,6 +7,7 @@ import { parseBody, mediaSchemas } from '../../lib/validation';
 import { createSuccessResponse } from '../../lib/response';
 import { Errors } from '../../lib/errors';
 import { v4 as uuidv4 } from 'uuid';
+import { sanitizeFilename, FILE_SIZE_LIMITS, ALLOWED_FILE_EXTENSIONS } from '../../lib/sanitize';
 
 const logger = new Logger({ serviceName: 'media-upload-image' });
 
@@ -99,18 +100,38 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   // Validate request body with Zod
   const input = parseBody(event, mediaSchemas.uploadImage);
 
+  // Validate file extension
+  const fileExtension = input.filename.split('.').pop()?.toLowerCase() || '';
+  if (!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(fileExtension as any)) {
+    throw Errors.BadRequest(`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(', ')}`);
+  }
+
+  // Validate content type matches extension
+  const contentTypeMap: Record<string, string[]> = {
+    'image/jpeg': ['jpg', 'jpeg'],
+    'image/png': ['png'],
+    'image/gif': ['gif'],
+    'image/webp': ['webp'],
+  };
+  const allowedExtensions = contentTypeMap[input.contentType] || [];
+  if (!allowedExtensions.includes(fileExtension)) {
+    throw Errors.BadRequest(`Content type ${input.contentType} does not match file extension .${fileExtension}`);
+  }
+
   const baseDir = 'users';
   const finalUserId = userId;
   const nameRoute = input.category || 'general';
 
-  // Extract file extension
-  const fileExtension = input.filename.split('.').pop()?.toLowerCase() || 'jpg';
+  // Sanitize filename
+  const safeName = sanitizeFilename(input.filename, {
+    maxLength: 100,
+    allowedExtensions: ALLOWED_FILE_EXTENSIONS.IMAGE as unknown as string[],
+  });
 
   // Generate unique image key
   const timestamp = Date.now();
   const uniqueId = uuidv4();
-  const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
+  const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${safeName}`;
 
   logger.info('Generating presigned URL for image upload', {
     finalUserId,

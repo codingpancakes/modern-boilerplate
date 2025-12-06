@@ -6,6 +6,7 @@ import type {
 // Auth claims are now provided by API Gateway authorizer
 import { formatError } from './errors';
 import { getCorsHeaders, handleOptionsRequest } from './cors';
+import { tracer } from './tracer';
 
 export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
   claims: {
@@ -58,11 +59,25 @@ export const withAuth = (handlerFn: AuthenticatedHandler): APIGatewayProxyHandle
       const claims = lambdaCtx as AuthenticatedEvent['claims'] | undefined;
 
       if (!claims?.sub) {
+        // Add trace annotation for failed auth
+        const segment = tracer.getSegment();
+        if (segment) {
+          segment.addAnnotation('authFailed', true);
+        }
         return {
           statusCode: 401,
           headers: corsHeaders(origin),
           body: JSON.stringify({ error: 'unauthorized' }),
         };
+      }
+
+      // Add user ID to trace
+      const segment = tracer.getSegment();
+      if (segment) {
+        segment.addAnnotation('userId', claims.sub);
+        if (claims.org_id) {
+          segment.addAnnotation('orgId', claims.org_id);
+        }
       }
 
       const result = await handlerFn({ ...event, claims } as AuthenticatedEvent, context);
@@ -76,6 +91,11 @@ export const withAuth = (handlerFn: AuthenticatedHandler): APIGatewayProxyHandle
         body: result.body,
       };
     } catch (err) {
+      // Add error to trace
+      const segment = tracer.getSegment();
+      if (segment) {
+        segment.addError(err as Error);
+      }
       const errorResponse = formatError(err, context.awsRequestId);
       return {
         ...errorResponse,

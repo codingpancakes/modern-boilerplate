@@ -93,6 +93,16 @@ export class ApiStack extends cdk.Stack {
       disableExecuteApiEndpoint: false,
     });
 
+    // Configure API Gateway throttling (rate limiting)
+    // Note: HTTP API v2 throttling is configured via the default stage
+    const defaultStage = this.httpApi.defaultStage?.node.defaultChild as cdk.aws_apigatewayv2.CfnStage;
+    if (defaultStage) {
+      defaultStage.defaultRouteSettings = {
+        throttlingBurstLimit: props.stage === "production" ? 2000 : 1000,
+        throttlingRateLimit: props.stage === "production" ? 1000 : 500,
+      };
+    }
+
     // Project name for resource naming
     const projectName = process.env.PROJECT_NAME || 'postway';
 

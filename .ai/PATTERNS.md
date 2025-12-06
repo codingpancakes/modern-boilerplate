@@ -460,6 +460,239 @@ import type { Context } from 'aws-lambda';
 
 ---
 
+## Swagger Documentation Pattern
+
+**CRITICAL: ALWAYS add @swagger JSDoc comments to EVERY handler.**
+
+### Why Swagger Docs?
+- ✅ Auto-generates OpenAPI 3.0 specification
+- ✅ Interactive Swagger UI for testing
+- ✅ Client SDK generation
+- ✅ API documentation for frontend teams
+- ✅ Contract-first development
+
+### Template for User-Scoped Handlers
+```typescript
+/**
+ * @swagger
+ * /v1/[resource]/[action]:
+ *   [method]:
+ *     tags: [[Resource]]
+ *     summary: Brief description (one line)
+ *     description: Detailed description with examples and use cases
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:  # For POST/PUT/PATCH only
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               fieldName:
+ *                 type: string
+ *                 example: "example value"
+ *               optionalField:
+ *                 type: string
+ *                 nullable: true
+ *     responses:
+ *       200:
+ *         description: Success response
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     id:
+ *                       type: string
+ *                       example: "user_123"
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
+  // Handler code
+};
+
+export const handler = withAuth(handlerFn);
+```
+
+### Template for Public Endpoints
+```typescript
+/**
+ * @swagger
+ * /v1/[resource]:
+ *   [method]:
+ *     tags: [[Resource]]
+ *     summary: Brief description
+ *     description: Detailed description
+ *     security: []  # No auth required
+ *     responses:
+ *       200:
+ *         description: Success
+ */
+```
+
+### AI Instructions for Swagger Generation
+
+When creating a handler, AI should:
+
+1. **Infer HTTP method** from filename or code:
+   - `create.ts` → POST
+   - `update.ts` → PATCH
+   - `delete.ts` → DELETE
+   - `list.ts` or `get.ts` → GET
+
+2. **Infer path** from file location:
+   - `handlers/users/me.ts` → `/v1/users/me`
+   - `handlers/orgs/[orgId]/campaigns.ts` → `/v1/orgs/{orgId}/campaigns`
+
+3. **Detect authentication**:
+   - If uses `withAuth` → add `security: [{ BearerAuth: [] }]`
+   - If uses `withPublicCors` → add `security: []`
+
+4. **Extract request schema** from `parseBody()`:
+   ```typescript
+   const input = parseBody(event, userSchemas.update);
+   // → Generate requestBody from userSchemas.update
+   ```
+
+5. **Infer response** from `createSuccessResponse()`:
+   ```typescript
+   return createSuccessResponse({ user, profile });
+   // → Generate response schema with user and profile objects
+   ```
+
+6. **Add error responses**:
+   - Always include: 500 (ServerError)
+   - If authenticated: 401 (Unauthorized), 403 (Forbidden)
+   - If has request body: 400 (BadRequest)
+   - If has path params: 404 (NotFound)
+
+### Examples
+
+#### Example 1: Simple GET
+```typescript
+/**
+ * @swagger
+ * /v1/users/me:
+ *   get:
+ *     tags: [Users]
+ *     summary: Get current user profile
+ *     description: Returns the authenticated user's complete profile
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User profile retrieved successfully
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+```
+
+#### Example 2: POST with Request Body
+```typescript
+/**
+ * @swagger
+ * /v1/media/upload-image:
+ *   post:
+ *     tags: [Media]
+ *     summary: Generate presigned URL for image upload
+ *     description: Creates a presigned S3 URL for uploading user images
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               filename:
+ *                 type: string
+ *                 example: "profile-photo.jpg"
+ *               contentType:
+ *                 type: string
+ *                 example: "image/jpeg"
+ *     responses:
+ *       200:
+ *         description: Presigned URL generated
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
+```
+
+#### Example 3: Python Proxy Handler
+```typescript
+/**
+ * @swagger
+ * /v1/ml/predict:
+ *   post:
+ *     tags: [ML]
+ *     summary: Run ML prediction
+ *     description: |
+ *       TypeScript → Python Lambda proxy for ML inference.
+ *       TypeScript handles auth, Python handles ML model.
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               features:
+ *                 type: array
+ *                 items:
+ *                   type: number
+ *     responses:
+ *       200:
+ *         description: Prediction result
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     prediction:
+ *                       type: string
+ *                     confidence:
+ *                       type: number
+ */
+```
+
+### Generating OpenAPI Spec
+
+After adding/updating handlers:
+```bash
+npm run docs:generate  # Generate OpenAPI spec
+npm run docs:serve     # View Swagger UI
+```
+
+Open http://localhost:3111 to view interactive API documentation.
+
+---
+
 ## Summary Checklist
 
 ### For TypeScript Handlers

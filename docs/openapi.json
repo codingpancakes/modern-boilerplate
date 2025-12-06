@@ -1,0 +1,651 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "postway API",
+    "version": "1.0.0",
+    "description": "Auto-generated API documentation"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000/v1",
+      "description": "Local"
+    },
+    {
+      "url": "https://api-staging.postway.services/v1",
+      "description": "Staging"
+    },
+    {
+      "url": "https://api.postway.services/v1",
+      "description": "Production"
+    }
+  ],
+  "paths": {
+    "/webhooks/workos": {
+      "get": {
+        "summary": "GET /webhooks/workos",
+        "description": "GET operation for /webhooks/workos",
+        "operationId": "get_webhooks_workos",
+        "tags": [
+          "webhooks"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "parameters": []
+      }
+    },
+    "/utils/options": {
+      "get": {
+        "summary": "GET /utils/options",
+        "description": "GET operation for /utils/options",
+        "operationId": "get_utils_options",
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "parameters": []
+      }
+    },
+    "/utils/janitor": {
+      "get": {
+        "summary": "GET /utils/janitor",
+        "description": "GET operation for /utils/janitor",
+        "operationId": "get_utils_janitor",
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "parameters": []
+      }
+    },
+    "/utils/health": {
+      "get": {
+        "summary": "GET /utils/health",
+        "description": "GET operation for /utils/health",
+        "operationId": "get_utils_health",
+        "tags": [
+          "utils"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "parameters": []
+      }
+    },
+    "/users/me": {
+      "patch": {
+        "summary": "Update current user profile",
+        "description": "Updates the authenticated user's profile. Only sends fields that need to be updated.",
+        "operationId": "patch_users_me",
+        "tags": [
+          "Users"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "400": {
+            "description": "Bad Request - Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "success": false,
+                  "error": "Invalid input data"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user": {
+                    "type": "string }"
+                  },
+                  "profile": {
+                    "type": "boolean }"
+                  }
+                }
+              },
+              "example": {}
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get current user profile",
+        "description": "Returns the authenticated user's complete profile including user and profile data",
+        "operationId": "get_users_me",
+        "tags": [
+          "Users"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": []
+      }
+    },
+    "/users/python-profile": {
+      "get": {
+        "summary": "Get user profile (Python example)",
+        "description": "|",
+        "operationId": "get_users_python-profile",
+        "tags": [
+          "Users"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": []
+      }
+    },
+    "/media/upload-image": {
+      "post": {
+        "summary": "Generate presigned URL for image upload",
+        "description": "Creates a presigned S3 URL for uploading user images",
+        "operationId": "post_media_upload-image",
+        "tags": [
+          "media"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "400": {
+            "description": "Bad Request - Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "success": false,
+                  "error": "Invalid input data"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "required": {},
+                  "filename": {
+                    "type": "string"
+                  },
+                  "contentType": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {}
+            }
+          }
+        }
+      }
+    },
+    "/media/upload-image-direct": {
+      "post": {
+        "summary": "Upload an image directly to S3",
+        "description": "Original filename",
+        "operationId": "post_media_upload-image-direct",
+        "tags": [
+          "Media"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "400": {
+            "description": "Bad Request - Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "success": false,
+                  "error": "Invalid input data"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "required": {},
+                  "filename": {
+                    "type": "string"
+                  },
+                  "contentType": {
+                    "type": "string"
+                  },
+                  "imageData": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  }
+                }
+              },
+              "example": {}
+            }
+          }
+        }
+      }
+    },
+    "/media/images": {
+      "get": {
+        "summary": "List user images",
+        "description": "Retrieves a list of images uploaded by the authenticated user",
+        "operationId": "get_media_images",
+        "tags": [
+          "media"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": []
+      }
+    },
+    "/test/webhook": {
+      "post": {
+        "summary": "Test webhook signature validation",
+        "description": "Tests the withWebhookSignature middleware",
+        "operationId": "post_test_webhook",
+        "tags": [
+          "test"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "400": {
+            "description": "Bad Request - Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "success": false,
+                  "error": "Invalid input data"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "object"
+                  }
+                }
+              },
+              "example": {}
+            }
+          }
+        }
+      }
+    },
+    "/test/api-key": {
+      "get": {
+        "summary": "Test API key authentication",
+        "description": "Tests the withApiKey middleware",
+        "operationId": "get_test_api-key",
+        "tags": [
+          "test"
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Success"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "security": [],
+        "parameters": []
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "success",
+          "data"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "success",
+          "error"
+        ]
+      },
+      "PaginatedResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "nextCursor": {
+                "type": "string",
+                "nullable": true
+              },
+              "hasMore": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Success": {
+        "description": "Successful response",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SuccessResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication required",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "success": false,
+              "error": "Authentication required"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "success": false,
+              "error": "Insufficient permissions"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "success": false,
+              "error": "Resource not found"
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "Internal server error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "success": false,
+              "error": "Internal server error"
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "webhooks",
+      "description": "Webhooks related operations"
+    },
+    {
+      "name": "utils",
+      "description": "Utils related operations"
+    },
+    {
+      "name": "Users",
+      "description": "Users related operations"
+    },
+    {
+      "name": "media",
+      "description": "Media related operations"
+    },
+    {
+      "name": "Media",
+      "description": "Media related operations"
+    },
+    {
+      "name": "test",
+      "description": "Test related operations"
+    }
+  ]
+}

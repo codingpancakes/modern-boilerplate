@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { FILE_SIZE_LIMITS } from '../sanitize';
 
 /**
  * Allowed image content types
@@ -18,6 +19,7 @@ export const uploadImageRequest = z.object({
   filename: z.string().min(1).max(255),
   contentType: z.enum(imageContentTypes),
   category: z.string().max(50).optional(),
+  fileSize: z.number().min(1).max(FILE_SIZE_LIMITS.IMAGE).optional(),
 });
 
 /**

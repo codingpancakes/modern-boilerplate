@@ -74,8 +74,7 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  *                     hasMore:
  *                       type: boolean
  *       401:
- *         description: Unauthorized
- *         schema: { $ref: '#/definitions/StandardErrorResponse' }
+ *         $ref: '#/components/responses/Unauthorized'
  */
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   logger.addContext(context);
