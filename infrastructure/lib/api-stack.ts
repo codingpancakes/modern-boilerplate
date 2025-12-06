@@ -152,7 +152,9 @@ export class ApiStack extends cdk.Stack {
       {
         authorizerName: `${props.stage}-workos-authorizer`,
         responseTypes: [apigwv2Authorizers.HttpLambdaResponseType.SIMPLE],
-        resultsCacheTtl: cdk.Duration.seconds(0), // Prevents stale authorizations
+        // Cache valid tokens for 5 minutes to reduce Lambda invocations
+        // Tokens are validated by signature, so caching is safe
+        resultsCacheTtl: cdk.Duration.minutes(5),
       }
     );
 

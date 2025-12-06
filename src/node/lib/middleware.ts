@@ -7,6 +7,7 @@ import { getCorsHeaders, handleOptionsRequest } from "./cors";
 // Auth claims are now provided by API Gateway authorizer
 import { formatError } from "./errors";
 import { tracer } from "./tracer";
+import * as Sentry from "./sentry";
 
 export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
 	claims: {
@@ -56,6 +57,9 @@ export const withAuth = (
 		}
 
 		try {
+			// Set request context for Sentry
+			Sentry.setRequestContext(event);
+
 			// Require claims from API Gateway's authorizer (no local fallback)
 			const requestContext = event.requestContext as {
 				authorizer?: { lambda?: Record<string, unknown> };
@@ -71,10 +75,17 @@ export const withAuth = (
 				}
 				return {
 					statusCode: 401,
-					headers: corsHeaders(origin),
+					headers: securityHeaders(corsHeaders(origin)),
 					body: JSON.stringify({ error: "unauthorized" }),
 				};
 			}
+
+			// Set user context for Sentry
+			Sentry.setUser(
+				claims.sub,
+				claims["urn:postway:email"],
+				claims["urn:postway:first_name"] || undefined,
+			);
 
 			// Add user ID to trace
 			const segment = tracer.getSegment();
@@ -90,15 +101,22 @@ export const withAuth = (
 				context,
 			);
 
+			// Flush Sentry before returning
+			await Sentry.flush();
+
 			return {
 				statusCode: result.statusCode,
-				headers: {
+				headers: securityHeaders({
 					...(result.headers || {}),
 					...corsHeaders(origin),
-				},
+				}),
 				body: result.body,
 			};
 		} catch (err) {
+			// Capture error in Sentry
+			Sentry.captureException(err as Error);
+			await Sentry.flush();
+
 			// Add error to trace
 			const segment = tracer.getSegment();
 			if (segment) {
@@ -107,10 +125,10 @@ export const withAuth = (
 			const errorResponse = formatError(err, context.awsRequestId);
 			return {
 				...errorResponse,
-				headers: {
+				headers: securityHeaders({
 					...(errorResponse.headers ?? {}),
 					...corsHeaders(origin),
-				},
+				}),
 			};
 		}
 	};
@@ -124,5 +142,26 @@ function corsHeaders(origin?: string) {
 		"Access-Control-Allow-Headers":
 			"authorization,content-type,x-request-id,x-csrf-token",
 		"Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+	};
+}
+
+/**
+ * Add security headers to response
+ */
+function securityHeaders(headers: Record<string, string>): Record<string, string> {
+	return {
+		...headers,
+		// HSTS - Force HTTPS for 1 year
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+		// Prevent MIME type sniffing
+		"X-Content-Type-Options": "nosniff",
+		// Prevent clickjacking
+		"X-Frame-Options": "DENY",
+		// CSP - API only returns JSON, no scripts
+		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+		// Referrer policy
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+		// Permissions policy
+		"Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 	};
 }

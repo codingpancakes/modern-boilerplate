@@ -1,0 +1,79 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Build TypeScript
+        run: pnpm run build
+
+      - name: Run database migrations
+        run: pnpm run migrate
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Deploy to AWS
+        run: pnpm run deploy:staging
+        env:
+          STAGE: staging
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          WORKOS_CLIENT_ID: ${{ secrets.STAGING_WORKOS_CLIENT_ID }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          IMAGES_BUCKET: ${{ secrets.STAGING_IMAGES_BUCKET }}
+          IMAGES_CDN_URL: ${{ secrets.STAGING_IMAGES_CDN_URL }}
+          CORS_DOMAIN_PATTERNS: ${{ secrets.STAGING_CORS_DOMAIN_PATTERNS }}
+          API_DOMAIN: ${{ secrets.STAGING_API_DOMAIN }}
+          HOSTED_ZONE_NAME: ${{ secrets.HOSTED_ZONE_NAME }}
+          HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+
+      - name: Run smoke tests
+        run: pnpm run test:smoke
+        env:
+          API_URL: ${{ secrets.STAGING_API_URL }}
+          TEST_AUTH_TOKEN: ${{ secrets.STAGING_TEST_AUTH_TOKEN }}
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "✅ Staging deployment successful!"
+          echo "API URL: ${{ secrets.STAGING_API_URL }}"
+
+      - name: Notify deployment failure
+        if: failure()
+        run: |
+          echo "❌ Staging deployment failed!"
+          exit 1
