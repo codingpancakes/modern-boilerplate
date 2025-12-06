@@ -1,7 +1,8 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { Context } from "aws-lambda";
 import { eq } from "drizzle-orm";
-import { authIdentities, profiles, users } from "../../db/schema";
+import { profiles, users } from "../../db/schema";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
 import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
@@ -46,40 +47,16 @@ const logger = new Logger({ serviceName: "users-me" });
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.addContext(context);
-	const claims = event.claims;
-	const providerSubject = claims?.sub;
+
+	// Get internal user ID from JWT claims
+	const userId = await getUserIdFromClaims(event);
 
 	// Add persistent context to all logs
-	logger.appendKeys({ providerSubject });
-
-	if (!providerSubject) {
-		throw Errors.Unauthorized();
-	}
+	logger.appendKeys({ userId });
 
 	logger.info("Getting user profile");
 
 	const db = await getDb();
-
-	// Get user ID from auth_identities
-	const authResult = await db
-		.select({ userId: authIdentities.userId })
-		.from(authIdentities)
-		.where(eq(authIdentities.providerSubject, providerSubject))
-		.limit(1);
-
-	if (authResult.length === 0) {
-		logger.warn("User not provisioned yet - valid JWT but no database record");
-		throw Errors.Unauthorized();
-	}
-
-	const userId = authResult[0].userId;
-
-	if (!userId) {
-		logger.error("User ID is null in auth_identities");
-		throw Errors.Unauthorized();
-	}
-
-	logger.appendKeys({ userId });
 
 	// Get user data
 	const userResult = await db

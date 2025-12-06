@@ -12,6 +12,7 @@ This folder contains documentation for the RailBranch backend boilerplate.
 - **`serve-docs.js`** - Local API documentation server
 
 ### `/guides` - How-To Guides
+- **`TESTING.md`** - Complete testing guide (local, staging, production)
 - **`CDK_TEARDOWN.md`** - How to tear down AWS infrastructure
 
 ---

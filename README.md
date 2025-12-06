@@ -21,10 +21,11 @@
 
 ### For Developers
 - **[Getting Started](#quick-start)** - Set up your local environment
+- **[Production Readiness](./PRODUCTION_READINESS.md)** - Deployment status & checklist
+- **[Testing Guide](./docs/guides/TESTING.md)** - How to test (local, staging, production)
 - **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
 - **[Creating Handlers](./.ai/TEMPLATES.md)** - Step-by-step guide
 - **[Code Patterns](./.ai/PATTERNS.md)** - Standards and best practices
-- **[Testing Guide](./tests/README.md)** - How to test
 
 ### For AI Assistants
 - **[AI Context](./.ai/CONTEXT.md)** - Project overview for AI

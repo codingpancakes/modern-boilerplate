@@ -1,13 +1,14 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { Context } from "aws-lambda";
 import { eq } from "drizzle-orm";
-import { authIdentities, profiles, users } from "../../db/schema";
+import { profiles, users } from "../../db/schema";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
-import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { buildNestedUpdates } from "../../lib/update-helper";
-import { parseBody, schemas } from "../../lib/validation";
+import { parseBody } from "../../lib/validation/helpers";
+import * as schemas from "../../lib/validation/users";
 
 const logger = new Logger({ serviceName: "users-update" });
 
@@ -59,15 +60,12 @@ const logger = new Logger({ serviceName: "users-update" });
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.addContext(context);
-	const claims = event.claims;
-	const providerSubject = claims?.sub;
+
+	// Get internal user ID from JWT claims
+	const userId = await getUserIdFromClaims(event);
 
 	// Add persistent context to all logs
-	logger.appendKeys({ providerSubject });
-
-	if (!providerSubject) {
-		throw Errors.Unauthorized();
-	}
+	logger.appendKeys({ userId });
 
 	// Validate request body with Zod
 	const updateRequest = parseBody(event, schemas.updateUserProfile);
@@ -75,25 +73,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.info("Updating user profile", { updateRequest });
 
 	const db = await getDb();
-
-	// First, get the user ID from auth_identities
-	const authResult = await db
-		.select({ userId: authIdentities.userId })
-		.from(authIdentities)
-		.where(eq(authIdentities.providerSubject, providerSubject))
-		.limit(1);
-
-	if (!authResult || authResult.length === 0) {
-		logger.warn("User not provisioned yet - valid JWT but no database record");
-		throw Errors.Unauthorized();
-	}
-
-	const userId = authResult[0].userId;
-
-	if (!userId) {
-		logger.warn("User ID is null - user not provisioned yet");
-		throw Errors.Unauthorized();
-	}
 
 	// Build update objects automatically (only includes provided fields + updatedAt)
 	const updates = buildNestedUpdates(updateRequest);

@@ -1,13 +1,15 @@
+import { randomUUID } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Context } from "aws-lambda";
-import { v4 as uuidv4 } from "uuid";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { ALLOWED_FILE_EXTENSIONS, sanitizeFilename } from "../../lib/sanitize";
-import { mediaSchemas, parseBody } from "../../lib/validation";
+import { parseBody } from "../../lib/validation/helpers";
+import { uploadImageRequest } from "../../lib/validation/media";
 
 const logger = new Logger({ serviceName: "media-upload-image" });
 
@@ -79,15 +81,12 @@ const UPLOAD_EXPIRY_SECONDS = 300; // 5 minutes
  */
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.addContext(context);
-	const claims = event.claims;
-	const userId = claims.sub;
+
+	// Get internal user ID from JWT claims
+	const userId = await getUserIdFromClaims(event);
 
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
-
-	if (!userId) {
-		throw Errors.Unauthorized();
-	}
 
 	// Get bucket name and CDN URL from environment variables
 	const BUCKET_NAME = process.env.IMAGES_BUCKET;
@@ -100,7 +99,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	}
 
 	// Validate request body with Zod
-	const input = parseBody(event, mediaSchemas.uploadImage);
+	const input = parseBody(event, uploadImageRequest);
 
 	// Validate file extension
 	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
@@ -136,7 +135,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	// Generate unique image key
 	const timestamp = Date.now();
-	const uniqueId = uuidv4();
+	const uniqueId = randomUUID();
 	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${safeName}`;
 
 	logger.info("Generating presigned URL for image upload", {

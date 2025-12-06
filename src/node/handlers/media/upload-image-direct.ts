@@ -1,11 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
-import { v4 as uuidv4 } from "uuid";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
-import { mediaSchemas, parseBody } from "../../lib/validation";
+import { parseBody } from "../../lib/validation/helpers";
+import { uploadImageDirectRequest } from "../../lib/validation/media";
 
 const logger = new Logger({ serviceName: "media-upload-direct" });
 
@@ -76,15 +78,12 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.addContext(context);
-	const claims = event.claims;
-	const userId = claims.sub;
+
+	// Get internal user ID from JWT claims
+	const userId = await getUserIdFromClaims(event);
 
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
-
-	if (!userId) {
-		throw Errors.Unauthorized();
-	}
 
 	// Get bucket name and CDN URL from environment variables
 	const BUCKET_NAME = process.env.IMAGES_BUCKET;
@@ -97,7 +96,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	}
 
 	// Validate request body with Zod
-	const input = parseBody(event, mediaSchemas.uploadImageDirect);
+	const input = parseBody(event, uploadImageDirectRequest);
 
 	const baseDir = "users";
 	const finalUserId = userId;
@@ -121,7 +120,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	// Generate unique S3 key
 	const timestamp = Date.now();
-	const uniqueId = uuidv4();
+	const uniqueId = randomUUID();
 	const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
 	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
 

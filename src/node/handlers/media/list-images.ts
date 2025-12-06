@@ -5,7 +5,7 @@ import {
 	S3Client,
 } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
-import { Errors } from "../../lib/errors";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { mediaSchemas, parseQuery } from "../../lib/validation";
@@ -82,15 +82,12 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  */
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	logger.addContext(context);
-	const claims = event.claims;
-	const userId = claims.sub;
+
+	// Get internal user ID from JWT claims
+	const userId = await getUserIdFromClaims(event);
 
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
-
-	if (!userId) {
-		throw Errors.Unauthorized();
-	}
 
 	// Validate environment variables
 	const BUCKET_NAME = process.env.IMAGES_BUCKET;
