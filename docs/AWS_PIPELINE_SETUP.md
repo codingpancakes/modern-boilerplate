@@ -33,55 +33,115 @@ AWS needs permission to access your GitHub repository.
 2. **Create Connection**:
    - Click "Create connection"
    - Provider: **GitHub**
-   - Connection name: `github-postway`
+   - Connection name: `github-yourproject` (e.g., `github-postway`)
    - Click "Connect to GitHub"
    - Authorize AWS Connector for GitHub
    - Click "Connect"
 
-3. **Copy Connection ARN**:
+3. **Install GitHub App**:
+   - After creating the connection, click "Install a new app"
+   - Select your GitHub account/organization
+   - Choose repositories to grant access (select your backend repo)
+   - Click "Install"
+
+4. **Copy Connection ARN**:
    ```
-   arn:aws:codestar-connections:us-east-1:497537671226:connection/abc123...
+   arn:aws:codeconnections:us-east-1:357225328504:connection/abc123...
    ```
 
-4. **Store Connection ARN in SSM**:
+5. **Store Connection ARN in SSM Parameter Store**:
    ```bash
    aws ssm put-parameter \
      --name /github/connection-arn \
-     --value "arn:aws:codestar-connections:us-east-1:497537671226:connection/YOUR_CONNECTION_ID" \
+     --value "arn:aws:codeconnections:us-east-1:357225328504:connection/YOUR_CONNECTION_ID" \
      --type String \
-     --description "GitHub connection for CodePipeline (shared across all projects)"
+     --description "GitHub connection for CodePipeline (shared across all projects)" \
+     --region us-east-1 \
+     --overwrite
    ```
+
+### For New Projects (Reusing Existing Connection)
+
+If you already have a GitHub connection from another project:
+
+```bash
+# 1. List existing connections
+aws codeconnections list-connections --region us-east-1
+
+# 2. Copy the ARN of your existing connection
+
+# 3. Store it in SSM (or update existing)
+aws ssm put-parameter \
+  --name /github/connection-arn \
+  --value "arn:aws:codeconnections:us-east-1:357225328504:connection/YOUR_CONNECTION_ID" \
+  --type String \
+  --description "GitHub connection for CodePipeline (shared across all projects)" \
+  --region us-east-1 \
+  --overwrite
+```
+
+**Note:** One GitHub connection can be reused across multiple projects/pipelines.
 
 ---
 
-## Step 2: Update Secrets Manager
+## Step 2: Sync Environment Variables to AWS
 
-Your pipeline needs access to WorkOS and Database credentials.
+Your pipeline needs access to environment variables stored in AWS Secrets Manager and SSM Parameter Store.
 
-### Check Existing Secrets
+### Quick Method (Recommended)
+
+Use the automated sync script:
+
+```bash
+# Sync staging environment variables
+pnpm sync-secrets
+
+# The script reads from .env.staging and syncs to AWS:
+# - Secrets Manager: WORKOS_CLIENT_ID, DATABASE_URL
+# - SSM Parameters: HOSTED_ZONE_ID, API_DOMAIN, CORS settings, etc.
+```
+
+See [SYNC_SECRETS.md](./SYNC_SECRETS.md) for detailed documentation.
+
+### Manual Method (If Needed)
+
+#### Check Existing Secrets
 
 ```bash
 # List secrets
-aws secretsmanager list-secrets
+aws secretsmanager list-secrets --region us-east-1
 
 # View secret (staging)
-aws secretsmanager get-secret-value --secret-id postway-staging-workos
-aws secretsmanager get-secret-value --secret-id postway-staging-db
+aws secretsmanager get-secret-value --secret-id /postway/staging/workos --region us-east-1
+aws secretsmanager get-secret-value --secret-id /postway/staging/database --region us-east-1
 ```
 
-### If Secrets Don't Exist, Create Them
+#### Create Secrets Manually
 
 ```bash
 # Create WorkOS secret
 aws secretsmanager create-secret \
-  --name postway-staging-workos \
-  --secret-string '{"WORKOS_CLIENT_ID":"client_xxx"}'
+  --name /postway/staging/workos \
+  --secret-string '{"clientId":"client_xxx"}' \
+  --region us-east-1
 
 # Create DB secret
 aws secretsmanager create-secret \
-  --name postway-staging-db \
-  --secret-string '{"DATABASE_URL":"postgresql://user:pass@host/db"}'
+  --name /postway/staging/database \
+  --secret-string '{"url":"postgresql://user:pass@host/db"}' \
+  --region us-east-1
 ```
+
+### Database Drop Script
+
+If you need to reset your database:
+
+```bash
+# Drop all tables (use with caution!)
+pnpm db:drop
+```
+
+**Warning:** This will delete all data in your database. Only use in development/staging.
 
 ---
 

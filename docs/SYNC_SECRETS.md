@@ -7,12 +7,14 @@ Automatically sync your `.env` files to AWS Secrets Manager and SSM Parameter St
 ## 🚀 Quick Start
 
 ```bash
-# Sync staging environment
-pnpm run sync-secrets staging
+# Sync staging environment variables to AWS
+pnpm sync-secrets
 
-# Sync production environment
-pnpm run sync-secrets production
+# Or use the full command
+ENV_FILE=.env.staging tsx scripts/sync-secrets.ts
 ```
+
+**Note:** The script reads from `.env.staging` or `.env.production` based on the `ENV_FILE` variable.
 
 ---
 
