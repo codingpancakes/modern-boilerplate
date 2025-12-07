@@ -12,8 +12,8 @@ phases:
       - npm install -g pnpm@9
       - echo "Cleaning up any existing node_modules..."
       - rm -rf node_modules .pnpm-store
-      - echo "Installing dependencies..."
-      - pnpm install --frozen-lockfile
+      - echo "Installing dependencies (including devDependencies)..."
+      - pnpm install --frozen-lockfile --include=dev
 
   pre_build:
     commands:
