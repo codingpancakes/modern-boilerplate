@@ -34,13 +34,6 @@ phases:
   post_build:
     commands:
       - echo "Deployment completed successfully!"
-      - echo "API URL: $API_URL"
-
-# Artifacts to store (optional)
-artifacts:
-  files:
-    - '**/*'
-  base-directory: dist
 
 # Cache dependencies for faster builds
 cache:
