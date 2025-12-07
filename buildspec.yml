@@ -13,7 +13,7 @@ phases:
       - echo "Cleaning up any existing node_modules..."
       - rm -rf node_modules .pnpm-store
       - echo "Installing dependencies (including devDependencies)..."
-      - pnpm install --frozen-lockfile --include=dev
+      - NODE_ENV=development pnpm install --frozen-lockfile
 
   pre_build:
     commands:
