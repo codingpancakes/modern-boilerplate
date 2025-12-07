@@ -3,7 +3,7 @@ import {
 	SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { type NeonQueryFunction, neon } from "@neondatabase/serverless";
-import { type NeonHttpDatabase, drizzle } from "drizzle-orm/neon-http";
+import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import * as schema from "../db/schema";
 
 type DbInstance = NeonHttpDatabase<typeof schema>;

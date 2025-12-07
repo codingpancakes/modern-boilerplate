@@ -1,8 +1,8 @@
 import type { APIGatewayRequestAuthorizerEvent } from "aws-lambda";
 import {
-	type JWTVerifyResult,
 	createRemoteJWKSet,
 	errors,
+	type JWTVerifyResult,
 	jwtVerify,
 } from "jose";
 
