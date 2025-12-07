@@ -10,6 +10,8 @@ phases:
     commands:
       - echo "Installing pnpm..."
       - npm install -g pnpm@9
+      - echo "Cleaning up any existing node_modules..."
+      - rm -rf node_modules .pnpm-store
       - echo "Installing dependencies..."
       - pnpm install --frozen-lockfile
 
@@ -34,9 +36,3 @@ phases:
   post_build:
     commands:
       - echo "Deployment completed successfully!"
-
-# Cache dependencies for faster builds
-cache:
-  paths:
-    - 'node_modules/**/*'
-    - '.pnpm-store/**/*'
