@@ -228,13 +228,14 @@ export class WafStack extends cdk.Stack {
       },
     });
 
-    // Associate WAF with API Gateway if ARN is provided
-    if (props.apiGatewayArn) {
-      new wafv2.CfnWebACLAssociation(this, 'WebACLAssociation', {
-        resourceArn: props.apiGatewayArn,
-        webAclArn: this.webAcl.attrArn,
-      });
-    }
+    // Associate WAF with API Gateway
+    // Import the API Gateway ARN exported from ApiStack
+    const apiGatewayArn = props.apiGatewayArn || cdk.Fn.importValue(`${projectName}-${props.stage}-ApiGatewayArn`);
+    
+    new wafv2.CfnWebACLAssociation(this, 'WebACLAssociation', {
+      resourceArn: apiGatewayArn,
+      webAclArn: this.webAcl.attrArn,
+    });
 
     // Outputs
     new cdk.CfnOutput(this, 'WebACLArn', {

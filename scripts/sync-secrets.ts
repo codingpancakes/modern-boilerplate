@@ -3,8 +3,8 @@
  * Sync environment variables from .env files to AWS Secrets Manager
  * 
  * Usage:
- *   pnpm run sync-secrets staging
- *   pnpm run sync-secrets production
+ *   pnpm sync-secrets staging
+ *   pnpm sync-secrets production
  */
 
 import { execSync } from 'node:child_process';

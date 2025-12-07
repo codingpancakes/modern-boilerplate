@@ -31,3 +31,13 @@ phases:
   post_build:
     commands:
       - echo "Deployment completed successfully!"
+      - echo "Running smoke tests..."
+      - |
+        if [ "$STAGE" = "staging" ]; then
+          API_URL="https://api-staging.postway.services"
+        else
+          API_URL="https://api.postway.services"
+        fi
+      - echo "Testing health endpoint at $API_URL/v1/health/detailed"
+      - curl -f "$API_URL/v1/health/detailed" || (echo "❌ Smoke test failed!" && exit 1)
+      - echo "✅ Smoke tests passed!"

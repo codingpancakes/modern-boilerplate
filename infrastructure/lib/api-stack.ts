@@ -382,6 +382,15 @@ export class ApiStack extends cdk.Stack {
       description: "HTTP API endpoint URL",
     });
 
+    // Export API Gateway ARN for WAF association
+    // HTTP API ARN format: arn:aws:apigateway:region::/apis/{api-id}
+    const apiGatewayArn = `arn:aws:apigateway:${this.region}::/apis/${this.httpApi.apiId}/stages/${this.httpApi.defaultStage?.stageName || '$default'}`;
+    new cdk.CfnOutput(this, "ApiGatewayArn", {
+      value: apiGatewayArn,
+      description: "API Gateway ARN for WAF association",
+      exportName: `${projectName}-${props.stage}-ApiGatewayArn`,
+    });
+
     // Apply LogRetention aspect with proper sequencing to avoid rate limits
     const logRetentionAspect = new LogRetentionAspect(stage);
     Aspects.of(this).add(logRetentionAspect);

@@ -21,7 +21,7 @@
 
 ### For Developers
 - **[Getting Started](#quick-start)** - Set up your local environment
-- **[Production Readiness](./PRODUCTION_READINESS.md)** - Deployment status & checklist
+- **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Essential daily commands
 - **[Testing Guide](./docs/guides/TESTING.md)** - How to test (local, staging, production)
 - **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
 - **[Creating Handlers](./.ai/TEMPLATES.md)** - Step-by-step guide
