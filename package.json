@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "Production-grade serverless backend with AWS CDK",
   "scripts": {
-    "build": "npm run check && npm run test:run && tsc && npm run docs:generate",
-    "watch": "tsc -w",
+    "build": "npm run check && npm run test:run && npx tsc && npm run docs:generate",
+    "watch": "npx tsc -w",
     "cdk": "cdk",
     "migrate": "tsx scripts/migrate.ts",
     "sync-secrets": "tsx scripts/sync-secrets.ts",

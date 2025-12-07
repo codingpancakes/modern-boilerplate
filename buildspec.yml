@@ -17,12 +17,7 @@ phases:
 
   pre_build:
     commands:
-      - echo "Running linter..."
-      - pnpm run lint
-      - echo "Running type check..."
-      - pnpm run typecheck
-      - echo "Running tests..."
-      - pnpm run test:run
+      - echo "Pre-build phase - skipping checks (will run during build)"
 
   build:
     commands:
