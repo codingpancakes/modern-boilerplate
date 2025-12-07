@@ -25,7 +25,6 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "test:smoke": "bash tests/smoke/smoke-test.sh",
     "check": "npm run lint && npm run typecheck && npm run test:run"
   },
   "devDependencies": {
