@@ -1,8 +1,8 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import {
-	type _Object,
 	ListObjectsV2Command,
 	S3Client,
+	type _Object,
 } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";

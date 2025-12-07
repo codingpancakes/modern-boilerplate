@@ -23,7 +23,7 @@
 	},
 	"overrides": [
 		{
-			"includes": [
+			"include": [
 				"src/node/lib/withCustomHeader.ts",
 				"src/node/lib/withPublicCors.ts",
 				"src/node/lib/auth.ts",

@@ -63,7 +63,7 @@ export function buildUpdateObject<T extends Record<string, unknown>>(
  */
 export function hasUpdates(
 	updates: Record<string, unknown>,
-	timestampField: string = "updatedAt",
+	timestampField = "updatedAt",
 ): boolean {
 	const keys = Object.keys(updates).filter((k) => k !== timestampField);
 	return keys.length > 0;

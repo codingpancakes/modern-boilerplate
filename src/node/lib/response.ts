@@ -31,7 +31,7 @@ export interface ErrorDetails {
  */
 export function createSuccessResponse<T>(
 	data: T,
-	statusCode: number = 200,
+	statusCode = 200,
 	headers?: Record<string, string>,
 ): SuccessResponse {
 	return {
@@ -102,7 +102,7 @@ export function createPaginatedResponse<T>(
 		hasMore?: boolean;
 		limit?: number;
 	},
-	statusCode: number = 200,
+	statusCode = 200,
 ): SuccessResponse {
 	return {
 		statusCode,

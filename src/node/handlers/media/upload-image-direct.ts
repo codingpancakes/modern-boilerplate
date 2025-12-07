@@ -115,7 +115,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Validate image size (max 10MB)
 	const maxSize = 10 * 1024 * 1024; // 10MB
 	if (imageBuffer.length > maxSize) {
-		throw Errors.BadRequest(`Image size exceeds maximum allowed size of 10MB`);
+		throw Errors.BadRequest("Image size exceeds maximum allowed size of 10MB");
 	}
 
 	// Generate unique S3 key

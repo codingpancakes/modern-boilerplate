@@ -21,7 +21,7 @@ export function decodeCursor(
 		const decoded = Buffer.from(cursor, "base64url").toString("utf-8");
 		const [timestamp, id] = decoded.split("_");
 		return {
-			timestamp: parseInt(timestamp, 10),
+			timestamp: Number.parseInt(timestamp, 10),
 			id,
 		};
 	} catch {

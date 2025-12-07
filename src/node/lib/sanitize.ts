@@ -206,7 +206,8 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 						maxLength: options.maxStringLength,
 						allowHtml: options.allowHtml,
 					});
-				} else if (item && typeof item === "object") {
+				}
+				if (item && typeof item === "object") {
 					return sanitizeObject(item as Record<string, unknown>, options);
 				}
 				return item;
