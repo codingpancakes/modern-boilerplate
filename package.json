@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Production-grade serverless backend with AWS CDK",
   "scripts": {
-    "build": "tsc && npm run docs:generate",
+    "build": "tsc && pnpm run docs:generate",
     "watch": "npx tsc -w",
     "cdk": "cdk",
     "migrate": "tsx scripts/migrate.ts",
