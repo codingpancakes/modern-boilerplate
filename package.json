@@ -21,7 +21,7 @@
     "docs:dev": "npm run docs:generate && npm run docs:serve",
     "lint": "npx @biomejs/biome check src/",
     "lint:fix": "npx @biomejs/biome check --write src/",
-    "typecheck": "pnpm exec tsc --noEmit",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
