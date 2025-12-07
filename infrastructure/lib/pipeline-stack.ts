@@ -74,11 +74,11 @@ export class PipelineStack extends cdk.Stack {
 
         // Secrets from Secrets Manager
         WORKOS_CLIENT_ID: {
-          value: `${props.workosSecret.secretArn}:WORKOS_CLIENT_ID::`,
+          value: `${props.workosSecret.secretArn}:clientId::`,
           type: codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
         },
         DATABASE_URL: {
-          value: `${props.dbSecret.secretArn}:DATABASE_URL::`,
+          value: `${props.dbSecret.secretArn}:url::`,
           type: codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
         },
 
