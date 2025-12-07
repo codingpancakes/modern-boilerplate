@@ -216,6 +216,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   };
 };
 
+
 export const handler = withAuth(handlerFn);
 ```
 
