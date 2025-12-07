@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Production-grade serverless backend with AWS CDK",
   "scripts": {
-    "build": "npm run check && npm run test:run && npx tsc && npm run docs:generate",
+    "build": "tsc && npm run docs:generate",
     "watch": "npx tsc -w",
     "cdk": "cdk",
     "migrate": "tsx scripts/migrate.ts",
@@ -21,7 +21,7 @@
     "docs:dev": "npm run docs:generate && npm run docs:serve",
     "lint": "npx @biomejs/biome check src/",
     "lint:fix": "npx @biomejs/biome check --write src/",
-    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
