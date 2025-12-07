@@ -7,6 +7,7 @@
     "watch": "tsc -w",
     "cdk": "cdk",
     "migrate": "tsx scripts/migrate.ts",
+    "sync-secrets": "tsx scripts/sync-secrets.ts",
     "db:drop": "tsx scripts/drop-all-tables.ts",
     "db:reset": "npm run db:drop && rm -rf src/node/db/migrations && npm run db:generate && npm run migrate",
     "deploy:staging": "ENV_FILE=.env.staging tsx scripts/deploy.ts",

@@ -8,6 +8,7 @@ import { MonitoringStack } from '../lib/monitoring-stack';
 import { MediaStack } from '../lib/media-stack';
 import { PublicAssetsStack } from '../lib/public-assets-stack';
 import { WafStack } from '../lib/waf-stack';
+import { PipelineStack } from '../lib/pipeline-stack';
 
 const app = new cdk.App();
 
@@ -88,3 +89,20 @@ publicAssetsStack.node.addValidation({
 monitoringStack.node.addValidation({
   validate: () => [],
 });
+
+// Pipeline stack (CI/CD) - only create for staging/production
+if (stage === 'staging' || stage === 'production') {
+  const pipelineStack = new PipelineStack(app, `${stackPrefix}-PipelineStack`, {
+    env,
+    stage,
+    githubOwner: 'codingpancakes',
+    githubRepo: 'backend-boilerplate-cdk-workos',
+    githubBranch: stage === 'production' ? 'main' : 'develop',
+    dbSecret: securityStack.dbSecret,
+    workosSecret: securityStack.workosSecret,
+    hostedZoneId: process.env.HOSTED_ZONE_ID || '',
+    hostedZoneName: process.env.HOSTED_ZONE_NAME || 'postway.services',
+  });
+
+  pipelineStack.addDependency(securityStack);
+}

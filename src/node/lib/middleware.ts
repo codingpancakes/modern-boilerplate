@@ -6,8 +6,8 @@ import type {
 import { getCorsHeaders, handleOptionsRequest } from "./cors";
 // Auth claims are now provided by API Gateway authorizer
 import { formatError } from "./errors";
-import { tracer } from "./tracer";
 import * as Sentry from "./sentry";
+import { tracer } from "./tracer";
 
 export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
 	claims: {
@@ -148,7 +148,9 @@ function corsHeaders(origin?: string) {
 /**
  * Add security headers to response
  */
-function securityHeaders(headers: Record<string, string>): Record<string, string> {
+function securityHeaders(
+	headers: Record<string, string>,
+): Record<string, string> {
 	return {
 		...headers,
 		// HSTS - Force HTTPS for 1 year

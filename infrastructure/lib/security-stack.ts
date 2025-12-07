@@ -16,35 +16,52 @@ export class SecurityStack extends cdk.Stack {
 
     const projectName = process.env.PROJECT_NAME || 'postway';
 
-    // WorkOS credentials secret
+    // Get values from environment variables
+    const workosClientId = process.env.WORKOS_CLIENT_ID;
+    const databaseUrl = process.env.DATABASE_URL;
+
+    // WorkOS credentials secret - populated from env vars
     this.workosSecret = new secretsmanager.Secret(this, 'WorkOSSecret', {
       secretName: `/${projectName}/${props.stage}/workos`,
       description: `${projectName} WorkOS API credentials`,
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({
-          apiKey: 'REPLACE_WITH_ACTUAL_API_KEY',
-          clientId: 'REPLACE_WITH_ACTUAL_CLIENT_ID',
-          webhookSecret: 'REPLACE_WITH_WEBHOOK_SECRET',
-        }),
-        generateStringKey: 'dummy',
-        excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
-      },
+      secretStringValue: workosClientId
+        ? cdk.SecretValue.unsafePlainText(
+            JSON.stringify({
+              clientId: workosClientId,
+            })
+          )
+        : undefined,
+      generateSecretString: workosClientId
+        ? undefined
+        : {
+            secretStringTemplate: JSON.stringify({
+              clientId: 'REPLACE_WITH_ACTUAL_CLIENT_ID',
+            }),
+            generateStringKey: 'dummy',
+            excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
+          },
     });
 
-    // Database credentials secret
+    // Database credentials secret - populated from env vars
     this.dbSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
       secretName: `/${projectName}/${props.stage}/database`,
       description: `${projectName} Neon database credentials`,
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({
-          host: 'REPLACE_WITH_NEON_HOST',
-          port: 5432,
-          dbname: 'REPLACE_WITH_DB_NAME',
-          username: 'REPLACE_WITH_USERNAME',
-        }),
-        generateStringKey: 'password',
-        excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
-      },
+      secretStringValue: databaseUrl
+        ? cdk.SecretValue.unsafePlainText(
+            JSON.stringify({
+              url: databaseUrl,
+            })
+          )
+        : undefined,
+      generateSecretString: databaseUrl
+        ? undefined
+        : {
+            secretStringTemplate: JSON.stringify({
+              url: 'REPLACE_WITH_DATABASE_URL',
+            }),
+            generateStringKey: 'dummy',
+            excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
+          },
     });
 
     // Output secret ARNs for reference

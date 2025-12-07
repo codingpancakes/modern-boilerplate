@@ -1,0 +1,49 @@
+version: 0.2
+
+# AWS CodeBuild buildspec for CI/CD
+# This file defines the build process for your serverless backend
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - echo "Installing pnpm..."
+      - npm install -g pnpm@9
+      - echo "Installing dependencies..."
+      - pnpm install --frozen-lockfile
+
+  pre_build:
+    commands:
+      - echo "Running linter..."
+      - pnpm run lint
+      - echo "Running type check..."
+      - pnpm run typecheck
+      - echo "Running tests..."
+      - pnpm run test:run
+
+  build:
+    commands:
+      - echo "Building TypeScript..."
+      - pnpm run build
+      - echo "Running database migrations..."
+      - pnpm run migrate
+      - echo "Deploying CDK stacks..."
+      - pnpm run cdk deploy --all --require-approval never
+
+  post_build:
+    commands:
+      - echo "Deployment completed successfully!"
+      - echo "API URL: $API_URL"
+
+# Artifacts to store (optional)
+artifacts:
+  files:
+    - '**/*'
+  base-directory: dist
+
+# Cache dependencies for faster builds
+cache:
+  paths:
+    - 'node_modules/**/*'
+    - '.pnpm-store/**/*'
