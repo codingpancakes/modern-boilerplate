@@ -22,22 +22,30 @@ phases:
   build:
     commands:
       - echo "Loading environment variables from SSM and Secrets Manager..."
-      - export PROJECT_NAME=postway
+      - echo "Loading PROJECT_NAME from SSM..."
+      - export PROJECT_NAME=$(aws ssm get-parameter --name "/github/project-name" --query 'Parameter.Value' --output text --region us-east-1)
       - export NODE_ENV=production
+      - echo "Using PROJECT_NAME=${PROJECT_NAME}"
+      - |
+        if [ -z "$PROJECT_NAME" ]; then
+          echo "❌ ERROR: PROJECT_NAME not found in SSM Parameter Store"
+          echo "Please run: pnpm sync-secrets staging"
+          exit 1
+        fi
       - echo "Loading SSM parameters..."
-      - export API_DOMAIN=$(aws ssm get-parameter --name "/postway/${STAGE}/api-domain" --query 'Parameter.Value' --output text --region us-east-1)
-      - export HOSTED_ZONE_ID=$(aws ssm get-parameter --name "/postway/${STAGE}/hosted-zone-id" --query 'Parameter.Value' --output text --region us-east-1)
-      - export HOSTED_ZONE_NAME=$(aws ssm get-parameter --name "/postway/${STAGE}/hosted-zone-name" --query 'Parameter.Value' --output text --region us-east-1)
-      - export IMAGES_BUCKET=$(aws ssm get-parameter --name "/postway/${STAGE}/images-bucket" --query 'Parameter.Value' --output text --region us-east-1)
-      - export IMAGES_BUCKET_PREFIX=$(aws ssm get-parameter --name "/postway/${STAGE}/images-bucket-prefix" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "postway-images-depot")
-      - export IMAGES_CDN_URL=$(aws ssm get-parameter --name "/postway/${STAGE}/images-cdn-url" --query 'Parameter.Value' --output text --region us-east-1)
-      - export CORS_DOMAIN_PATTERNS=$(aws ssm get-parameter --name "/postway/${STAGE}/cors-domain-patterns" --query 'Parameter.Value' --output text --region us-east-1)
-      - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/postway/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
-      - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/postway/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
+      - export API_DOMAIN=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/api-domain" --query 'Parameter.Value' --output text --region us-east-1)
+      - export HOSTED_ZONE_ID=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-id" --query 'Parameter.Value' --output text --region us-east-1)
+      - export HOSTED_ZONE_NAME=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-name" --query 'Parameter.Value' --output text --region us-east-1)
+      - export IMAGES_BUCKET=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket" --query 'Parameter.Value' --output text --region us-east-1)
+      - export IMAGES_BUCKET_PREFIX=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket-prefix" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
+      - export IMAGES_CDN_URL=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-cdn-url" --query 'Parameter.Value' --output text --region us-east-1)
+      - export CORS_DOMAIN_PATTERNS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-domain-patterns" --query 'Parameter.Value' --output text --region us-east-1)
+      - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
+      - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
       - echo "Loading Secrets Manager secrets..."
-      - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/postway/${STAGE}/workos" --query 'SecretString' --output text --region us-east-1)
+      - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region us-east-1)
       - export WORKOS_CLIENT_ID=$(echo $WORKOS_SECRET | jq -r '.clientId')
-      - DB_SECRET=$(aws secretsmanager get-secret-value --secret-id "/postway/${STAGE}/database" --query 'SecretString' --output text --region us-east-1)
+      - DB_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/database" --query 'SecretString' --output text --region us-east-1)
       - export DATABASE_URL=$(echo $DB_SECRET | jq -r '.url')
       - echo "✓ Loaded all environment variables"
       - echo "  PROJECT_NAME=$PROJECT_NAME"
@@ -59,9 +67,9 @@ phases:
       - echo "Running smoke tests..."
       - |
         if [ "$STAGE" = "staging" ]; then
-          API_URL="https://api-staging.postway.services"
+          API_URL="https://api-staging.${HOSTED_ZONE_NAME}"
         else
-          API_URL="https://api.postway.services"
+          API_URL="https://api.${HOSTED_ZONE_NAME}"
         fi
       - echo "Testing health endpoint at $API_URL/v1/health/detailed"
       - curl -f "$API_URL/v1/health/detailed" || (echo "❌ Smoke test failed!" && exit 1)

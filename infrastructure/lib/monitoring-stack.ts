@@ -15,7 +15,10 @@ export class MonitoringStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
 
     // SNS topic for alarms
     const alarmTopic = new sns.Topic(this, 'AlarmTopic', {

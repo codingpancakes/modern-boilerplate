@@ -20,8 +20,9 @@ async function deploy() {
   }
   
   // Get stage and region AFTER loading env file
-  const stage = process.env.STAGE || 'staging';
-  const region = process.env.AWS_REGION || 'us-east-1';
+  // Note: These will be validated below in requiredEnvVars check
+  const stage = process.env.STAGE!;
+  const region = process.env.AWS_REGION!;
   
   console.log(`🚀 Deploying ${stage.toUpperCase()} to ${region}...`);
   console.log(`🔗 API Domain: ${process.env.API_DOMAIN || 'CloudFront default (no custom domain)'}`);
@@ -30,6 +31,9 @@ async function deploy() {
   
   // Validate environment variables
   const requiredEnvVars = [
+    'PROJECT_NAME',
+    'STAGE',
+    'AWS_REGION',
     'WORKOS_CLIENT_ID',
     'DATABASE_URL',
     'IMAGES_BUCKET',
@@ -82,7 +86,7 @@ async function deploy() {
     }
     
     // Deploy infrastructure
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    const projectName = process.env.PROJECT_NAME!; // Already validated above
     console.log(`☁️ Deploying ${projectName}-${stage} infrastructure...`);
     execSync(`npx cdk deploy "${projectName}-${stage}-*" --require-approval never --profile ${awsProfile}`, { 
       stdio: 'inherit',

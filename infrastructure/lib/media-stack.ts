@@ -24,7 +24,10 @@ export class MediaStack extends cdk.Stack {
     super(scope, id, props);
 
     const { stage, domainName, hostedZoneId, imagesCertArn } = props;
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
     const bucketName = process.env.IMAGES_BUCKET || `${projectName}-images-depot-${stage}`;
     
     // Import existing bucket or create new one
@@ -59,8 +62,6 @@ export class MediaStack extends cdk.Stack {
               : [
                   'http://localhost:*',
                   'http://127.0.0.1:*',
-                  'https://*.postway.ai',
-                  'https://*.postway.co'
                 ],
             exposedHeaders: ['ETag', 'x-amz-server-side-encryption', 'x-amz-request-id'],
             maxAge: 3000,

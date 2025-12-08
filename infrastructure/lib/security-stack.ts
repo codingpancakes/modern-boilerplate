@@ -14,7 +14,10 @@ export class SecurityStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: SecurityStackProps) {
     super(scope, id, props);
 
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
 
     // Get values from environment variables
     const workosClientId = process.env.WORKOS_CLIENT_ID;

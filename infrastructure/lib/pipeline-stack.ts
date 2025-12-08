@@ -31,7 +31,10 @@ export class PipelineStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: PipelineStackProps) {
     super(scope, id, props);
 
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
 
     // GitHub connection ARN from SSM Parameter Store
     // Create it with: aws ssm put-parameter --name /github/connection-arn --value "arn:aws:..." --type String
@@ -82,16 +85,16 @@ export class PipelineStack extends cdk.Stack {
           type: codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
         },
 
-        // Environment-specific variables (from Parameter Store or hardcoded)
-        IMAGES_BUCKET_PREFIX: { value: `${projectName}-${props.stage}` },
-        IMAGES_BUCKET: { value: `${projectName}-${props.stage}-images` },
-        IMAGES_CDN_URL: { value: `https://images-${props.stage}.${projectName}.services` },
-        API_DOMAIN: { value: `api-${props.stage}.${projectName}.services` },
+        // Environment-specific variables from SSM Parameter Store
+        IMAGES_BUCKET_PREFIX: { value: process.env.IMAGES_BUCKET_PREFIX || `${projectName}-${props.stage}` },
+        IMAGES_BUCKET: { value: process.env.IMAGES_BUCKET || `${projectName}-${props.stage}-images` },
+        IMAGES_CDN_URL: { value: process.env.IMAGES_CDN_URL || `https://images-${props.stage}.${props.hostedZoneName}` },
+        API_DOMAIN: { value: process.env.API_DOMAIN || `api-${props.stage}.${props.hostedZoneName}` },
         
         // CORS configuration
-        CORS_DOMAIN_PATTERNS: { value: `*.${projectName}.services,localhost:*` },
-        CORS_EXACT_ORIGINS: { value: `https://app-${props.stage}.${projectName}.services` },
-        CORS_PARENT_DOMAINS: { value: `${projectName}.services` },
+        CORS_DOMAIN_PATTERNS: { value: process.env.CORS_DOMAIN_PATTERNS || `*.${props.hostedZoneName},localhost:*` },
+        CORS_EXACT_ORIGINS: { value: process.env.CORS_EXACT_ORIGINS || `https://app-${props.stage}.${props.hostedZoneName}` },
+        CORS_PARENT_DOMAINS: { value: process.env.CORS_PARENT_DOMAINS || props.hostedZoneName },
 
         // Route53
         HOSTED_ZONE_NAME: { value: props.hostedZoneName },

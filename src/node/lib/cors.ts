@@ -4,19 +4,19 @@
 
 // Environment-based configuration
 const EXACT_ORIGINS = new Set(
-	(process.env.CORS_EXACT_ORIGINS ?? "https://postway.ai,https://postway.co")
+	(process.env.CORS_EXACT_ORIGINS || "")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean)
-		.map((s) => s.toLowerCase()),
+		.filter((s) => s.length > 0),
 );
 
 const PARENT_DOMAINS = new Set(
-	(process.env.CORS_PARENT_DOMAINS ?? "postway.ai,postway.co")
+	(process.env.CORS_PARENT_DOMAINS || "")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean)
-		.map((s) => s.toLowerCase()),
+		.filter((s) => s.length > 0),
 );
 
 // Dev convenience
@@ -111,11 +111,7 @@ export function getExternalCorsHeaders(
 
 	// Check if origin matches external service patterns
 	const isAllowedExternalOrigin =
-		// Your existing allowed origins
-		/^https:\/\/[a-zA-Z0-9-]+\.sesion\.day$/.test(origin) ||
-		/^https:\/\/[a-zA-Z0-9-]+\.postway\.com$/.test(origin) ||
-		origin === "https://postway.ai" ||
-		origin === "https://postway.co" ||
+		// Development origins
 		/^http:\/\/localhost:\d+$/.test(origin) ||
 		// External service origins
 		/^https:\/\/.*\.stripe\.com$/.test(origin) ||

@@ -8,16 +8,40 @@ import { MonitoringStack } from '../lib/monitoring-stack';
 import { MediaStack } from '../lib/media-stack';
 import { PublicAssetsStack } from '../lib/public-assets-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
+import { CostMonitoringStack } from '../lib/cost-monitoring-stack';
 
 const app = new cdk.App();
 
-const projectName = process.env.PROJECT_NAME || 'postway';
-const stage = process.env.STAGE || 'dev';
+// Fail-fast if required environment variables are missing
+if (!process.env.PROJECT_NAME) {
+  throw new Error('PROJECT_NAME environment variable is required');
+}
+if (!process.env.STAGE) {
+  throw new Error('STAGE environment variable is required');
+}
+if (!process.env.HOSTED_ZONE_NAME) {
+  throw new Error('HOSTED_ZONE_NAME environment variable is required');
+}
+if (!process.env.GITHUB_OWNER) {
+  throw new Error('GITHUB_OWNER environment variable is required');
+}
+if (!process.env.GITHUB_REPO) {
+  throw new Error('GITHUB_REPO environment variable is required');
+}
+if (!process.env.GITHUB_BRANCH) {
+  throw new Error('GITHUB_BRANCH environment variable is required');
+}
+if (!process.env.AWS_REGION) {
+  throw new Error('AWS_REGION environment variable is required');
+}
+
+const projectName = process.env.PROJECT_NAME;
+const stage = process.env.STAGE;
 const stackPrefix = `${projectName}-${stage}`;
 
 const env = {
   account: process.env.CDK_DEFAULT_ACCOUNT,
-  region: process.env.AWS_REGION || 'us-east-1',
+  region: process.env.AWS_REGION,
 };
 
 // Security stack (secrets, IAM)
@@ -39,11 +63,19 @@ const monitoringStack = new MonitoringStack(app, `${stackPrefix}-MonitoringStack
   stage,
 });
 
+// Cost monitoring stack (AWS Budgets)
+const costMonitoringStack = new CostMonitoringStack(app, `${stackPrefix}-CostMonitoringStack`, {
+  env,
+  stage,
+  alertEmail: process.env.ALERT_EMAIL,
+  monthlyBudget: stage === 'production' ? 200 : 50, // $200 prod, $50 staging
+});
+
 // Media stack (S3 buckets, CloudFront CDN)
 const mediaStack = new MediaStack(app, `${stackPrefix}-MediaStack`, {
   env,
   stage,
-  domainName: process.env.HOSTED_ZONE_NAME || 'postway.services',
+  domainName: process.env.HOSTED_ZONE_NAME,
   hostedZoneId: process.env.HOSTED_ZONE_ID,
   // imagesCertArn: undefined (CDK will create certificate automatically)
 });
@@ -52,7 +84,7 @@ const mediaStack = new MediaStack(app, `${stackPrefix}-MediaStack`, {
 const publicAssetsStack = new PublicAssetsStack(app, `${stackPrefix}-PublicAssetsStack`, {
   env,
   stage,
-  domainName: process.env.HOSTED_ZONE_NAME || 'postway.services',
+  domainName: process.env.HOSTED_ZONE_NAME,
   hostedZoneId: process.env.HOSTED_ZONE_ID,
   // assetsCertArn: undefined (CDK will create certificate automatically)
 });
@@ -80,18 +112,22 @@ monitoringStack.node.addValidation({
   validate: () => [],
 });
 
+costMonitoringStack.node.addValidation({
+  validate: () => [],
+});
+
 // Pipeline stack (CI/CD) - only create for staging/production
 if (stage === 'staging' || stage === 'production') {
   const pipelineStack = new PipelineStack(app, `${stackPrefix}-PipelineStack`, {
     env,
     stage,
-    githubOwner: 'codingpancakes',
-    githubRepo: 'backend-boilerplate-cdk-workos',
-    githubBranch: stage === 'production' ? 'main' : 'develop',
+    githubOwner: process.env.GITHUB_OWNER,
+    githubRepo: process.env.GITHUB_REPO,
+    githubBranch: process.env.GITHUB_BRANCH,
     dbSecret: securityStack.dbSecret,
     workosSecret: securityStack.workosSecret,
     hostedZoneId: process.env.HOSTED_ZONE_ID || '',
-    hostedZoneName: process.env.HOSTED_ZONE_NAME || 'postway.services',
+    hostedZoneName: process.env.HOSTED_ZONE_NAME,
   });
 
   pipelineStack.addDependency(securityStack);

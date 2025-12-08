@@ -43,8 +43,22 @@ envContent.split('\n').forEach((line) => {
   }
 });
 
-const projectName = envVars.PROJECT_NAME || 'postway';
-const awsRegion = envVars.AWS_REGION || 'us-east-1';
+// Validate required environment variables
+if (!envVars.PROJECT_NAME) {
+  console.error('❌ PROJECT_NAME is required in .env file');
+  process.exit(1);
+}
+if (!envVars.AWS_REGION) {
+  console.error('❌ AWS_REGION is required in .env file');
+  process.exit(1);
+}
+if (!envVars.STAGE) {
+  console.error('❌ STAGE is required in .env file');
+  process.exit(1);
+}
+
+const projectName = envVars.PROJECT_NAME;
+const awsRegion = envVars.AWS_REGION;
 
 // Define which secrets to sync
 const secretMappings = [
@@ -127,21 +141,51 @@ for (const mapping of secretMappings) {
 // Sync SSM parameters (non-sensitive config)
 console.log('📝 Syncing SSM Parameters...');
 
+// First, sync PROJECT_NAME to a global parameter (used by CI/CD pipeline)
+try {
+  execSync(
+    `aws ssm put-parameter --name "/github/project-name" --value "${projectName}" --type String --description "Project name for CI/CD pipeline" --overwrite --region ${awsRegion}`,
+    { stdio: 'pipe' }
+  );
+  console.log(`   ✓ Global PROJECT_NAME parameter`);
+} catch (error) {
+  console.error(`   ❌ Failed to sync global PROJECT_NAME:`, error);
+}
+
 const ssmMappings = [
-  { name: 'Hosted Zone ID', key: 'HOSTED_ZONE_ID', paramName: `/${projectName}/${stage}/hosted-zone-id` },
-  { name: 'Hosted Zone Name', key: 'HOSTED_ZONE_NAME', paramName: `/${projectName}/${stage}/hosted-zone-name` },
-  { name: 'Images Bucket', key: 'IMAGES_BUCKET', paramName: `/${projectName}/${stage}/images-bucket` },
-  { name: 'Images CDN URL', key: 'IMAGES_CDN_URL', paramName: `/${projectName}/${stage}/images-cdn-url` },
-  { name: 'API Domain', key: 'API_DOMAIN', paramName: `/${projectName}/${stage}/api-domain` },
-  { name: 'CORS Domain Patterns', key: 'CORS_DOMAIN_PATTERNS', paramName: `/${projectName}/${stage}/cors-domain-patterns` },
-  { name: 'CORS Exact Origins', key: 'CORS_EXACT_ORIGINS', paramName: `/${projectName}/${stage}/cors-exact-origins` },
-  { name: 'CORS Parent Domains', key: 'CORS_PARENT_DOMAINS', paramName: `/${projectName}/${stage}/cors-parent-domains` },
+  // Required infrastructure variables
+  { name: 'Hosted Zone ID', key: 'HOSTED_ZONE_ID', paramName: `/${projectName}/${stage}/hosted-zone-id`, required: true },
+  { name: 'Hosted Zone Name', key: 'HOSTED_ZONE_NAME', paramName: `/${projectName}/${stage}/hosted-zone-name`, required: true },
+  
+  // GitHub configuration (required for CI/CD)
+  { name: 'GitHub Owner', key: 'GITHUB_OWNER', paramName: `/${projectName}/${stage}/github-owner`, required: true },
+  { name: 'GitHub Repo', key: 'GITHUB_REPO', paramName: `/${projectName}/${stage}/github-repo`, required: true },
+  { name: 'GitHub Branch', key: 'GITHUB_BRANCH', paramName: `/${projectName}/${stage}/github-branch`, required: true },
+  
+  // Optional infrastructure variables (have defaults in code)
+  { name: 'Images Bucket', key: 'IMAGES_BUCKET', paramName: `/${projectName}/${stage}/images-bucket`, required: false },
+  { name: 'Images Bucket Prefix', key: 'IMAGES_BUCKET_PREFIX', paramName: `/${projectName}/${stage}/images-bucket-prefix`, required: false },
+  { name: 'Images CDN URL', key: 'IMAGES_CDN_URL', paramName: `/${projectName}/${stage}/images-cdn-url`, required: false },
+  { name: 'API Domain', key: 'API_DOMAIN', paramName: `/${projectName}/${stage}/api-domain`, required: false },
+  
+  // CORS configuration (optional)
+  { name: 'CORS Domain Patterns', key: 'CORS_DOMAIN_PATTERNS', paramName: `/${projectName}/${stage}/cors-domain-patterns`, required: false },
+  { name: 'CORS Exact Origins', key: 'CORS_EXACT_ORIGINS', paramName: `/${projectName}/${stage}/cors-exact-origins`, required: false },
+  { name: 'CORS Parent Domains', key: 'CORS_PARENT_DOMAINS', paramName: `/${projectName}/${stage}/cors-parent-domains`, required: false },
+  
+  // Monitoring (optional)
+  { name: 'Alert Email', key: 'ALERT_EMAIL', paramName: `/${projectName}/${stage}/alert-email`, required: false },
 ];
 
 for (const mapping of ssmMappings) {
   if (!envVars[mapping.key]) {
-    console.log(`   ⚠️  ${mapping.name} (${mapping.key}) not found in .env.${stage}`);
-    continue;
+    if (mapping.required) {
+      console.error(`   ❌ ${mapping.name} (${mapping.key}) is REQUIRED but not found in .env.${stage}`);
+      process.exit(1);
+    } else {
+      console.log(`   ⏭️  ${mapping.name} (${mapping.key}) not found (optional)`);
+      continue;
+    }
   }
   
   try {

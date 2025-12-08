@@ -67,7 +67,10 @@ export class DatabaseStack extends cdk.Stack {
 
     props.dbSecret.grantRead(migrationRole);
 
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
     const migrationRunner = new lambdaNodejs.NodejsFunction(this, 'MigrationRunner', {
       functionName: `${projectName}-${props.stage}-migration-runner`,
       runtime: lambda.Runtime.NODEJS_20_X,

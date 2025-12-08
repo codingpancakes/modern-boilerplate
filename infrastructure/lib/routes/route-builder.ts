@@ -34,7 +34,10 @@ export class RouteBuilder {
   createHandler(config: HandlerConfig): lambdaNodejs.NodejsFunction {
     // Generate clean function name: postway-production-workos-webhook
     const stage = config.stage || this.stage;
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
     const functionName = stage 
       ? `${projectName}-${stage}-${config.name.replace(/([A-Z])/g, '-$1').toLowerCase().replace(/^-/, '')}`
       : undefined;

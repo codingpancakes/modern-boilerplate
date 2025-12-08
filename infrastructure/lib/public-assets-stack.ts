@@ -25,7 +25,10 @@ export class PublicAssetsStack extends cdk.Stack {
     super(scope, id, props);
 
     const { stage, domainName, hostedZoneId, assetsCertArn } = props;
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
     
     // Create bucket name for public assets
     const bucketName = stage === 'production' 

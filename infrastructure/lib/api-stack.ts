@@ -104,10 +104,14 @@ export class ApiStack extends cdk.Stack {
     }
 
     // Project name for resource naming
-    const projectName = process.env.PROJECT_NAME || 'postway';
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
 
     // Common Lambda environment variables
     const commonEnv = {
+      PROJECT_NAME: projectName,
       NODE_ENV: props.stage === "production" ? "production" : "staging",
       STAGE: props.stage,
       WORKOS_CLIENT_ID: process.env.WORKOS_CLIENT_ID || "",
