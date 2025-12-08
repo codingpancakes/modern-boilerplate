@@ -42,6 +42,10 @@ phases:
       - export CORS_DOMAIN_PATTERNS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-domain-patterns" --query 'Parameter.Value' --output text --region us-east-1)
       - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
       - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
+      - echo "Loading GitHub configuration..."
+      - export GITHUB_OWNER=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-owner" --query 'Parameter.Value' --output text --region us-east-1)
+      - export GITHUB_REPO=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-repo" --query 'Parameter.Value' --output text --region us-east-1)
+      - export GITHUB_BRANCH=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-branch" --query 'Parameter.Value' --output text --region us-east-1)
       - echo "Loading Secrets Manager secrets..."
       - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region us-east-1)
       - export WORKOS_CLIENT_ID=$(echo $WORKOS_SECRET | jq -r '.clientId')
