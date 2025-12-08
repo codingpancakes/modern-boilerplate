@@ -2,13 +2,14 @@ import { Tracer } from "@aws-lambda-powertools/tracer";
 
 // Initialize tracer once and export
 // PROJECT_NAME is set by Lambda environment variables (api-stack.ts)
-if (!process.env.PROJECT_NAME) {
-	throw new Error(
-		"PROJECT_NAME environment variable is required for tracer initialization",
-	);
-}
+// For local dev, allow fallback to avoid initialization errors
+const getServiceName = () => {
+	const projectName = process.env.PROJECT_NAME || 'local-dev';
+	return `${projectName}-api`;
+};
+
 export const tracer = new Tracer({
-	serviceName: `${process.env.PROJECT_NAME}-api`,
+	serviceName: getServiceName(),
 });
 
 /**
