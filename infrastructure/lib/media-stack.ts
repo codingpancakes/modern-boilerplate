@@ -25,13 +25,16 @@ export class MediaStack extends cdk.Stack {
 
     const { stage, domainName, hostedZoneId, imagesCertArn } = props;
     const projectName = process.env.PROJECT_NAME || 'postway';
-    const bucketName = process.env.IMAGES_BUCKET || 
-      (stage === 'production' 
-        ? `${projectName}-images-depot` 
-        : `${projectName}-images-depot-staging`);
+    const bucketName = process.env.IMAGES_BUCKET || `${projectName}-images-depot-${stage}`;
     
-    // Create S3 bucket for all environments
-    this.bucket = new s3.Bucket(this, 'ImagesBucket', {
+    // Import existing bucket or create new one
+    // For production, bucket already exists - import it
+    // For other environments, create new bucket
+    const bucketExists = stage === 'production';
+    
+    this.bucket = bucketExists
+      ? s3.Bucket.fromBucketName(this, 'ImagesBucket', bucketName)
+      : new s3.Bucket(this, 'ImagesBucket', {
         bucketName,
         versioned: false,
         publicReadAccess: false,

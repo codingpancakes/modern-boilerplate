@@ -181,19 +181,16 @@ aws cloudwatch describe-alarms --region us-east-1
 aws cloudwatch describe-alarm-history --alarm-name postway-production-api-high-5xx-rate
 ```
 
-### Check WAF Rules
+### Check API Gateway Throttling
 ```bash
-# List Web ACLs
-aws wafv2 list-web-acls --scope REGIONAL --region us-east-1
-
-# View WAF metrics
+# View API Gateway metrics
 aws cloudwatch get-metric-statistics \
-  --namespace AWS/WAFV2 \
-  --metric-name BlockedRequests \
-  --dimensions Name=Rule,Value=RateLimitRule \
-  --start-time 2024-01-01T00:00:00Z \
-  --end-time 2024-01-02T00:00:00Z \
-  --period 3600 \
+  --namespace AWS/ApiGateway \
+  --metric-name Count \
+  --dimensions Name=ApiName,Value=postway-production-api \
+  --start-time $(date -u -d '1 hour ago' +%s) \
+  --end-time $(date +%s) \
+  --period 300 \
   --statistics Sum
 ```
 
@@ -242,14 +239,12 @@ done
 
 ## Step 9: Security Hardening
 
-### Enable WAF Logging (Optional)
+### Enable API Gateway Logging (Optional)
 ```bash
-# Create S3 bucket for WAF logs
-aws s3 mb s3://postway-waf-logs-production
-
-# Enable logging
-aws wafv2 put-logging-configuration \
-  --logging-configuration ResourceArn=<web-acl-arn>,LogDestinationConfigs=s3://postway-waf-logs-production
+# API Gateway access logs are configured in api-stack.ts
+# Logs go to CloudWatch Logs automatically
+# View logs:
+aws logs tail /aws/apigateway/postway-production-api --follow
 ```
 
 ### Review Security Headers
@@ -305,7 +300,7 @@ Your backend is now production-ready with:
 - ✅ CI/CD pipeline (GitHub Actions)
 - ✅ Error tracking (Sentry)
 - ✅ Monitoring & alerting (CloudWatch)
-- ✅ Security (WAF, security headers, HTTPS)
+- ✅ Security (API Gateway throttling, input validation, security headers, HTTPS)
 - ✅ Performance optimization (authorizer caching)
 - ✅ Automated testing (unit + smoke tests)
 
@@ -343,17 +338,19 @@ aws logs tail /aws/lambda/postway-production-api --follow
 aws xray get-trace-summaries --start-time $(date -u -d '1 hour ago' +%s) --end-time $(date +%s)
 ```
 
-### WAF Blocking Legitimate Traffic
+### API Gateway Throttling Legitimate Traffic
 ```bash
-# Check WAF sampled requests
-aws wafv2 get-sampled-requests \
-  --web-acl-arn <web-acl-arn> \
-  --rule-metric-name RateLimitRule \
-  --scope REGIONAL \
-  --time-window StartTime=$(date -u -d '1 hour ago' +%s),EndTime=$(date +%s) \
-  --max-items 100
+# Check throttled requests
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApiGateway \
+  --metric-name 4XXError \
+  --dimensions Name=ApiName,Value=postway-production-api \
+  --start-time $(date -u -d '1 hour ago' +%s) \
+  --end-time $(date +%s) \
+  --period 300 \
+  --statistics Sum
 
-# Adjust rate limits or exclude rules as needed
+# Adjust throttling limits in infrastructure/lib/api-stack.ts if needed
 ```
 
 ---

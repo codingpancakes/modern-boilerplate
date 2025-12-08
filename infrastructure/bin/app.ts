@@ -7,7 +7,6 @@ import { DatabaseStack } from '../lib/database-stack';
 import { MonitoringStack } from '../lib/monitoring-stack';
 import { MediaStack } from '../lib/media-stack';
 import { PublicAssetsStack } from '../lib/public-assets-stack';
-import { WafStack } from '../lib/waf-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 
 const app = new cdk.App();
@@ -66,19 +65,10 @@ const apiStack = new ApiStack(app, `${stackPrefix}-ApiStack`, {
   dbSecret: securityStack.dbSecret,
 });
 
-// WAF stack (Web Application Firewall)
-const wafStack = new WafStack(app, `${stackPrefix}-WafStack`, {
-  env,
-  stage,
-  // Note: API Gateway ARN association must be done after API is created
-  // You can manually associate in AWS Console or add apiGatewayArn here
-});
-
 // Add dependencies
 apiStack.addDependency(securityStack);
 apiStack.addDependency(mediaStack);
-databaseStack.addDependency(securityStack);
-wafStack.addDependency(apiStack); // WAF needs API Gateway ARN
+databaseStack.addDependency(securityStack)
 
 // Independent stacks - no dependencies needed
 // Referenced to avoid unused variable warnings
