@@ -83,7 +83,7 @@ export const handler = handlerFn;
 // OPTION 2: With webhook signature validation
 // Uncomment and modify for webhook endpoints:
 /*
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'your-webhook-secret';
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
 
 const webhookHandlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
   logger.addContext(context);
