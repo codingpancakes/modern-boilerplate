@@ -11,7 +11,7 @@ import { Construct } from 'constructs';
 
 export interface PublicAssetsStackProps extends cdk.StackProps {
   stage: string;
-  domainName: string; // e.g., 'postway.ai'
+  domainName: string; 
   hostedZoneId?: string; // Route53 hosted zone ID
   assetsCertArn?: string; // Existing ACM certificate ARN for CloudFront
 }
@@ -261,7 +261,7 @@ export class PublicAssetsStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ExampleAssetUrls', {
       value: JSON.stringify({
         emailTemplate: `https://${this.assetsDomain}/emails/templates/welcome.html`,
-        logo: `https://${this.assetsDomain}/static/logos/postway-logo.png`,
+        logo: `https://${this.assetsDomain}/static/logos/logo.png`,
         css: `https://${this.assetsDomain}/static/css/styles.css`,
         marketingImage: `https://${this.assetsDomain}/marketing/images/hero-banner.jpg`,
       }),

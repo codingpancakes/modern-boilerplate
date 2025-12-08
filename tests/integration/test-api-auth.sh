@@ -6,6 +6,10 @@
 # Don't exit on error - we want to see all test results
 set +e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../scripts/lib/env-helper.sh"
+
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -22,11 +26,8 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-if [ "$STAGE" = "production" ]; then
-  API_URL="https://api.postway.services"
-else
-  API_URL="https://api-staging.postway.services"
-fi
+# Get API URL from environment
+API_URL=$(get_api_url "$STAGE")
 
 echo -e "${YELLOW}🧪 Testing $STAGE API with Authentication${NC}"
 echo "API URL: $API_URL"

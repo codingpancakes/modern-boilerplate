@@ -5,10 +5,16 @@
 
 set -e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/env-helper.sh"
+
 STAGE=${1:-staging}
 
+# Get API URL from environment
+BASE_URL=$(get_api_url "$STAGE")
+
 if [ "$STAGE" = "production" ]; then
-  BASE_URL="https://api.postway.services"
   echo "⚠️  WARNING: Testing throttling on PRODUCTION"
   echo "This will send 2000 requests to production."
   read -p "Are you sure? (yes/no): " confirm
@@ -16,8 +22,6 @@ if [ "$STAGE" = "production" ]; then
     echo "Aborted."
     exit 1
   fi
-else
-  BASE_URL="https://api-staging.postway.services"
 fi
 
 echo "🚀 Testing API Gateway Throttling on $STAGE"

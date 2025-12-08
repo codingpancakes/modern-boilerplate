@@ -11,7 +11,7 @@ import { Construct } from 'constructs';
 
 export interface MediaStackProps extends cdk.StackProps {
   stage: string;
-  domainName: string; // e.g., 'postway.services'
+  domainName: string; 
   hostedZoneId?: string; // Route53 hosted zone ID
   imagesCertArn?: string; // Existing ACM certificate ARN for CloudFront
 }

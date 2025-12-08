@@ -1,18 +1,34 @@
 const swaggerJsdoc = require('swagger-jsdoc');
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: '.env.staging' }); // Load env vars for docs generation
+
+// Get configuration from environment - fail fast if not set
+if (!process.env.PROJECT_NAME) {
+  console.error('❌ ERROR: PROJECT_NAME environment variable is required');
+  console.error('   Set it in .env.staging or .env.production');
+  process.exit(1);
+}
+if (!process.env.HOSTED_ZONE_NAME) {
+  console.error('❌ ERROR: HOSTED_ZONE_NAME environment variable is required');
+  console.error('   Set it in .env.staging or .env.production');
+  process.exit(1);
+}
+
+const projectName = process.env.PROJECT_NAME;
+const hostedZone = process.env.HOSTED_ZONE_NAME;
 
 // OpenAPI configuration
 const options = {
   definition: {
     openapi: '3.0.0',
     info: {
-      title: 'postway API',
+      title: `${projectName} API`,
       version: '1.0.0',
       description: 'Production-grade serverless REST API with TypeScript and Python Lambda support',
       contact: {
         name: 'API Support',
-        email: 'support@postway.services'
+        email: `support@${hostedZone}`
       }
     },
     servers: [
@@ -21,11 +37,11 @@ const options = {
         description: 'Local development server'
       },
       {
-        url: 'https://api-staging.postway.services',
+        url: `https://api-staging.${hostedZone}`,
         description: 'Staging environment'
       },
       {
-        url: 'https://api.postway.services',
+        url: `https://api.${hostedZone}`,
         description: 'Production environment'
       }
     ],

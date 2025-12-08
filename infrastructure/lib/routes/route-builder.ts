@@ -32,7 +32,7 @@ export class RouteBuilder {
    * Create a Lambda handler with standard configuration
    */
   createHandler(config: HandlerConfig): lambdaNodejs.NodejsFunction {
-    // Generate clean function name: postway-production-workos-webhook
+    // Generate clean function name: projectName-production-workos-webhook
     const stage = config.stage || this.stage;
     if (!process.env.PROJECT_NAME) {
       throw new Error('PROJECT_NAME environment variable is required');

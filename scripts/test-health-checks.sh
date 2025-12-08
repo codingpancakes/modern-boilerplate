@@ -5,13 +5,14 @@
 
 set -e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/env-helper.sh"
+
 STAGE=${1:-staging}
 
-if [ "$STAGE" = "production" ]; then
-  BASE_URL="https://api.postway.services"
-else
-  BASE_URL="https://api-staging.postway.services"
-fi
+# Get API URL from environment
+BASE_URL=$(get_api_url "$STAGE")
 
 echo "🏥 Testing Health Check Endpoints on $STAGE"
 echo "Base URL: $BASE_URL"

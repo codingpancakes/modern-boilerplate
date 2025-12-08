@@ -10,6 +10,10 @@
 # Don't exit on error - we want to see all test results
 set +e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../scripts/lib/env-helper.sh"
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -42,11 +46,8 @@ case "$STAGE" in
   local)
     API_URL="http://localhost:3000"
     ;;
-  staging)
-    API_URL="https://api-staging.postway.services"
-    ;;
-  production)
-    API_URL="https://api.postway.services"
+  staging|production)
+    API_URL=$(get_api_url "$STAGE")
     ;;
   *)
     echo -e "${RED}Error: Invalid stage '$STAGE'${NC}"

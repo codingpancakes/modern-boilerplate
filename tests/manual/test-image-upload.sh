@@ -5,6 +5,10 @@
 
 set -e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../scripts/lib/env-helper.sh"
+
 STAGE=${1:-staging}
 JWT_TOKEN=${2:-}
 
@@ -14,12 +18,8 @@ if [ -z "$JWT_TOKEN" ]; then
   exit 1
 fi
 
-# Set API URL based on stage
-if [ "$STAGE" = "production" ]; then
-  API_URL="https://api.postway.services"
-else
-  API_URL="https://api-staging.postway.services"
-fi
+# Get API URL from environment
+API_URL=$(get_api_url "$STAGE")
 
 echo "🧪 Testing Image Upload on $STAGE"
 echo "API: $API_URL"

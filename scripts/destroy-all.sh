@@ -6,8 +6,12 @@
 
 set -e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/env-helper.sh"
+
 STAGE=${1:-dev}
-PROJECT_NAME=${PROJECT_NAME:-postway}
+PROJECT_NAME=$(get_project_name "$STAGE")
 STACK_PREFIX="${PROJECT_NAME}-${STAGE}"
 REGION=${AWS_REGION:-us-east-1}
 

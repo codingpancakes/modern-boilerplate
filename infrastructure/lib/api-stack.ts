@@ -81,13 +81,19 @@ export class ApiStack extends cdk.Stack {
     const { stage } = props;
 
     // CORS is now handled dynamically in Lambda functions to support
-    // multi-tenant wildcard domains (*.postway.ai, *.postway.co)
+    // multi-tenant wildcard domains (*.domain.com)
     // See src/node/lib/cors.ts for the CORS configuration
+
+    // Project name for API naming
+    if (!process.env.PROJECT_NAME) {
+      throw new Error('PROJECT_NAME environment variable is required');
+    }
+    const projectName = process.env.PROJECT_NAME;
 
     // Create HTTP API
     // CORS is handled in Lambda functions to support multi-tenant wildcard domains
     this.httpApi = new apigwv2.HttpApi(this, "HttpApi", {
-      apiName: `${props.stage}-api`,
+      apiName: `${projectName}-${props.stage}-api`,
       description: "Production-grade serverless HTTP API",
       // No corsPreflight - handled in Lambda for dynamic multi-tenant support
       disableExecuteApiEndpoint: false,
@@ -102,12 +108,6 @@ export class ApiStack extends cdk.Stack {
         throttlingRateLimit: props.stage === "production" ? 1000 : 500,
       };
     }
-
-    // Project name for resource naming
-    if (!process.env.PROJECT_NAME) {
-      throw new Error('PROJECT_NAME environment variable is required');
-    }
-    const projectName = process.env.PROJECT_NAME;
 
     // Common Lambda environment variables
     const commonEnv = {
@@ -293,7 +293,7 @@ export class ApiStack extends cdk.Stack {
     // Custom domain configuration (optional)
     if (process.env.API_DOMAIN) {
       const apiDomain = process.env.API_DOMAIN;
-      const zoneName = process.env.HOSTED_ZONE_NAME; // e.g. postway.services
+      const zoneName = process.env.HOSTED_ZONE_NAME; 
       const certArn = process.env.API_CERT_ARN; // optional: existing ACM cert ARN
 
       let hostedZone: route53.IHostedZone | undefined;

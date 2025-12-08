@@ -5,8 +5,15 @@
 
 set -e
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/env-helper.sh"
+
 STAGE=${1:-staging}
 REGION=${AWS_REGION:-us-east-1}
+
+# Get project name from environment
+PROJECT_NAME=$(get_project_name "$STAGE")
 
 echo "🔍 Verifying Monitoring Setup for $STAGE"
 echo "Region: $REGION"
@@ -35,7 +42,7 @@ echo "1️⃣  Checking CloudWatch Alarms"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-ALARM_PREFIX="postway-$STAGE"
+ALARM_PREFIX="${PROJECT_NAME}-${STAGE}"
 
 # Get all alarms
 ALARMS=$(aws cloudwatch describe-alarms \
@@ -102,7 +109,7 @@ echo "2️⃣  Checking CloudWatch Dashboard"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-DASHBOARD_NAME="postway-$STAGE-dashboard"
+DASHBOARD_NAME="${PROJECT_NAME}-${STAGE}-api-dashboard"
 
 DASHBOARD=$(aws cloudwatch get-dashboard \
   --dashboard-name "$DASHBOARD_NAME" \
@@ -127,7 +134,7 @@ echo "3️⃣  Checking Lambda Functions"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-FUNCTION_PREFIX="postway-$STAGE"
+FUNCTION_PREFIX="${PROJECT_NAME}-${STAGE}"
 
 FUNCTIONS=$(aws lambda list-functions \
   --region "$REGION" \
@@ -165,7 +172,7 @@ else
   echo ""
   
   if [ "$TRACING_DISABLED" -gt 0 ]; then
-    echo "⚠️  Some functions don't have X-Ray tracing enabled"
+    echo "ℹ️  Some functions have X-Ray disabled (expected for CDK helpers, migration runner, and authorizer)"
   else
     echo "✅ All functions have X-Ray tracing enabled"
   fi
@@ -180,7 +187,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Find API Gateway by name
-API_NAME="postway-$STAGE-api"
+API_NAME="${PROJECT_NAME}-${STAGE}-api"
 
 API_ID=$(aws apigatewayv2 get-apis \
   --region "$REGION" \
@@ -231,7 +238,7 @@ echo "5️⃣  Checking SNS Alarm Topic"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-TOPIC_NAME="postway-$STAGE-alarms"
+TOPIC_NAME="${PROJECT_NAME}-${STAGE}-alarms"
 
 TOPIC_ARN=$(aws sns list-topics \
   --region "$REGION" \

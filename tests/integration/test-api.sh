@@ -3,13 +3,15 @@
 # API Testing Script
 # Usage: ./scripts/test-api.sh [staging|production]
 
+# Load environment helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../../scripts/lib/env-helper.sh"
+
 STAGE=${1:-staging}
 
-if [ "$STAGE" = "production" ]; then
-  API_URL="https://api.postway.services"
-else
-  API_URL="https://api-staging.postway.services"
-fi
+# Get API URL and project name from environment
+API_URL=$(get_api_url "$STAGE")
+PROJECT_NAME=$(get_project_name "$STAGE")
 
 echo "🧪 Testing $STAGE API: $API_URL"
 echo ""
@@ -21,13 +23,19 @@ curl -s $API_URL/v1/health | jq .
 echo ""
 
 # Test 2: CORS Preflight
-echo "2️⃣  CORS Preflight (from app.postway.ai)"
+# Use HOSTED_ZONE_NAME from environment, loaded by env-helper
+HOSTED_ZONE=${HOSTED_ZONE_NAME}
+if [ -z "$HOSTED_ZONE" ]; then
+  echo "⚠️  HOSTED_ZONE_NAME not set, skipping CORS test"
+else
+  echo "2️⃣  CORS Preflight (from app.${HOSTED_ZONE})"
 echo "OPTIONS $API_URL/v1/health"
-curl -s -X OPTIONS $API_URL/v1/health \
-  -H "Origin: https://app.postway.ai" \
-  -H "Access-Control-Request-Method: GET" \
-  -v 2>&1 | grep -E "(< HTTP|< access-control)"
-echo ""
+  curl -s -X OPTIONS $API_URL/v1/health \
+    -H "Origin: https://app.${HOSTED_ZONE}" \
+    -H "Access-Control-Request-Method: GET" \
+    -v 2>&1 | grep -E "(< HTTP|< access-control)"
+  echo ""
+fi
 
 # Test 3: Protected Endpoint (should fail without auth)
 echo "3️⃣  Protected Endpoint (no auth - should fail)"
@@ -44,8 +52,9 @@ echo ""
 
 # Test 5: Check API Gateway endpoint (fallback)
 echo "5️⃣  Direct API Gateway Endpoint"
+STACK_PREFIX=$(get_stack_prefix "$STAGE")
 GATEWAY_URL=$(aws cloudformation describe-stacks \
-  --stack-name postway-$STAGE-ApiStack \
+  --stack-name ${STACK_PREFIX}-ApiStack \
   --profile outdream \
   --region us-east-1 \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
