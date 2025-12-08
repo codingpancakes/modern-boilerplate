@@ -1,50 +1,12 @@
 import * as cdk from 'aws-cdk-lib';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
-import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
-import * as logs from 'aws-cdk-lib/aws-logs';
-import { Construct, IConstruct } from 'constructs';
-import { IAspect, Aspects } from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import { Construct } from 'constructs';
+import { Aspects } from 'aws-cdk-lib';
 import * as path from 'path';
-
-// CDK Aspect to add LogRetention with proper sequencing to avoid rate limits
-class LogRetentionAspect implements IAspect {
-  private lambdaFunctions: lambda.Function[] = [];
-  private stage: string;
-
-  constructor(stage: string) {
-    this.stage = stage;
-  }
-
-  visit(node: IConstruct): void {
-    if (node instanceof lambdaNodejs.NodejsFunction || node instanceof lambda.Function) {
-      this.lambdaFunctions.push(node);
-    }
-  }
-
-  public applyLogRetention(scope: Construct): void {
-    // Determine retention based on environment
-    const retention = 
-      this.stage === 'production' ? logs.RetentionDays.ONE_MONTH :
-      logs.RetentionDays.ONE_WEEK; // staging
-
-    this.lambdaFunctions.forEach((lambdaFunction, index) => {
-      const logRetention = new logs.LogRetention(scope, `${lambdaFunction.node.id}LogRetention`, {
-        logGroupName: `/aws/lambda/${lambdaFunction.functionName}`,
-        retention: retention,
-      });
-
-      // Add dependencies to serialize LogRetention creation (avoid rate limits)
-      if (index > 0) {
-        const previousRetention = scope.node.findChild(`${this.lambdaFunctions[index - 1].node.id}LogRetention`);
-        if (previousRetention) {
-          logRetention.node.addDependency(previousRetention);
-        }
-      }
-    });
-  }
-}
+import { LogRetentionAspect } from './utils/log-retention-aspect';
 
 export interface DatabaseStackProps extends cdk.StackProps {
   stage: string;

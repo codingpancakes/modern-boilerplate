@@ -9,6 +9,7 @@ import { MediaStack } from '../lib/media-stack';
 import { PublicAssetsStack } from '../lib/public-assets-stack';
 import { PipelineStack } from '../lib/pipeline-stack';
 import { CostMonitoringStack } from '../lib/cost-monitoring-stack';
+import { CloudTrailStack } from '../lib/cloudtrail-stack';
 
 const app = new cdk.App();
 
@@ -71,6 +72,12 @@ const costMonitoringStack = new CostMonitoringStack(app, `${stackPrefix}-CostMon
   monthlyBudget: stage === 'production' ? 200 : 50, // $200 prod, $50 staging
 });
 
+// CloudTrail stack (audit logging)
+const cloudTrailStack = new CloudTrailStack(app, `${stackPrefix}-CloudTrailStack`, {
+  env,
+  stage,
+});
+
 // Media stack (S3 buckets, CloudFront CDN)
 const mediaStack = new MediaStack(app, `${stackPrefix}-MediaStack`, {
   env,
@@ -113,6 +120,10 @@ monitoringStack.node.addValidation({
 });
 
 costMonitoringStack.node.addValidation({
+  validate: () => [],
+});
+
+cloudTrailStack.node.addValidation({
   validate: () => [],
 });
 

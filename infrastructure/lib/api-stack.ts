@@ -10,61 +10,14 @@ import * as logs from "aws-cdk-lib/aws-logs";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53targets from "aws-cdk-lib/aws-route53-targets";
-import { Construct, IConstruct } from "constructs";
-import { IAspect, Aspects } from "aws-cdk-lib";
+import { Construct } from "constructs";
+import { Aspects } from "aws-cdk-lib";
 import * as path from "path";
 import { RouteBuilder } from "./routes/route-builder";
 import { PublicRoutes } from "./routes/public-routes";
 import { ProtectedRoutes } from "./routes/protected-routes";
 import { InternalRoutes } from "./routes/internal-routes";
-
-// CDK Aspect to add LogRetention with proper sequencing to avoid rate limits
-class LogRetentionAspect implements IAspect {
-  private lambdaFunctions: lambda.Function[] = [];
-  private stage: string;
-
-  constructor(stage: string) {
-    this.stage = stage;
-  }
-
-  visit(node: IConstruct): void {
-    if (
-      node instanceof lambdaNodejs.NodejsFunction ||
-      node instanceof lambda.Function
-    ) {
-      this.lambdaFunctions.push(node);
-    }
-  }
-
-  // Called after all constructs are visited
-  public applyLogRetention(scope: Construct): void {
-    // Determine retention based on environment
-    const retention = 
-      this.stage === "production" ? logs.RetentionDays.ONE_MONTH :
-      logs.RetentionDays.ONE_WEEK; // staging
-
-    this.lambdaFunctions.forEach((lambdaFunction, index) => {
-      const logRetention = new logs.LogRetention(
-        scope,
-        `${lambdaFunction.node.id}LogRetention`,
-        {
-          logGroupName: `/aws/lambda/${lambdaFunction.functionName}`,
-          retention: retention,
-        }
-      );
-
-      // Add dependencies to serialize LogRetention creation (avoid rate limits)
-      if (index > 0) {
-        const previousRetention = scope.node.findChild(
-          `${this.lambdaFunctions[index - 1].node.id}LogRetention`
-        );
-        if (previousRetention) {
-          logRetention.node.addDependency(previousRetention);
-        }
-      }
-    });
-  }
-}
+import { LogRetentionAspect } from "./utils/log-retention-aspect";
 
 export interface ApiStackProps extends cdk.StackProps {
   stage: string;
