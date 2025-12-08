@@ -20,6 +20,111 @@ This is a production-ready AWS Lambda backend boilerplate with TypeScript, featu
 
 ---
 
+## 3-Tier Observability Architecture
+
+This backend is part of a **full-stack observability strategy** with clear separation of concerns:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 1: FRONTEND/PROXY (Product Analytics)                     │
+│  ─────────────────────────────────────────────────────────────  │
+│  Tool: PostHog                                                   │
+│  Tracks:                                                         │
+│    • User behavior & interactions                               │
+│    • Feature usage & adoption                                   │
+│    • Conversion funnels                                         │
+│    • A/B test results                                           │
+│    • Session recordings                                         │
+│    • User journeys                                              │
+│                                                                  │
+│  Why client-side: Product metrics are user-facing and           │
+│  context-rich (page views, clicks, time-on-page, etc.)          │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 2: BACKEND API (Infrastructure Metrics) ← YOU ARE HERE    │
+│  ─────────────────────────────────────────────────────────────  │
+│  Tool: AWS CloudWatch + X-Ray                                   │
+│  Tracks:                                                         │
+│    • API request/response metrics                               │
+│    • Error rates (4xx/5xx)                                      │
+│    • Lambda performance (duration, memory, cold starts)         │
+│    • Database query performance                                 │
+│    • Cost tracking & budgets                                    │
+│    • Distributed tracing (X-Ray)                                │
+│                                                                  │
+│  Why backend: Infrastructure health, performance, and costs     │
+│  are server-side concerns that don't require user context       │
+└─────────────────────┬───────────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TIER 3: INFRASTRUCTURE (Audit & Compliance)                    │
+│  ─────────────────────────────────────────────────────────────  │
+│  Tool: AWS CloudTrail                                           │
+│  Tracks:                                                         │
+│    • All AWS API calls (who, what, when, where)                 │
+│    • Security events & access attempts                          │
+│    • Infrastructure changes                                     │
+│    • Compliance audit trail                                     │
+│    • Forensic investigation data                                │
+│                                                                  │
+│  Why separate: Compliance and security auditing require         │
+│  immutable, tamper-proof logs independent of application code   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### **Benefits of This Architecture**
+
+| Benefit | Description |
+|---------|-------------|
+| **Separation of Concerns** | Each tier focuses on its domain expertise |
+| **Cost Optimization** | No duplicate tracking across layers |
+| **Performance** | Backend doesn't track user behavior (faster responses) |
+| **Compliance** | CloudTrail provides immutable audit logs |
+| **Scalability** | Each tier scales independently |
+| **Clarity** | Clear ownership: Frontend team = PostHog, Backend team = CloudWatch |
+
+### **What This Backend Tracks**
+
+✅ **Infrastructure Metrics (CloudWatch):**
+- Request count, latency (p50, p95, p99)
+- Error rates (4xx client errors, 5xx server errors)
+- Lambda metrics (invocations, duration, memory, throttles, concurrent executions)
+- Database connection health
+- S3 upload/download metrics
+- Cost per service
+
+✅ **Distributed Tracing (X-Ray):**
+- Request flow across Lambda functions
+- Database query performance
+- External API call latency
+- Error stack traces with full context
+
+✅ **Audit Logging (CloudTrail):**
+- All AWS API calls (IAM, Lambda, S3, Secrets Manager, etc.)
+- Security events (unauthorized access attempts)
+- Infrastructure changes (stack deployments, configuration updates)
+
+### **What This Backend Does NOT Track**
+
+❌ **Product Analytics (Handled by Frontend/Proxy):**
+- User signups, logins, profile updates
+- Feature usage (which features users interact with)
+- Page views, button clicks, form submissions
+- User journeys and conversion funnels
+- A/B test variants and results
+- Session recordings
+
+**Why?** Product analytics require rich user context (session data, page context, UI interactions) that only exists client-side. Tracking these in the backend would:
+- Duplicate data (frontend already tracks it)
+- Add unnecessary latency to API responses
+- Increase costs (CloudWatch custom metrics are expensive)
+- Violate separation of concerns
+
+---
+
 ## Project Structure
 
 ```
