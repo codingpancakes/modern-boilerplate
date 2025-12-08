@@ -19,52 +19,44 @@ export class SecurityStack extends cdk.Stack {
     }
     const projectName = process.env.PROJECT_NAME;
 
-    // Get values from environment variables
+    // Get values from environment variables - fail fast if missing
     const workosClientId = process.env.WORKOS_CLIENT_ID;
     const databaseUrl = process.env.DATABASE_URL;
+
+    // Validate required secrets
+    if (!workosClientId) {
+      throw new Error(
+        'WORKOS_CLIENT_ID environment variable is required. ' +
+        'Set it in your .env file and run: pnpm sync-secrets ' + props.stage
+      );
+    }
+    if (!databaseUrl) {
+      throw new Error(
+        'DATABASE_URL environment variable is required. ' +
+        'Set it in your .env file and run: pnpm sync-secrets ' + props.stage
+      );
+    }
 
     // WorkOS credentials secret - populated from env vars
     this.workosSecret = new secretsmanager.Secret(this, 'WorkOSSecret', {
       secretName: `/${projectName}/${props.stage}/workos`,
       description: `${projectName} WorkOS API credentials`,
-      secretStringValue: workosClientId
-        ? cdk.SecretValue.unsafePlainText(
-            JSON.stringify({
-              clientId: workosClientId,
-            })
-          )
-        : undefined,
-      generateSecretString: workosClientId
-        ? undefined
-        : {
-            secretStringTemplate: JSON.stringify({
-              clientId: 'REPLACE_WITH_ACTUAL_CLIENT_ID',
-            }),
-            generateStringKey: 'dummy',
-            excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
-          },
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        JSON.stringify({
+          clientId: workosClientId,
+        })
+      ),
     });
 
     // Database credentials secret - populated from env vars
     this.dbSecret = new secretsmanager.Secret(this, 'DatabaseSecret', {
       secretName: `/${projectName}/${props.stage}/database`,
       description: `${projectName} Neon database credentials`,
-      secretStringValue: databaseUrl
-        ? cdk.SecretValue.unsafePlainText(
-            JSON.stringify({
-              url: databaseUrl,
-            })
-          )
-        : undefined,
-      generateSecretString: databaseUrl
-        ? undefined
-        : {
-            secretStringTemplate: JSON.stringify({
-              url: 'REPLACE_WITH_DATABASE_URL',
-            }),
-            generateStringKey: 'dummy',
-            excludeCharacters: ' %+~`#$&*()|[]{}:;<>?!\'/@"\\',
-          },
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        JSON.stringify({
+          url: databaseUrl,
+        })
+      ),
     });
 
     // Output secret ARNs for reference
