@@ -1,6 +1,7 @@
 import * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
 import * as apigwv2Integrations from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
 import * as cdk from "aws-cdk-lib";
+import * as sqs from "aws-cdk-lib/aws-sqs";
 import { Construct } from "constructs";
 import { RouteBuilder } from "./route-builder";
 
@@ -12,12 +13,12 @@ import { RouteBuilder } from "./route-builder";
  */
 export class PublicRoutes {
   constructor(
-    scope: Construct,
+    private scope: Construct,
     httpApi: apigwv2.HttpApi,
     routeBuilder: RouteBuilder
   ) {
     this.setupHealthRoutes(httpApi, routeBuilder);
-    this.setupWebhookRoutes(httpApi, routeBuilder);
+    this.setupWebhookRoutes(this.scope, httpApi, routeBuilder);
     this.setupCorsRoutes(httpApi, routeBuilder);
   }
 
@@ -31,6 +32,7 @@ export class PublicRoutes {
       path: "handlers/utils/health.ts",
       memorySize: 256,
       timeout: cdk.Duration.seconds(5),
+      reservedConcurrentExecutions: 5, // Health checks don't need much
     });
 
     httpApi.addRoutes({
@@ -48,6 +50,7 @@ export class PublicRoutes {
       path: "handlers/utils/health-detailed.ts",
       memorySize: 512,
       timeout: cdk.Duration.seconds(10),
+      reservedConcurrentExecutions: 5,
     });
 
     httpApi.addRoutes({
@@ -61,15 +64,27 @@ export class PublicRoutes {
   }
 
   private setupWebhookRoutes(
+    scope: Construct,
     httpApi: apigwv2.HttpApi,
     routeBuilder: RouteBuilder
   ) {
+    // Create Dead Letter Queue for webhook failures
+    // Retains failed events for 14 days for debugging and manual replay
+    const webhookDLQ = new sqs.Queue(scope, "WebhookDLQ", {
+      queueName: `${process.env.PROJECT_NAME}-${process.env.STAGE || 'dev'}-webhook-dlq`,
+      retentionPeriod: cdk.Duration.days(14),
+      // Enable encryption for sensitive webhook data
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+    });
+
     // WorkOS webhook (HMAC verification in handler)
     const workosHandler = routeBuilder.createHandler({
       name: "WorkOSWebhookHandler",
       path: "handlers/webhooks/workos.ts",
       memorySize: 512,
       timeout: cdk.Duration.seconds(15),
+      reservedConcurrentExecutions: 10, // Limit concurrent webhook processing
+      deadLetterQueue: webhookDLQ, // Capture failed invocations
     });
 
     httpApi.addRoutes({
@@ -92,6 +107,7 @@ export class PublicRoutes {
       memorySize: 256,
       timeout: cdk.Duration.seconds(3),
       logRetention: undefined, // Disabled to avoid AWS rate limits
+      reservedConcurrentExecutions: 10, // CORS preflight requests
     });
 
     httpApi.addRoutes({

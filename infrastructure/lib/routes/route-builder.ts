@@ -14,6 +14,8 @@ export interface HandlerConfig {
   handler?: string; // For multi-handler files like status.ts
   logRetention?: any;
   stage?: string; // For generating clean function names
+  reservedConcurrentExecutions?: number; // Limit concurrent invocations
+  deadLetterQueue?: any; // SQS queue for failed invocations
 }
 
 /**
@@ -56,6 +58,8 @@ export class RouteBuilder {
       role: this.lambdaRole,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: config.logRetention,
+      reservedConcurrentExecutions: config.reservedConcurrentExecutions,
+      deadLetterQueue: config.deadLetterQueue,
       bundling: {
         minify: true,
         sourceMap: true,

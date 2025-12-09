@@ -2,23 +2,37 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { userResolvers as resolvers } from "@/handlers/graphql/resolvers/users";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 
-// Mock database
-const mockDb = {
+// Mock database with Drizzle query API structure
+const createMockDb = () => ({
+	query: {
+		users: {
+			findFirst: vi.fn(),
+		},
+		profiles: {
+			findFirst: vi.fn(),
+		},
+		organizationMembers: {
+			findFirst: vi.fn(),
+		},
+	},
 	select: vi.fn(),
 	update: vi.fn(),
-};
+});
 
 // Mock context
-const createMockContext = (overrides = {}): GraphQLContext => ({
-	userId: "test-user-id",
-	orgId: "test-org-id",
-	role: "MEMBER",
-	email: "test@example.com",
-	providerSubject: "workos-123",
-	claims: {},
-	db: mockDb as any,
-	...overrides,
-});
+const createMockContext = (overrides = {}): GraphQLContext => {
+	const mockDb = createMockDb();
+	return {
+		userId: "test-user-id",
+		orgId: "test-org-id",
+		role: "MEMBER",
+		email: "test@example.com",
+		providerSubject: "workos-123",
+		claims: {},
+		db: mockDb as any,
+		...overrides,
+	};
+};
 
 describe("User Resolvers", () => {
 	beforeEach(() => {
@@ -35,31 +49,18 @@ describe("User Resolvers", () => {
 				type: "MEMBER",
 			};
 
-			mockDb.select.mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					where: vi.fn().mockReturnValue({
-						limit: vi.fn().mockResolvedValue([mockUser]),
-					}),
-				}),
-			});
-
 			const context = createMockContext();
+			(context.db.query.users.findFirst as any).mockResolvedValue(mockUser);
+
 			const result = await resolvers.Query.me(null, {}, context);
 
 			expect(result).toEqual(mockUser);
-			expect(mockDb.select).toHaveBeenCalled();
+			expect(context.db.query.users.findFirst).toHaveBeenCalled();
 		});
 
 		it("should throw error if user not found", async () => {
-			mockDb.select.mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					where: vi.fn().mockReturnValue({
-						limit: vi.fn().mockResolvedValue([]),
-					}),
-				}),
-			});
-
 			const context = createMockContext();
+			(context.db.query.users.findFirst as any).mockResolvedValue(undefined);
 
 			await expect(resolvers.Query.me(null, {}, context)).rejects.toThrow();
 		});
@@ -74,7 +75,8 @@ describe("User Resolvers", () => {
 				lastName: "User",
 			};
 
-			mockDb.update.mockReturnValue({
+			const context = createMockContext();
+			(context.db.update as any).mockReturnValue({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -82,13 +84,12 @@ describe("User Resolvers", () => {
 				}),
 			});
 
-			const context = createMockContext();
 			const input = { firstName: "Updated" };
 
 			const result = await resolvers.Mutation.updateMe(null, { input }, context);
 
 			expect(result.firstName).toBe("Updated");
-			expect(mockDb.update).toHaveBeenCalled();
+			expect(context.db.update).toHaveBeenCalled();
 		});
 
 		it("should sanitize input data", async () => {
@@ -103,11 +104,11 @@ describe("User Resolvers", () => {
 				}),
 			});
 
-			mockDb.update.mockReturnValue({
+			const context = createMockContext();
+			(context.db.update as any).mockReturnValue({
 				set: mockSet,
 			});
 
-			const context = createMockContext();
 			const input = {
 				firstName: "Clean",
 				// @ts-ignore - testing sanitization
@@ -129,7 +130,8 @@ describe("User Resolvers", () => {
 				preferredName: "TestNick",
 			};
 
-			mockDb.update.mockReturnValue({
+			const context = createMockContext();
+			(context.db.update as any).mockReturnValue({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedProfile]),
@@ -137,7 +139,6 @@ describe("User Resolvers", () => {
 				}),
 			});
 
-			const context = createMockContext();
 			const input = { preferredName: "TestNick" };
 
 			const result = await resolvers.Mutation.updateProfile(
@@ -162,8 +163,10 @@ describe("User Resolvers", () => {
 				preferredName: "UpdatedNick",
 			};
 
+			const context = createMockContext();
+
 			// Mock user update
-			mockDb.update.mockReturnValueOnce({
+			(context.db.update as any).mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -172,15 +175,13 @@ describe("User Resolvers", () => {
 			});
 
 			// Mock profile update
-			mockDb.update.mockReturnValueOnce({
+			(context.db.update as any).mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedProfile]),
 					}),
 				}),
 			});
-
-			const context = createMockContext();
 			const args = {
 				user: { firstName: "UpdatedFirst" },
 				profile: { preferredName: "UpdatedNick" },
@@ -207,8 +208,10 @@ describe("User Resolvers", () => {
 				preferredName: "Existing",
 			};
 
+			const context = createMockContext();
+
 			// Mock user update
-			mockDb.update.mockReturnValueOnce({
+			(context.db.update as any).mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -217,15 +220,7 @@ describe("User Resolvers", () => {
 			});
 
 			// Mock profile fetch (not update)
-			mockDb.select.mockReturnValueOnce({
-				from: vi.fn().mockReturnValue({
-					where: vi.fn().mockReturnValue({
-						limit: vi.fn().mockResolvedValue([existingProfile]),
-					}),
-				}),
-			});
-
-			const context = createMockContext();
+			(context.db.query.profiles.findFirst as any).mockResolvedValue(existingProfile);
 			const args = {
 				user: { firstName: "UpdatedFirst" },
 			};
@@ -249,16 +244,9 @@ describe("User Resolvers", () => {
 				photoUrl: "https://example.com/photo.jpg",
 			};
 
-			mockDb.select.mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					where: vi.fn().mockReturnValue({
-						limit: vi.fn().mockResolvedValue([mockProfile]),
-					}),
-				}),
-			});
-
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
+			(context.db.query.profiles.findFirst as any).mockResolvedValue(mockProfile);
 
 			const result = await resolvers.User.profile(parent, {}, context);
 
@@ -281,16 +269,15 @@ describe("User Resolvers", () => {
 				},
 			];
 
-			mockDb.select.mockReturnValue({
+			const parent = { id: "test-user-id" };
+			const context = createMockContext();
+			(context.db.select as any).mockReturnValue({
 				from: vi.fn().mockReturnValue({
 					leftJoin: vi.fn().mockReturnValue({
 						where: vi.fn().mockResolvedValue(mockOrgs),
 					}),
 				}),
 			});
-
-			const parent = { id: "test-user-id" };
-			const context = createMockContext();
 
 			const result = await resolvers.User.organizations(parent, {}, context);
 

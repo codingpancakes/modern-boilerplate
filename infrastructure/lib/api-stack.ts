@@ -257,6 +257,7 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined,
+      reservedConcurrentExecutions: 30, // GraphQL is primary API, needs high concurrency
       bundling: {
         minify: true,
         sourceMap: true,
@@ -299,6 +300,7 @@ export class ApiStack extends cdk.Stack {
       environment: {
         STAGE: props.stage,
       },
+      reservedConcurrentExecutions: 5, // Docs are low traffic
       bundling: {
         minify: true,
         sourceMap: false,
