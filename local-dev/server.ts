@@ -17,8 +17,13 @@ import { handler as usersMeHandler } from '../src/node/handlers/users/me';
 import { handler as usersUpdateHandler } from '../src/node/handlers/users/update';
 import { handler as testApiKeyHandler } from '../src/node/handlers/test/api-key';
 import { handler as testWebhookHandler } from '../src/node/handlers/test/webhook';
-import { handler as graphqlHandler } from '../src/node/handlers/graphql/handler';
+// GraphQL handler needs special treatment - don't import the Lambda handler
 import { handler as graphqlDocsHandler } from '../src/node/handlers/graphql/docs';
+import { ApolloServer } from '@apollo/server';
+import { userResolvers } from '../src/node/handlers/graphql/resolvers/users';
+import { mediaResolvers } from '../src/node/handlers/graphql/resolvers/media';
+import { typeDefs } from '../src/node/handlers/graphql/schema';
+import { getDb } from '../src/node/lib/db';
 
 // Disable AWS Lambda Powertools tracing in local mode
 process.env._X_AMZN_TRACE_ID = 'Root=1-00000000-000000000000000000000000';
@@ -35,6 +40,44 @@ app.use(cors());
 // Increase body size limit to 50MB for image uploads
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Create Apollo Server for GraphQL
+const resolvers = {
+  Query: {
+    ...userResolvers.Query,
+    ...mediaResolvers.Query,
+  },
+  Mutation: {
+    ...userResolvers.Mutation,
+    ...mediaResolvers.Mutation,
+  },
+  User: userResolvers.User,
+  Profile: userResolvers.Profile,
+  OrganizationMembership: userResolvers.OrganizationMembership,
+  Organization: userResolvers.Organization,
+};
+
+const apolloServer = new ApolloServer({
+  typeDefs,
+  resolvers,
+  introspection: true,
+  formatError: (error) => {
+    console.error('GraphQL Error:', error);
+    return {
+      message: error.message,
+      extensions: {
+        code: error.extensions?.code || 'INTERNAL_SERVER_ERROR',
+      },
+    };
+  },
+});
+
+// Start Apollo Server
+apolloServer.start().then(() => {
+  console.log('✅ Apollo Server started');
+}).catch((err) => {
+  console.error('❌ Failed to start Apollo Server:', err);
+});
 
 // WorkOS access token verification
 const CLIENT_ID = process.env.WORKOS_CLIENT_ID;
@@ -200,7 +243,6 @@ const handlerMap: Record<string, Function> = {
   '../src/node/handlers/users/update': usersUpdateHandler,
   '../src/node/handlers/test/api-key': testApiKeyHandler,
   '../src/node/handlers/test/webhook': testWebhookHandler,
-  '../src/node/handlers/graphql/handler': graphqlHandler,
   '../src/node/handlers/graphql/docs': graphqlDocsHandler,
 };
 
@@ -271,9 +313,111 @@ app.patch('/v1/users/me', requireAuth, wrapHandler('../src/node/handlers/users/u
 app.get('/v1/test/api-key', wrapHandler('../src/node/handlers/test/api-key'));
 app.post('/v1/test/webhook', wrapHandler('../src/node/handlers/test/webhook'));
 
-// GraphQL endpoints
-app.post('/v1/graphql', requireAuth, wrapHandler('../src/node/handlers/graphql/handler'));
-app.get('/v1/graphql', requireAuth, wrapHandler('../src/node/handlers/graphql/handler')); // For GraphQL Playground introspection
+// GraphQL endpoints - handled directly by Apollo Server
+app.post('/v1/graphql', requireAuth, async (req, res) => {
+  try {
+    const user = (req as any).user;
+    const db = await getDb();
+    
+    // Look up internal user ID from provider subject (WorkOS ID -> internal UUID)
+    const { authIdentities } = await import('../src/node/db/schema/index');
+    const { eq } = await import('drizzle-orm');
+    
+    const providerSubject = user.sub;
+    const authResult = await db
+      .select({ userId: authIdentities.userId })
+      .from(authIdentities)
+      .where(eq(authIdentities.providerSubject, providerSubject))
+      .limit(1);
+    
+    if (!authResult || authResult.length === 0 || !authResult[0].userId) {
+      return res.status(401).json({ errors: [{ message: 'Unauthorized' }] });
+    }
+    
+    const userId = authResult[0].userId;
+    
+    const context = {
+      userId, // Internal UUID
+      orgId: user.org_id || '',
+      role: user.role || 'member',
+      email: user.email || '',
+      providerSubject, // WorkOS ID
+      claims: user,
+      db,
+    };
+    
+    const { query, variables, operationName } = req.body;
+    
+    const response = await apolloServer.executeOperation(
+      { query, variables, operationName },
+      { contextValue: context }
+    );
+    
+    if (response.body.kind === 'single') {
+      res.status(200).json(response.body.singleResult);
+    } else {
+      res.status(200).json({ errors: [{ message: 'Incremental delivery not supported' }] });
+    }
+  } catch (error) {
+    console.error('GraphQL execution error:', error);
+    res.status(500).json({ errors: [{ message: 'Internal server error' }] });
+  }
+});
+
+app.get('/v1/graphql', requireAuth, async (req, res) => {
+  // Support GET for introspection queries
+  const query = req.query.query as string;
+  if (!query) {
+    return res.status(400).json({ errors: [{ message: 'Query parameter required' }] });
+  }
+  
+  try {
+    const user = (req as any).user;
+    const db = await getDb();
+    
+    // Look up internal user ID from provider subject (WorkOS ID -> internal UUID)
+    const { authIdentities } = await import('../src/node/db/schema/index');
+    const { eq } = await import('drizzle-orm');
+    
+    const providerSubject = user.sub;
+    const authResult = await db
+      .select({ userId: authIdentities.userId })
+      .from(authIdentities)
+      .where(eq(authIdentities.providerSubject, providerSubject))
+      .limit(1);
+    
+    if (!authResult || authResult.length === 0 || !authResult[0].userId) {
+      return res.status(401).json({ errors: [{ message: 'Unauthorized' }] });
+    }
+    
+    const userId = authResult[0].userId;
+    
+    const context = {
+      userId, // Internal UUID
+      orgId: user.org_id || '',
+      role: user.role || 'member',
+      email: user.email || '',
+      providerSubject, // WorkOS ID
+      claims: user,
+      db,
+    };
+    
+    const response = await apolloServer.executeOperation(
+      { query },
+      { contextValue: context }
+    );
+    
+    if (response.body.kind === 'single') {
+      res.status(200).json(response.body.singleResult);
+    } else {
+      res.status(200).json({ errors: [{ message: 'Incremental delivery not supported' }] });
+    }
+  } catch (error) {
+    console.error('GraphQL execution error:', error);
+    res.status(500).json({ errors: [{ message: 'Internal server error' }] });
+  }
+});
+
 app.get('/v1/graphql/docs', wrapHandler('../src/node/handlers/graphql/docs')); // Public docs
 
 app.listen(PORT, () => {

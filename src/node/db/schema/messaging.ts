@@ -114,7 +114,7 @@ export const templates = pgTable(
 			(): AnyPgColumn => templateVersions.id,
 			{ onDelete: "set null" },
 		),
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",
@@ -232,7 +232,7 @@ export const messages = pgTable(
 		fromAddress: text("from_address"),
 		toAddress: text("to_address"),
 		subject: text("subject"),
-		sendStatus: messageStatus("send_status").default("queued"),
+		sendStatus: messageStatus("send_status").default("QUEUED"),
 		errorCode: text("error_code"),
 		errorMessage: text("error_message"),
 		queuedAt: timestamp("queued_at", { withTimezone: true, mode: "string" }),
@@ -339,7 +339,7 @@ export const experiments = pgTable(
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
-		status: experimentStatus("status").default("draft"),
+		status: experimentStatus("status").default("DRAFT"),
 		winnerCriteria: text("winner_criteria"), // open_rate, click_rate, conversion, revenue
 		winnerMetric: text("winner_metric"),
 		variants: jsonb("variants"), // [{id, name, templateId, percentage, weight}]
@@ -347,7 +347,7 @@ export const experiments = pgTable(
 		endedAt: timestamp("ended_at", { withTimezone: true, mode: "string" }),
 		winnerId: text("winner_id"),
 		results: jsonb("results"),
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",
@@ -389,7 +389,7 @@ export const webhooks = pgTable(
 		url: text("url").notNull(),
 		events: text("events").array().notNull(), // ['message.sent', 'message.delivered', 'contact.created']
 		secret: text("secret"),
-		status: webhookStatus("status").default("active"),
+		status: webhookStatus("status").default("ACTIVE"),
 		headers: jsonb("headers"), // Custom headers to send
 		retryPolicy: jsonb("retry_policy"), // {maxRetries, backoffMultiplier}
 		lastTriggeredAt: timestamp("last_triggered_at", {
@@ -405,7 +405,7 @@ export const webhooks = pgTable(
 			mode: "string",
 		}),
 		failureCount: integer("failure_count").default(0),
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",

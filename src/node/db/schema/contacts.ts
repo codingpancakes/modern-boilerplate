@@ -30,7 +30,7 @@ export const contacts = pgTable(
 		lastName: text("last_name"),
 		locale: text("locale"),
 		timezone: text("timezone"),
-		status: contactStatus("status").default("active"),
+		status: contactStatus("status").default("ACTIVE"),
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
 			mode: "string",
@@ -81,7 +81,7 @@ export const contactLists = pgTable(
 		listType: text("list_type"),
 		isPrimary: boolean("is_primary").default(false),
 		isSystem: boolean("is_system").default(false),
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
@@ -149,7 +149,7 @@ export const contactSegments = pgTable(
 		definition: jsonb("definition"),
 		materializationMode: text("materialization_mode"),
 		source: text("source"),
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
@@ -268,7 +268,7 @@ export const contactSubscriptions = pgTable(
 			{ onDelete: "set null" },
 		),
 		channelKind: text("channel_kind"),
-		status: subscriptionStatus("status").default("subscribed"),
+		status: subscriptionStatus("status").default("SUBSCRIBED"),
 		source: text("source"),
 		reason: text("reason"),
 		occurredAt: timestamp("occurred_at", {

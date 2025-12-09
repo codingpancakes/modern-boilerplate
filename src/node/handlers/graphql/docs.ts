@@ -1,11 +1,14 @@
-import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda";
+import type {
+	APIGatewayProxyEventV2,
+	APIGatewayProxyResultV2,
+} from "aws-lambda";
 
 /**
  * GraphiQL Documentation Handler
- * 
+ *
  * Serves an interactive GraphQL explorer UI similar to Swagger UI for REST APIs.
  * This handler returns the GraphiQL HTML interface that connects to your GraphQL endpoint.
- * 
+ *
  * Access at: /graphql/docs
  */
 export const handler = async (

@@ -4,23 +4,19 @@ import {
 	S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import {
-	sanitizeFilename,
-	validateFileExtension,
-	validateFileSize,
-} from "../../../lib/sanitize";
+import { sanitizeFilename, validateFileExtension } from "../../../lib/sanitize";
 import type { GraphQLContext } from "../context";
 
 const s3Client = new S3Client({
 	region: process.env.AWS_REGION || "us-east-1",
 });
-const IMAGES_BUCKET = process.env.IMAGES_BUCKET!;
+const IMAGES_BUCKET = process.env.IMAGES_BUCKET ?? "";
 const CDN_URL = process.env.CDN_URL || "";
 
 export const mediaResolvers = {
 	Query: {
 		images: async (
-			parent: any,
+			_parent: unknown,
 			{
 				category,
 				limit = 50,
@@ -42,14 +38,14 @@ export const mediaResolvers = {
 			const response = await s3Client.send(command);
 
 			const images = (response.Contents || []).map((item) => ({
-				key: item.Key!,
+				key: item.Key ?? "",
 				url: CDN_URL
 					? `${CDN_URL}/${item.Key}`
 					: `https://${IMAGES_BUCKET}.s3.amazonaws.com/${item.Key}`,
 				size: item.Size || 0,
 				lastModified:
 					item.LastModified?.toISOString() || new Date().toISOString(),
-				category: item.Key!.split("/")[1] || null,
+				category: item.Key?.split("/")[1] || null,
 			}));
 
 			return {
@@ -62,7 +58,7 @@ export const mediaResolvers = {
 
 	Mutation: {
 		generateImageUploadUrl: async (
-			parent: any,
+			_parent: unknown,
 			{
 				filename,
 				contentType,

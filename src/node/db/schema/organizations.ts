@@ -376,8 +376,8 @@ export const organizationMembers = pgTable(
 			onDelete: "cascade",
 		}),
 		userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
-		role: orgRole("role").default("member"),
-		status: assignmentStatus("status").default("active"),
+		role: orgRole("role").default("MEMBER"),
+		status: assignmentStatus("status").default("ACTIVE"),
 		metadata: jsonb("metadata"),
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
@@ -407,7 +407,7 @@ export const resourceOwners = pgTable(
 		resourceId: uuid("resource_id").notNull(),
 		ownerType: ownerType("owner_type").notNull(),
 		ownerId: uuid("owner_id").notNull(),
-		ownershipLevel: ownershipLevel("ownership_level").default("primary"),
+		ownershipLevel: ownershipLevel("ownership_level").default("PRIMARY"),
 		permissions: jsonb("permissions"),
 		createdAt: timestamp("created_at", {
 			withTimezone: true,

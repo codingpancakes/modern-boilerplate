@@ -14,11 +14,11 @@ import { Errors } from "./errors";
  * Role hierarchy for permission checks
  */
 const ROLE_HIERARCHY = [
-	"viewer",
-	"member",
-	"manager",
-	"admin",
-	"owner",
+	"VIEWER",
+	"MEMBER",
+	"MANAGER",
+	"ADMIN",
+	"OWNER",
 ] as const;
 type OrgRole = (typeof ROLE_HIERARCHY)[number];
 
@@ -160,7 +160,7 @@ export function hasMinRole(userRole: OrgRole, minRole: OrgRole): boolean {
  * }
  */
 export function isOperator(userType: string): boolean {
-	return userType === "operator";
+	return userType === "OPERATOR";
 }
 
 /**

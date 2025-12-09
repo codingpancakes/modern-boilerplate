@@ -33,7 +33,7 @@ export const journeys = pgTable(
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
-		status: journeyStatus("status").default("draft"),
+		status: journeyStatus("status").default("DRAFT"),
 		entryMode: text("entry_mode"),
 		entryContactListId: uuid("entry_contact_list_id").references(
 			() => contactLists.id,
@@ -47,7 +47,7 @@ export const journeys = pgTable(
 		definition: jsonb("definition"),
 		version: integer("version").default(1).notNull(),
 		settings: jsonb("settings"), // { max_duration_days: 30, allow_re_entry: false, timezone: 'UTC' }
-		visibility: resourceVisibility("visibility").default("private"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",
@@ -108,8 +108,8 @@ export const campaigns = pgTable(
 		scheduleType: text("schedule_type"),
 		scheduleConfig: jsonb("schedule_config"),
 		sendConfig: jsonb("send_config"),
-		status: campaignStatus("status").default("draft"),
-		visibility: resourceVisibility("visibility").default("private"),
+		status: campaignStatus("status").default("DRAFT"),
+		visibility: resourceVisibility("visibility").default("PRIVATE"),
 		metadata: jsonb("metadata"),
 		createdByUserId: uuid("created_by_user_id").references(() => users.id, {
 			onDelete: "set null",
@@ -219,7 +219,7 @@ export const journeyRuns = pgTable(
 		}),
 		journeyVersion: integer("journey_version").notNull(), // Snapshot version
 		journeyDefinition: jsonb("journey_definition"), // Frozen copy of journey steps
-		status: journeyRunStatus("status").default("active"),
+		status: journeyRunStatus("status").default("ACTIVE"),
 		currentStepKey: text("current_step_key"), // Where contact is now
 		currentStepIndex: integer("current_step_index"),
 		startedAt: timestamp("started_at", {
@@ -275,7 +275,7 @@ export const journeyStepRuns = pgTable(
 		stepKey: text("step_key").notNull(),
 		stepType: stepType("step_type").notNull(),
 		stepIndex: integer("step_index"),
-		status: stepStatus("status").default("pending"),
+		status: stepStatus("status").default("PENDING"),
 		scheduledFor: timestamp("scheduled_for", {
 			withTimezone: true,
 			mode: "string",

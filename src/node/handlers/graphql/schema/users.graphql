@@ -50,10 +50,20 @@ extend type Query {
 	user(id: ID!): User
 }
 
+# Response type for combined update
+type UpdateMeResponse {
+	user: User!
+	profile: Profile!
+}
+
 # Mutations
 extend type Mutation {
 	updateMe(input: UpdateUserInput!): User!
 	updateProfile(input: UpdateProfileInput!): Profile!
+	updateMyAccount(
+		user: UpdateUserInput
+		profile: UpdateProfileInput
+	): UpdateMeResponse!
 }
 
 # Input types

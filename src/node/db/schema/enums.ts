@@ -2,184 +2,183 @@ import { pgEnum } from "drizzle-orm/pg-core";
 
 // Core enums
 export const assignmentStatus = pgEnum("assignment_status", [
-	"active",
-	"inactive",
-	"ended",
+	"ACTIVE",
+	"INACTIVE",
+	"ENDED",
 ]);
 
-export const embedProvider = pgEnum("embed_provider", ["pgvector", "external"]);
+export const embedProvider = pgEnum("embed_provider", ["PGVECTOR", "EXTERNAL"]);
 
 export const personaAttrType = pgEnum("persona_attr_type", [
-	"json",
-	"string_array",
-	"enum",
-	"timestamp",
-	"date",
-	"numeric",
-	"integer",
-	"boolean",
-	"text",
-	"string",
+	"JSON",
+	"STRING_ARRAY",
+	"ENUM",
+	"TIMESTAMP",
+	"DATE",
+	"NUMERIC",
+	"INTEGER",
+	"BOOLEAN",
+	"TEXT",
+	"STRING",
 ]);
 
 export const personaCardinality = pgEnum("persona_cardinality", [
-	"multi",
-	"single",
+	"MULTI",
+	"SINGLE",
 ]);
 
 export const personaValueSource = pgEnum("persona_value_source", [
-	"sync",
-	"import",
-	"ai",
-	"coach",
-	"self",
+	"SYNC",
+	"IMPORT",
+	"AI",
+	"SELF",
 ]);
 
-export const userType = pgEnum("user_type", ["operator", "member"]);
+export const userType = pgEnum("user_type", ["OPERATOR", "MEMBER"]);
 
 export const orgRole = pgEnum("org_role", [
-	"owner",
-	"admin",
-	"manager",
-	"member",
-	"viewer",
+	"OWNER",
+	"ADMIN",
+	"MANAGER",
+	"MEMBER",
+	"VIEWER",
 ]);
 
 export const ownerType = pgEnum("owner_type", [
-	"user",
-	"organization",
-	"org_unit",
-	"group",
+	"USER",
+	"ORGANIZATION",
+	"ORG_UNIT",
+	"GROUP",
 ]);
 
 export const ownershipLevel = pgEnum("ownership_level", [
-	"primary",
-	"shared",
-	"viewer",
+	"PRIMARY",
+	"SHARED",
+	"VIEWER",
 ]);
 
 export const resourceVisibility = pgEnum("resource_visibility", [
-	"private",
-	"shared",
-	"org_unit",
-	"organization",
-	"public",
+	"PRIVATE",
+	"SHARED",
+	"ORG_UNIT",
+	"ORGANIZATION",
+	"PUBLIC",
 ]);
 
 // Messaging platform enums
 export const messageStatus = pgEnum("message_status", [
-	"queued",
-	"sending",
-	"sent",
-	"delivered",
-	"bounced",
-	"failed",
-	"expired",
+	"QUEUED",
+	"SENDING",
+	"SENT",
+	"DELIVERED",
+	"BOUNCED",
+	"FAILED",
+	"EXPIRED",
 ]);
 
 export const campaignStatus = pgEnum("campaign_status", [
-	"draft",
-	"scheduled",
-	"running",
-	"paused",
-	"completed",
-	"archived",
+	"DRAFT",
+	"SCHEDULED",
+	"RUNNING",
+	"PAUSED",
+	"COMPLETED",
+	"ARCHIVED",
 ]);
 
 export const journeyStatus = pgEnum("journey_status", [
-	"draft",
-	"active",
-	"paused",
-	"archived",
+	"DRAFT",
+	"ACTIVE",
+	"PAUSED",
+	"ARCHIVED",
 ]);
 
 export const journeyRunStatus = pgEnum("journey_run_status", [
-	"active",
-	"waiting",
-	"completed",
-	"failed",
-	"cancelled",
-	"expired",
+	"ACTIVE",
+	"WAITING",
+	"COMPLETED",
+	"FAILED",
+	"CANCELLED",
+	"EXPIRED",
 ]);
 
 export const stepStatus = pgEnum("step_status", [
-	"pending",
-	"processing",
-	"completed",
-	"failed",
-	"skipped",
-	"scheduled",
-	"cancelled",
+	"PENDING",
+	"PROCESSING",
+	"COMPLETED",
+	"FAILED",
+	"SKIPPED",
+	"SCHEDULED",
+	"CANCELLED",
 ]);
 
 export const stepType = pgEnum("step_type", [
-	"start",
-	"send",
-	"delay",
-	"filter",
-	"user_update",
-	"integration",
+	"START",
+	"SEND",
+	"DELAY",
+	"FILTER",
+	"USER_UPDATE",
+	"INTEGRATION",
 ]);
 
 export const delayType = pgEnum("delay_type", [
-	"time_delay",
-	"hold_until",
-	"hold_for_reply",
+	"TIME_DELAY",
+	"HOLD_UNTIL",
+	"HOLD_FOR_REPLY",
 ]);
 
 export const filterType = pgEnum("filter_type", [
-	"ab_split",
-	"yes_no_split",
-	"attribute_split",
-	"send_to_journey",
+	"AB_SPLIT",
+	"YES_NO_SPLIT",
+	"ATTRIBUTE_SPLIT",
+	"SEND_TO_JOURNEY",
 ]);
 
 export const userUpdateType = pgEnum("user_update_type", [
-	"set_fields",
-	"list_membership",
-	"subscription",
+	"SET_FIELDS",
+	"LIST_MEMBERSHIP",
+	"SUBSCRIPTION",
 ]);
 
 export const integrationType = pgEnum("integration_type", [
-	"webhook",
-	"segment",
-	"facebook",
-	"custom",
+	"WEBHOOK",
+	"SEGMENT",
+	"FACEBOOK",
+	"CUSTOM",
 ]);
 
 export const channelType = pgEnum("channel_type", [
-	"email",
-	"sms",
-	"push",
-	"web_push",
-	"in_app",
-	"embedded",
-	"whatsapp",
+	"EMAIL",
+	"SMS",
+	"PUSH",
+	"WEB_PUSH",
+	"IN_APP",
+	"EMBEDDED",
+	"WHATSAPP",
 ]);
 
 export const contactStatus = pgEnum("contact_status", [
-	"active",
-	"unsubscribed",
-	"bounced",
-	"complained",
-	"deleted",
+	"ACTIVE",
+	"UNSUBSCRIBED",
+	"BOUNCED",
+	"COMPLAINED",
+	"DELETED",
 ]);
 
 export const subscriptionStatus = pgEnum("subscription_status", [
-	"subscribed",
-	"unsubscribed",
-	"pending",
+	"SUBSCRIBED",
+	"UNSUBSCRIBED",
+	"PENDING",
 ]);
 
 export const webhookStatus = pgEnum("webhook_status", [
-	"active",
-	"paused",
-	"failed",
+	"ACTIVE",
+	"PAUSED",
+	"FAILED",
 ]);
 
 export const experimentStatus = pgEnum("experiment_status", [
-	"draft",
-	"running",
-	"completed",
-	"archived",
+	"DRAFT",
+	"RUNNING",
+	"COMPLETED",
+	"ARCHIVED",
 ]);

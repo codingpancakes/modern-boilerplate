@@ -12,7 +12,7 @@ import type { GraphQLContext } from "../context";
 export const userResolvers = {
 	Query: {
 		// Get current user
-		me: async (parent: any, args: any, context: GraphQLContext) => {
+		me: async (_parent: unknown, _args: unknown, context: GraphQLContext) => {
 			const user = await context.db.query.users.findFirst({
 				where: eq(users.id, context.userId),
 			});
@@ -26,7 +26,7 @@ export const userResolvers = {
 
 		// Get user by ID (must be in same org)
 		user: async (
-			parent: any,
+			_parent: unknown,
 			{ id }: { id: string },
 			context: GraphQLContext,
 		) => {
@@ -51,8 +51,8 @@ export const userResolvers = {
 
 		// Get current user's organizations
 		myOrganizations: async (
-			parent: any,
-			args: any,
+			_parent: unknown,
+			_args: unknown,
 			context: GraphQLContext,
 		) => {
 			return context.db.query.organizationMembers.findMany({
@@ -62,7 +62,7 @@ export const userResolvers = {
 
 		// Get organization by ID (must be member)
 		organization: async (
-			parent: any,
+			_parent: unknown,
 			{ id }: { id: string },
 			context: GraphQLContext,
 		) => {
@@ -89,8 +89,8 @@ export const userResolvers = {
 	Mutation: {
 		// Update current user
 		updateMe: async (
-			parent: any,
-			{ input }: { input: any },
+			_parent: unknown,
+			{ input }: { input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
 			// Validate input
@@ -112,8 +112,8 @@ export const userResolvers = {
 
 		// Update profile
 		updateProfile: async (
-			parent: any,
-			{ input }: { input: any },
+			_parent: unknown,
+			{ input }: { input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
 			const sanitized = sanitizeObject(input);
@@ -129,17 +129,90 @@ export const userResolvers = {
 
 			return updated;
 		},
+
+		// Update both user and profile in one mutation
+		updateMyAccount: async (
+			_parent: unknown,
+			args: {
+				user?: Record<string, unknown>;
+				profile?: Record<string, unknown>;
+			},
+			context: GraphQLContext,
+		) => {
+			// Update user if provided
+			let updatedUser = null;
+			if (args.user && Object.keys(args.user).length > 0) {
+				const validated = userSchemas.update.parse(args.user);
+				const sanitized = sanitizeObject(validated);
+
+				[updatedUser] = await context.db
+					.update(users)
+					.set({
+						...sanitized,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(users.id, context.userId))
+					.returning();
+			}
+
+			// Update profile if provided
+			let updatedProfile = null;
+			if (args.profile && Object.keys(args.profile).length > 0) {
+				const sanitized = sanitizeObject(args.profile);
+
+				[updatedProfile] = await context.db
+					.update(profiles)
+					.set({
+						...sanitized,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(profiles.userId, context.userId))
+					.returning();
+			}
+
+			// Fetch current data if not updated
+			if (!updatedUser) {
+				const result = await context.db
+					.select()
+					.from(users)
+					.where(eq(users.id, context.userId))
+					.limit(1);
+				updatedUser = result[0];
+			}
+
+			if (!updatedProfile) {
+				const result = await context.db
+					.select()
+					.from(profiles)
+					.where(eq(profiles.userId, context.userId))
+					.limit(1);
+				updatedProfile = result[0];
+			}
+
+			return {
+				user: updatedUser,
+				profile: updatedProfile,
+			};
+		},
 	},
 
 	// Field resolvers
 	User: {
-		profile: async (user: any, args: any, context: GraphQLContext) => {
+		profile: async (
+			user: { id: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
 			return context.db.query.profiles.findFirst({
 				where: eq(profiles.userId, user.id),
 			});
 		},
 
-		organizations: async (user: any, args: any, context: GraphQLContext) => {
+		organizations: async (
+			user: { id: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
 			return context.db.query.organizationMembers.findMany({
 				where: eq(organizationMembers.userId, user.id),
 			});
@@ -147,7 +220,11 @@ export const userResolvers = {
 	},
 
 	Profile: {
-		user: async (profile: any, args: any, context: GraphQLContext) => {
+		user: async (
+			profile: { userId: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
 			return context.db.query.users.findFirst({
 				where: eq(users.id, profile.userId),
 			});
@@ -155,15 +232,19 @@ export const userResolvers = {
 	},
 
 	OrganizationMembership: {
-		user: async (membership: any, args: any, context: GraphQLContext) => {
+		user: async (
+			membership: { userId: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
 			return context.db.query.users.findFirst({
 				where: eq(users.id, membership.userId),
 			});
 		},
 
 		organization: async (
-			membership: any,
-			args: any,
+			membership: { organizationId: string },
+			_args: unknown,
 			context: GraphQLContext,
 		) => {
 			return context.db.query.organizations.findFirst({
@@ -173,7 +254,11 @@ export const userResolvers = {
 	},
 
 	Organization: {
-		members: async (org: any, args: any, context: GraphQLContext) => {
+		members: async (
+			org: { id: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
 			return context.db.query.organizationMembers.findMany({
 				where: eq(organizationMembers.organizationId, org.id),
 			});

@@ -1,4 +1,4 @@
-import { ApolloServer, BaseContext } from "@apollo/server";
+import { ApolloServer, type BaseContext } from "@apollo/server";
 import { startServerAndCreateLambdaHandler } from "@as-integrations/aws-lambda";
 import type { GraphQLContext } from "./context";
 import { createContext } from "./context";
@@ -40,9 +40,11 @@ const server = new ApolloServer<GraphQLContext>({
 
 // Export Lambda handler
 // Type assertion needed due to Apollo Server v4 + Lambda integration typing mismatch
+// biome-ignore lint/suspicious/noExplicitAny: Required for Apollo Server Lambda handler compatibility
 export const handler: any = startServerAndCreateLambdaHandler(
 	server as unknown as ApolloServer<BaseContext>,
 	{
 		context: createContext,
+		// biome-ignore lint/suspicious/noExplicitAny: Required for Apollo Server Lambda integration
 	} as any,
 );

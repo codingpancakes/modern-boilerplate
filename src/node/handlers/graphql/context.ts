@@ -1,4 +1,5 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import { getClaims, getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
 
 export interface GraphQLContext {
@@ -6,7 +7,8 @@ export interface GraphQLContext {
 	orgId: string;
 	role: string;
 	email: string;
-	claims: Record<string, any>;
+	providerSubject: string;
+	claims: Record<string, unknown>;
 	db: Awaited<ReturnType<typeof getDb>>;
 }
 
@@ -15,35 +17,21 @@ export async function createContext({
 }: {
 	event: APIGatewayProxyEventV2;
 }): Promise<GraphQLContext> {
-	// Extract WorkOS JWT claims from API Gateway authorizer
-	const requestContext = event.requestContext as {
-		authorizer?: {
-			jwt?: {
-				claims: {
-					sub: string;
-					org_id?: string;
-					role?: string;
-					email?: string;
-					[key: string]: any;
-				};
-			};
-		};
-	};
+	// Get JWT claims using existing helper
+	const claims = getClaims(event);
 
-	const claims = requestContext.authorizer?.jwt?.claims;
-
-	if (!claims || !claims.sub) {
-		throw new Error("Unauthorized: No valid JWT claims found");
-	}
+	// Get internal user ID from provider subject (WorkOS ID -> internal UUID)
+	const userId = await getUserIdFromClaims(event);
 
 	// Get database connection
 	const db = await getDb();
 
 	return {
-		userId: claims.sub,
-		orgId: claims.org_id || "",
-		role: claims.role || "member",
-		email: claims.email || "",
+		userId, // Internal UUID
+		orgId: (claims.org_id as string) || "",
+		role: (claims.role as string) || "MEMBER",
+		email: (claims.email as string) || "",
+		providerSubject: claims.sub, // WorkOS ID
 		claims,
 		db,
 	};
