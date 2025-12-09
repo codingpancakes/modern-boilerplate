@@ -1,0 +1,46 @@
+# Organization types and operations
+
+type Organization {
+	id: ID!
+	name: String
+	slug: String
+	orgType: String
+	visibility: String
+	defaultTimezone: String
+	countryCode: String
+	branding: JSON
+	metadata: JSON
+	status: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+
+	# Relations
+	members: [OrganizationMembership!]!
+}
+
+type OrganizationMembership {
+	id: ID!
+	userId: ID!
+	organizationId: ID!
+	role: OrgRole!
+	joinedAt: DateTime!
+	leftAt: DateTime
+
+	# Relations
+	user: User!
+	organization: Organization!
+}
+
+enum OrgRole {
+	OWNER
+	ADMIN
+	MANAGER
+	MEMBER
+	VIEWER
+}
+
+# Queries
+extend type Query {
+	myOrganizations: [OrganizationMembership!]!
+	organization(id: ID!): Organization
+}

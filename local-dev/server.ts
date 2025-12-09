@@ -17,6 +17,8 @@ import { handler as usersMeHandler } from '../src/node/handlers/users/me';
 import { handler as usersUpdateHandler } from '../src/node/handlers/users/update';
 import { handler as testApiKeyHandler } from '../src/node/handlers/test/api-key';
 import { handler as testWebhookHandler } from '../src/node/handlers/test/webhook';
+import { handler as graphqlHandler } from '../src/node/handlers/graphql/handler';
+import { handler as graphqlDocsHandler } from '../src/node/handlers/graphql/docs';
 
 // Disable AWS Lambda Powertools tracing in local mode
 process.env._X_AMZN_TRACE_ID = 'Root=1-00000000-000000000000000000000000';
@@ -198,6 +200,8 @@ const handlerMap: Record<string, Function> = {
   '../src/node/handlers/users/update': usersUpdateHandler,
   '../src/node/handlers/test/api-key': testApiKeyHandler,
   '../src/node/handlers/test/webhook': testWebhookHandler,
+  '../src/node/handlers/graphql/handler': graphqlHandler,
+  '../src/node/handlers/graphql/docs': graphqlDocsHandler,
 };
 
 async function loadHandler(path: string) {
@@ -267,6 +271,14 @@ app.patch('/v1/users/me', requireAuth, wrapHandler('../src/node/handlers/users/u
 app.get('/v1/test/api-key', wrapHandler('../src/node/handlers/test/api-key'));
 app.post('/v1/test/webhook', wrapHandler('../src/node/handlers/test/webhook'));
 
+// GraphQL endpoints
+app.post('/v1/graphql', requireAuth, wrapHandler('../src/node/handlers/graphql/handler'));
+app.get('/v1/graphql', requireAuth, wrapHandler('../src/node/handlers/graphql/handler')); // For GraphQL Playground introspection
+app.get('/v1/graphql/docs', wrapHandler('../src/node/handlers/graphql/docs')); // Public docs
+
 app.listen(PORT, () => {
   console.log(`\n🚀 Local API server running on http://localhost:${PORT}`);
+  console.log(`📊 REST API docs: http://localhost:${PORT}/docs (run 'npm run docs:serve' separately)`);
+  console.log(`🔵 GraphQL API: http://localhost:${PORT}/v1/graphql`);
+  console.log(`📘 GraphQL docs: http://localhost:${PORT}/v1/graphql/docs`);
 });

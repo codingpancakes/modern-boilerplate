@@ -1,0 +1,36 @@
+# Media types and operations
+
+type Image {
+	key: String!
+	url: String!
+	size: Int!
+	lastModified: DateTime!
+	category: String
+}
+
+type ImageUploadUrl {
+	uploadUrl: String!
+	imageUrl: String!
+	key: String!
+	expiresIn: Int!
+}
+
+type ImageList {
+	images: [Image!]!
+	total: Int!
+	continuationToken: String
+}
+
+# Queries
+extend type Query {
+	images(category: String, limit: Int, continuationToken: String): ImageList!
+}
+
+# Mutations
+extend type Mutation {
+	generateImageUploadUrl(
+		filename: String!
+		contentType: String!
+		category: String
+	): ImageUploadUrl!
+}

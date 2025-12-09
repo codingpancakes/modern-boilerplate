@@ -4,7 +4,7 @@ import {
 } from "@aws-sdk/client-secrets-manager";
 import { type NeonQueryFunction, neon } from "@neondatabase/serverless";
 import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
-import * as schema from "../db/schema";
+import * as schema from "../db/schema/index";
 
 type DbInstance = NeonHttpDatabase<typeof schema>;
 

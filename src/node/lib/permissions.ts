@@ -6,7 +6,7 @@
  */
 
 import { and, eq, or } from "drizzle-orm";
-import { organizationMembers, resourceOwners } from "../db/schema";
+import { organizationMembers, resourceOwners } from "../db/schema/index";
 import { getDb } from "./db";
 import { Errors } from "./errors";
 

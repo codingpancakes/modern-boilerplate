@@ -243,6 +243,85 @@ export class ApiStack extends cdk.Stack {
     // Note: Throttling can be configured later via AWS Console if needed
     // API Gateway v2 throttling is managed differently than v1
 
+    // ============================================
+    // GRAPHQL HANDLER
+    // ============================================
+    const graphqlHandler = new lambdaNodejs.NodejsFunction(this, "GraphQLHandler", {
+      functionName: `${projectName}-${props.stage}-graphql`,
+      entry: path.join(__dirname, "../../src/node/handlers/graphql/handler.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 512,
+      environment: commonEnv,
+      tracing: lambda.Tracing.ACTIVE,
+      logRetention: undefined,
+      bundling: {
+        minify: true,
+        sourceMap: true,
+        externalModules: ['@aws-sdk/*'], // AWS SDK v3 is available in Lambda runtime
+      },
+    });
+
+    // Grant permissions
+    props.dbSecret.grantRead(graphqlHandler);
+    props.workosSecret.grantRead(graphqlHandler);
+
+    // Add GraphQL route with WorkOS authorizer
+    this.httpApi.addRoutes({
+      path: "/graphql",
+      methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.GET], // GET for GraphQL Playground
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "GraphQLIntegration",
+        graphqlHandler
+      ),
+      authorizer: customAuthorizer, // Same WorkOS JWT authorizer as REST!
+    });
+
+    // Output GraphQL endpoint
+    new cdk.CfnOutput(this, "GraphQLEndpoint", {
+      value: `${this.httpApi.url}graphql`,
+      description: "GraphQL API endpoint",
+    });
+
+    // ============================================
+    // GRAPHQL DOCUMENTATION HANDLER (GraphiQL)
+    // ============================================
+    const graphqlDocsHandler = new lambdaNodejs.NodejsFunction(this, "GraphQLDocsHandler", {
+      functionName: `${projectName}-${props.stage}-graphql-docs`,
+      entry: path.join(__dirname, "../../src/node/handlers/graphql/docs.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        STAGE: props.stage,
+      },
+      bundling: {
+        minify: true,
+        sourceMap: false,
+      },
+    });
+
+    // Add GraphQL docs route (no auth required - public documentation)
+    this.httpApi.addRoutes({
+      path: "/graphql/docs",
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2Integrations.HttpLambdaIntegration(
+        "GraphQLDocsIntegration",
+        graphqlDocsHandler
+      ),
+      // No authorizer - public access to documentation UI
+    });
+
+    // Output GraphQL docs endpoint
+    new cdk.CfnOutput(this, "GraphQLDocsEndpoint", {
+      value: `${this.httpApi.url}graphql/docs`,
+      description: "GraphQL interactive documentation (GraphiQL)",
+    });
+
     // Custom domain configuration (optional)
     if (process.env.API_DOMAIN) {
       const apiDomain = process.env.API_DOMAIN;

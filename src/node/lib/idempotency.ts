@@ -4,7 +4,7 @@ import type {
 	APIGatewayProxyResultV2,
 } from "aws-lambda";
 import { eq, lt } from "drizzle-orm";
-import { idempotencyKeys } from "../db/schema";
+import { idempotencyKeys } from "../db/schema/index";
 import { getDb } from "./db";
 import { ApiError } from "./errors";
 

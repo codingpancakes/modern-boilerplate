@@ -1,0 +1,3 @@
+# Custom scalar types
+scalar DateTime
+scalar JSON

@@ -1,0 +1,9 @@
+# Base schema with root types
+
+type Query {
+	_empty: String
+}
+
+type Mutation {
+	_empty: String
+}

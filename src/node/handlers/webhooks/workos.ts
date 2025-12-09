@@ -12,7 +12,7 @@ import {
 	idempotencyKeys,
 	organizations,
 	users,
-} from "../../db/schema";
+} from "../../db/schema/index";
 import { getDb } from "../../lib/db";
 import { Errors, formatError } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";

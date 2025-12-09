@@ -4,7 +4,7 @@ import { Tracer } from "@aws-lambda-powertools/tracer";
 // PROJECT_NAME is set by Lambda environment variables (api-stack.ts)
 // For local dev, allow fallback to avoid initialization errors
 const getServiceName = () => {
-	const projectName = process.env.PROJECT_NAME || 'local-dev';
+	const projectName = process.env.PROJECT_NAME || "local-dev";
 	return `${projectName}-api`;
 };
 

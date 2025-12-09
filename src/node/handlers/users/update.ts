@@ -1,7 +1,7 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { Context } from "aws-lambda";
 import { eq } from "drizzle-orm";
-import { profiles, users } from "../../db/schema";
+import { profiles, users } from "../../db/schema/index";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";

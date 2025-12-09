@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { eq } from "drizzle-orm";
-import { authIdentities } from "../db/schema";
+import { authIdentities } from "../db/schema/index";
 import { getDb } from "./db";
 import { Errors } from "./errors";
 

@@ -1,0 +1,78 @@
+# User types and operations
+
+type User {
+	id: ID!
+	email: String
+	phone: String
+	firstName: String
+	lastName: String
+	type: UserType!
+	status: String
+	defaultTimezone: String
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	lastLoginAt: DateTime
+
+	# Relations
+	profile: Profile
+	organizations: [OrganizationMembership!]!
+}
+
+type Profile {
+	userId: ID!
+	preferredName: String
+	pronouns: String
+	location: String
+	countryCode: String
+	photoUrl: String
+	gender: String
+	lgbtq: Boolean
+	ethnicity: String
+	languages: [String!]
+	onboardingCompleted: Boolean!
+	persona: JSON
+	snapshot: JSON
+	createdAt: DateTime!
+	updatedAt: DateTime!
+
+	# Relations
+	user: User!
+}
+
+enum UserType {
+	OPERATOR
+	MEMBER
+}
+
+# Queries
+extend type Query {
+	me: User!
+	user(id: ID!): User
+}
+
+# Mutations
+extend type Mutation {
+	updateMe(input: UpdateUserInput!): User!
+	updateProfile(input: UpdateProfileInput!): Profile!
+}
+
+# Input types
+input UpdateUserInput {
+	email: String
+	phone: String
+	firstName: String
+	lastName: String
+	defaultTimezone: String
+}
+
+input UpdateProfileInput {
+	preferredName: String
+	pronouns: String
+	location: String
+	countryCode: String
+	photoUrl: String
+	gender: String
+	lgbtq: Boolean
+	ethnicity: String
+	languages: [String!]
+}
