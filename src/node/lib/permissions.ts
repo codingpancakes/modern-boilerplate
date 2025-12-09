@@ -52,7 +52,7 @@ export async function requireOrgMembership(
 			and(
 				eq(organizationMembers.userId, userId),
 				eq(organizationMembers.organizationId, orgId),
-				eq(organizationMembers.status, "active"),
+				eq(organizationMembers.status, "ACTIVE"),
 			),
 		)
 		.limit(1);
@@ -104,12 +104,12 @@ export async function requireResourceAccess(
 				or(
 					// User owns it directly
 					and(
-						eq(resourceOwners.ownerType, "user"),
+						eq(resourceOwners.ownerType, "USER"),
 						eq(resourceOwners.ownerId, userId),
 					),
 					// Organization owns it (and user is member)
 					and(
-						eq(resourceOwners.ownerType, "organization"),
+						eq(resourceOwners.ownerType, "ORGANIZATION"),
 						eq(resourceOwners.ownerId, orgId),
 					),
 				),
@@ -182,7 +182,7 @@ export async function getUserOrganizations(userId: string) {
 		.where(
 			and(
 				eq(organizationMembers.userId, userId),
-				eq(organizationMembers.status, "active"),
+				eq(organizationMembers.status, "ACTIVE"),
 			),
 		);
 }

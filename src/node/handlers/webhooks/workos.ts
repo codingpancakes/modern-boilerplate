@@ -228,7 +228,7 @@ const webhookHandler = async (
 							email: userData.email,
 							firstName: userData.first_name,
 							lastName: userData.last_name,
-							type: "member", // Default user type for WorkOS users
+							type: "MEMBER", // Default user type for WorkOS users
 						})
 						.returning({ id: users.id });
 
