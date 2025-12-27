@@ -58,7 +58,7 @@ export class ProtectedRoutes {
         name: `Media${name}Handler`,
         path: `handlers/media/${file}`,
         environment: mediaEnv,
-        reservedConcurrentExecutions: 20, // Media operations can be concurrent
+        // reservedConcurrentExecutions removed - use unreserved pool
       });
 
       httpApi.addRoutes({
@@ -97,7 +97,7 @@ export class ProtectedRoutes {
       const handler = routeBuilder.createHandler({
         name: `User${name}Handler`,
         path: `handlers/users/${file}`,
-        reservedConcurrentExecutions: 30, // User-facing endpoints, high traffic
+        // reservedConcurrentExecutions removed - use unreserved pool
       });
 
       httpApi.addRoutes({

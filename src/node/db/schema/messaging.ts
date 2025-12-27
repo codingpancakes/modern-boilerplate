@@ -8,6 +8,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import { contactChannels, contacts } from "./contacts";
@@ -18,7 +19,7 @@ import {
 	webhookStatus,
 } from "./enums";
 import { campaignRuns, campaigns, journeyRuns, journeys } from "./journeys";
-import { organizations } from "./organizations";
+import { organizations, orgUnits } from "./organizations";
 import { users } from "./users";
 
 /**
@@ -28,9 +29,16 @@ export const messageChannels = pgTable(
 	"message_channels",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		kind: text("kind"),
@@ -46,15 +54,30 @@ export const messageChannels = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
 			ixChannelsOrg: index("ix_channels_org").on(table.organizationId),
-			ixChannelsKind: index("ix_channels_kind").on(
+			ixChannelsOrgUnit: index("ix_channels_org_unit").on(table.orgUnitId),
+			ixChannelsOrgAndUnit: index("ix_channels_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
+			ixChannelsKey: index("ix_channels_key").on(
+				table.key,
+				table.organizationId,
+			),
+			ixChannelsKindOrg: index("ix_channels_kind_org").on(
 				table.kind,
 				table.organizationId,
 			),
-			ixChannelsKey: index("ix_channels_key").on(
+			ixChannelsKindOrgUnit: index("ix_channels_kind_org_unit").on(
+				table.kind,
+				table.organizationId,
+				table.orgUnitId,
+			),
+			uxChannelsKeyOrg: uniqueIndex("ux_channels_key_org").on(
 				table.key,
 				table.organizationId,
 			),
@@ -69,9 +92,16 @@ export const subscriptionTopics = pgTable(
 	"subscription_topics",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
@@ -86,11 +116,21 @@ export const subscriptionTopics = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
 			ixTopicsOrg: index("ix_topics_org").on(table.organizationId),
+			ixTopicsOrgUnit: index("ix_topics_org_unit").on(table.orgUnitId),
+			ixTopicsOrgAndUnit: index("ix_topics_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixTopicsKey: index("ix_topics_key").on(table.key, table.organizationId),
+			uxTopicsKeyOrg: uniqueIndex("ux_topics_key_org").on(
+				table.key,
+				table.organizationId,
+			),
 		};
 	},
 );
@@ -102,6 +142,16 @@ export const templates = pgTable(
 	"templates",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		channelId: uuid("channel_id").references(() => messageChannels.id, {
 			onDelete: "set null",
 		}),
@@ -134,8 +184,18 @@ export const templates = pgTable(
 	},
 	(table) => {
 		return {
+			ixTemplatesOrg: index("ix_templates_org").on(table.organizationId),
+			ixTemplatesOrgUnit: index("ix_templates_org_unit").on(table.orgUnitId),
+			ixTemplatesOrgAndUnit: index("ix_templates_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixTemplatesChannel: index("ix_templates_channel").on(table.channelId),
 			ixTemplatesKey: index("ix_templates_key").on(table.key),
+			uxTemplatesOrgKey: uniqueIndex("ux_templates_org_key").on(
+				table.organizationId,
+				table.key,
+			),
 			ixTemplatesVisibility: index("ix_templates_visibility").on(
 				table.visibility,
 			),
@@ -191,9 +251,16 @@ export const messages = pgTable(
 	"messages",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		campaignId: uuid("campaign_id").references(() => campaigns.id, {
 			onDelete: "set null",
 		}),
@@ -286,9 +353,16 @@ export const messageEvents = pgTable(
 	"message_events",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		messageId: uuid("message_id").references(() => messages.id, {
 			onDelete: "cascade",
 		}),
@@ -333,6 +407,16 @@ export const experiments = pgTable(
 	"experiments",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		campaignId: uuid("campaign_id").references(() => campaigns.id, {
 			onDelete: "set null",
 		}),
@@ -360,9 +444,18 @@ export const experiments = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
+			ixExperimentsOrg: index("ix_experiments_org").on(table.organizationId),
+			ixExperimentsOrgUnit: index("ix_experiments_org_unit").on(
+				table.orgUnitId,
+			),
+			ixExperimentsOrgAndUnit: index("ix_experiments_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixExperimentsCampaign: index("ix_experiments_campaign").on(
 				table.campaignId,
 			),
@@ -373,6 +466,10 @@ export const experiments = pgTable(
 			),
 			ixExperimentsCreatedBy: index("ix_experiments_created_by").on(
 				table.createdByUserId,
+			),
+			uxExperimentsKeyOrg: uniqueIndex("ux_experiments_key_org").on(
+				table.key,
+				table.organizationId,
 			),
 		};
 	},
@@ -385,6 +482,16 @@ export const webhooks = pgTable(
 	"webhooks",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		name: text("name"),
 		url: text("url").notNull(),
 		events: text("events").array().notNull(), // ['message.sent', 'message.delivered', 'contact.created']
@@ -418,9 +525,16 @@ export const webhooks = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
+			ixWebhooksOrg: index("ix_webhooks_org").on(table.organizationId),
+			ixWebhooksOrgUnit: index("ix_webhooks_org_unit").on(table.orgUnitId),
+			ixWebhooksOrgAndUnit: index("ix_webhooks_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixWebhooksStatus: index("ix_webhooks_status").on(table.status),
 			ixWebhooksVisibility: index("ix_webhooks_visibility").on(
 				table.visibility,

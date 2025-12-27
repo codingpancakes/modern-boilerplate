@@ -258,6 +258,50 @@ export class MonitoringStack extends cdk.Stack {
       })
     );
 
+    // ============================================
+    // WEBHOOK DLQ MONITORING
+    // ============================================
+    // Monitor webhook Dead Letter Queue for failed webhook processing
+    const webhookDLQMetric = new cloudwatch.Metric({
+      namespace: 'AWS/SQS',
+      metricName: 'ApproximateNumberOfMessagesVisible',
+      dimensionsMap: {
+        QueueName: `${projectName}-${props.stage}-webhook-dlq`,
+      },
+      statistic: 'Maximum',
+      period: cdk.Duration.minutes(5),
+    });
+
+    // Alarm when ANY messages appear in DLQ (indicates webhook failures)
+    const dlqAlarm = new cloudwatch.Alarm(this, 'WebhookDLQAlarm', {
+      alarmName: `${projectName}-${props.stage}-webhook-dlq-messages`,
+      alarmDescription: 'Webhook DLQ has messages - webhooks are failing and need investigation',
+      metric: webhookDLQMetric,
+      threshold: 1, // Alert if ANY messages in DLQ
+      evaluationPeriods: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    dlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+
+    // Add DLQ widget to dashboard
+    dashboard.addWidgets(
+      new cloudwatch.GraphWidget({
+        title: 'Webhook DLQ Messages (Failed Webhooks)',
+        left: [webhookDLQMetric.with({ color: cloudwatch.Color.RED, label: 'Failed Webhooks' })],
+        width: 24,
+        height: 6,
+        leftAnnotations: [
+          {
+            value: 0,
+            label: 'No Failures',
+            color: cloudwatch.Color.GREEN,
+          },
+        ],
+      })
+    );
+
     // Outputs
     new cdk.CfnOutput(this, 'AlarmTopicArn', {
       value: alarmTopic.topicArn,

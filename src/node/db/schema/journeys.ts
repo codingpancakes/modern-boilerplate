@@ -7,6 +7,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import { contactLists, contactSegments, contacts } from "./contacts";
@@ -19,7 +20,7 @@ import {
 	stepType,
 } from "./enums";
 import { messageChannels, messages, templates } from "./messaging";
-import { organizations } from "./organizations";
+import { organizations, orgUnits } from "./organizations";
 import { users } from "./users";
 
 /**
@@ -30,6 +31,16 @@ export const journeys = pgTable(
 	"journeys",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
@@ -67,7 +78,17 @@ export const journeys = pgTable(
 	},
 	(table) => {
 		return {
+			ixJourneysOrg: index("ix_journeys_org").on(table.organizationId),
+			ixJourneysOrgUnit: index("ix_journeys_org_unit").on(table.orgUnitId),
+			ixJourneysOrgAndUnit: index("ix_journeys_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixJourneysKey: index("ix_journeys_key").on(table.key),
+			uxJourneysOrgKey: uniqueIndex("ux_journeys_org_key").on(
+				table.organizationId,
+				table.key,
+			),
 			ixJourneysStatus: index("ix_journeys_status").on(table.status),
 			ixJourneysVisibility: index("ix_journeys_visibility").on(
 				table.visibility,
@@ -87,6 +108,16 @@ export const campaigns = pgTable(
 	"campaigns",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
@@ -129,7 +160,17 @@ export const campaigns = pgTable(
 	},
 	(table) => {
 		return {
+			ixCampaignsOrg: index("ix_campaigns_org").on(table.organizationId),
+			ixCampaignsOrgUnit: index("ix_campaigns_org_unit").on(table.orgUnitId),
+			ixCampaignsOrgAndUnit: index("ix_campaigns_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixCampaignsKey: index("ix_campaigns_key").on(table.key),
+			uxCampaignsOrgKey: uniqueIndex("ux_campaigns_org_key").on(
+				table.organizationId,
+				table.key,
+			),
 			ixCampaignsStatus: index("ix_campaigns_status").on(table.status),
 			ixCampaignsVisibility: index("ix_campaigns_visibility").on(
 				table.visibility,
@@ -152,9 +193,16 @@ export const campaignRuns = pgTable(
 		campaignId: uuid("campaign_id").references(() => campaigns.id, {
 			onDelete: "cascade",
 		}),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		triggerType: text("trigger_type"),
 		scheduledAt: timestamp("scheduled_at", {
 			withTimezone: true,
@@ -192,6 +240,13 @@ export const campaignRuns = pgTable(
 				table.campaignId,
 				table.scheduledAt,
 			),
+			ixCampaignRunsOrgUnit: index("ix_campaign_runs_org_unit").on(
+				table.orgUnitId,
+			),
+			ixCampaignRunsOrgAndUnit: index("ix_campaign_runs_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixCampaignRunsOrg: index("ix_campaign_runs_org").on(
 				table.organizationId,
 				table.status,
@@ -211,9 +266,16 @@ export const journeyRuns = pgTable(
 		journeyId: uuid("journey_id").references(() => journeys.id, {
 			onDelete: "cascade",
 		}),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		contactId: uuid("contact_id").references(() => contacts.id, {
 			onDelete: "cascade",
 		}),
@@ -269,9 +331,16 @@ export const journeyStepRuns = pgTable(
 		journeyId: uuid("journey_id").references(() => journeys.id, {
 			onDelete: "cascade",
 		}),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		stepKey: text("step_key").notNull(),
 		stepType: stepType("step_type").notNull(),
 		stepIndex: integer("step_index"),

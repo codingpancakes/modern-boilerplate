@@ -10,6 +10,8 @@
  * ```
  */
 
+// Export audit logs (SOC 2 compliance)
+export * from "./audit";
 // Export contacts domain
 export * from "./contacts";
 // Export all enums

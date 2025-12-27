@@ -11,8 +11,15 @@ import {
 	authIdentities,
 	idempotencyKeys,
 	organizations,
+	profiles,
 	users,
 } from "../../db/schema/index";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	logAudit,
+} from "../../lib/audit";
 import { getDb } from "../../lib/db";
 import { Errors, formatError } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";
@@ -103,6 +110,19 @@ let webhookSecret: string | null = null;
 async function getWebhookSecret(): Promise<string> {
 	if (webhookSecret) return webhookSecret;
 
+	logger.info("🔑 Getting webhook secret...", {
+		hasEnvVar: !!process.env.WORKOS_WEBHOOK_SECRET,
+		hasSecretArn: !!process.env.WORKOS_SECRET_ARN,
+	});
+
+	// For local development, use env var directly
+	if (process.env.WORKOS_WEBHOOK_SECRET) {
+		logger.info("✅ Using local WORKOS_WEBHOOK_SECRET");
+		webhookSecret = process.env.WORKOS_WEBHOOK_SECRET;
+		return webhookSecret;
+	}
+
+	// For deployed environments, fetch from Secrets Manager
 	const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
 	const command = new GetSecretValueCommand({
 		SecretId: process.env.WORKOS_SECRET_ARN,
@@ -113,7 +133,7 @@ async function getWebhookSecret(): Promise<string> {
 		const secret = JSON.parse(response.SecretString);
 		webhookSecret = secret.webhookSecret;
 		if (!webhookSecret) {
-			throw new Error("WORKOS_WEBHOOK_SECRET environment variable is required");
+			throw new Error("WORKOS_WEBHOOK_SECRET not found in secrets");
 		}
 
 		return webhookSecret;
@@ -124,12 +144,31 @@ async function getWebhookSecret(): Promise<string> {
 
 function verifySignature(
 	payload: string,
-	signature: string,
+	signatureHeader: string,
 	secret: string,
 ): boolean {
+	// WorkOS signature format: "t=1766861788175, v1=7ade2a063dc936d978bcbc8732ddc7d34f670339953d90c5fce0357841aa763e"
+	const parts = signatureHeader.split(", ");
+	const timestamp = parts[0]?.split("=")[1];
+	const signature = parts[1]?.split("=")[1];
+
+	if (!timestamp || !signature) {
+		logger.error("Invalid signature format", { signatureHeader });
+		return false;
+	}
+
+	// WorkOS signs: timestamp.payload
+	const signedPayload = `${timestamp}.${payload}`;
 	const expectedSignature = createHmac("sha256", secret)
-		.update(payload)
+		.update(signedPayload)
 		.digest("hex");
+
+	logger.info("Signature verification", {
+		timestamp,
+		receivedSignature: signature,
+		expectedSignature,
+		match: signature === expectedSignature,
+	});
 
 	return signature === expectedSignature;
 }
@@ -142,28 +181,38 @@ const webhookHandler = async (
 	logger.addContext(context);
 
 	try {
+		logger.info("🔔 Webhook received", {
+			headers: event.headers,
+			body: event.body?.substring(0, 200),
+		});
+
 		// Get signature from headers
 		const signature =
 			event.headers["workos-signature"] || event.headers["WorkOS-Signature"];
 		if (!signature) {
+			logger.error("❌ No signature in headers");
 			throw Errors.Unauthorized();
 		}
 
 		// Verify signature
+		logger.info("🔐 Verifying signature...");
 		const secret = await getWebhookSecret();
 		const payload = event.body || "";
 
 		if (!verifySignature(payload, signature, secret)) {
-			logger.warn("Invalid webhook signature");
+			logger.error("❌ Invalid webhook signature");
 			throw Errors.Unauthorized();
 		}
+		logger.info("✅ Signature verified");
 
 		// Parse and validate webhook event
+		logger.info("📦 Parsing webhook payload...");
 		const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
 
-		logger.info("Processing WorkOS webhook", {
+		logger.info("✅ Processing WorkOS webhook", {
 			eventId: webhookEvent.id,
 			eventType: webhookEvent.event,
+			data: webhookEvent.data,
 		});
 
 		const db = await getDb();
@@ -177,11 +226,10 @@ const webhookHandler = async (
 			.limit(1);
 
 		if (existing) {
-			logger.info("Webhook event already processed", {
-				eventId: webhookEvent.id,
-			});
-			return createSuccessResponse({ status: "already_processed" });
+			logger.warn("⚠️ Duplicate event detected, skipping", { idempotencyKey });
+			return createSuccessResponse({ message: "Event already processed" });
 		}
+		logger.info("✅ New event, processing...");
 
 		// Store idempotency key
 		await db.insert(idempotencyKeys).values({
@@ -210,6 +258,9 @@ const webhookHandler = async (
 					.limit(1);
 
 				if (existingAuth?.userId) {
+					logger.info("👤 User exists, updating...", {
+						userId: existingAuth.userId,
+					});
 					// Update existing user
 					await db
 						.update(users)
@@ -220,7 +271,22 @@ const webhookHandler = async (
 							updatedAt: new Date().toISOString(),
 						})
 						.where(eq(users.id, existingAuth.userId));
+
+					// Audit log: Track user update from WorkOS
+					await logAudit({
+						userId: existingAuth.userId,
+						action: AUDIT_ACTIONS.UPDATE,
+						resourceType: AUDIT_RESOURCE_TYPES.USER,
+						resourceId: existingAuth.userId,
+						status: AUDIT_STATUS.SUCCESS,
+						metadata: {
+							source: "workos_webhook",
+							eventType: webhookEvent.event,
+							providerSubject: userData.id,
+						},
+					});
 				} else {
+					logger.info("🆕 Creating new user...", { email: userData.email });
 					// Create new user and auth identity
 					const [newUser] = await db
 						.insert(users)
@@ -228,15 +294,48 @@ const webhookHandler = async (
 							email: userData.email,
 							firstName: userData.first_name,
 							lastName: userData.last_name,
-							type: "MEMBER", // Default user type for WorkOS users
+							type: "MEMBER",
 						})
 						.returning({ id: users.id });
 
+					logger.info("📝 Creating profile...", { userId: newUser.id });
+					// Create profile record
+					await db.insert(profiles).values({
+						userId: newUser.id,
+					});
+
+					logger.info("🔑 Creating auth identity...", {
+						userId: newUser.id,
+						providerSubject: userData.id,
+					});
+					// Create auth identity
 					await db.insert(authIdentities).values({
 						userId: newUser.id,
 						providerType: "workos",
 						providerSubject: userData.id,
 						emailAtProvider: userData.email,
+					});
+
+					logger.info("📊 Creating audit log...", { userId: newUser.id });
+					// Audit log: Track user creation from WorkOS
+					await logAudit({
+						userId: newUser.id,
+						action: AUDIT_ACTIONS.CREATE,
+						resourceType: AUDIT_RESOURCE_TYPES.USER,
+						resourceId: newUser.id,
+						status: AUDIT_STATUS.SUCCESS,
+						metadata: {
+							source: "workos_webhook",
+							eventType: webhookEvent.event,
+							providerSubject: userData.id,
+							email: userData.email,
+						},
+					});
+
+					logger.info("✅ User created successfully", {
+						userId: newUser.id,
+						email: userData.email,
+						providerSubject: userData.id,
 					});
 				}
 				break;

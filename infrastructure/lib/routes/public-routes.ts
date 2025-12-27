@@ -32,7 +32,7 @@ export class PublicRoutes {
       path: "handlers/utils/health.ts",
       memorySize: 256,
       timeout: cdk.Duration.seconds(5),
-      reservedConcurrentExecutions: 5, // Health checks don't need much
+      // reservedConcurrentExecutions removed - use unreserved pool
     });
 
     httpApi.addRoutes({
@@ -50,7 +50,7 @@ export class PublicRoutes {
       path: "handlers/utils/health-detailed.ts",
       memorySize: 512,
       timeout: cdk.Duration.seconds(10),
-      reservedConcurrentExecutions: 5,
+      // reservedConcurrentExecutions removed - use unreserved pool
     });
 
     httpApi.addRoutes({
@@ -83,7 +83,7 @@ export class PublicRoutes {
       path: "handlers/webhooks/workos.ts",
       memorySize: 512,
       timeout: cdk.Duration.seconds(15),
-      reservedConcurrentExecutions: 10, // Limit concurrent webhook processing
+      // reservedConcurrentExecutions removed - use unreserved pool
       deadLetterQueue: webhookDLQ, // Capture failed invocations
     });
 
@@ -107,7 +107,7 @@ export class PublicRoutes {
       memorySize: 256,
       timeout: cdk.Duration.seconds(3),
       logRetention: undefined, // Disabled to avoid AWS rate limits
-      reservedConcurrentExecutions: 10, // CORS preflight requests
+      // reservedConcurrentExecutions removed - use unreserved pool
     });
 
     httpApi.addRoutes({

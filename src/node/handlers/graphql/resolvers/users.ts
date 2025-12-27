@@ -5,6 +5,11 @@ import {
 	profiles,
 	users,
 } from "../../../db/schema/index";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	auditResolver,
+} from "../../../lib/audit";
 import { sanitizeObject } from "../../../lib/sanitize";
 import { userSchemas } from "../../../lib/validation";
 import type { GraphQLContext } from "../context";
@@ -87,48 +92,73 @@ export const userResolvers = {
 	},
 
 	Mutation: {
-		// Update current user
-		updateMe: async (
-			_parent: unknown,
-			{ input }: { input: Record<string, unknown> },
-			context: GraphQLContext,
-		) => {
-			// Validate input
-			const validated = userSchemas.update.parse(input);
-			const sanitized = sanitizeObject(validated);
+		// Update current user (with audit logging)
+		updateMe: auditResolver(
+			async (
+				_parent: unknown,
+				{ input }: { input: Record<string, unknown> },
+				context: GraphQLContext,
+			) => {
+				// Validate input
+				const validated = userSchemas.update.parse(input);
+				const sanitized = sanitizeObject(validated);
 
-			// Update user
-			const [updated] = await context.db
-				.update(users)
-				.set({
-					...sanitized,
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(users.id, context.userId))
-				.returning();
+				// Update user
+				const [updated] = await context.db
+					.update(users)
+					.set({
+						...sanitized,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(users.id, context.userId))
+					.returning();
 
-			return updated;
-		},
+				return updated;
+			},
+			{
+				action: AUDIT_ACTIONS.UPDATE,
+				resourceType: AUDIT_RESOURCE_TYPES.USER,
+				getResourceId: (result) => result.id,
+				getChanges: (result) => ({ after: result }),
+				getMetadata: (_result, args) => ({
+					updatedFields: Object.keys(args.input),
+				}),
+			},
+		),
 
-		// Update profile
-		updateProfile: async (
-			_parent: unknown,
-			{ input }: { input: Record<string, unknown> },
-			context: GraphQLContext,
-		) => {
-			const sanitized = sanitizeObject(input);
+		// Update profile (with audit logging)
+		updateProfile: auditResolver(
+			async (
+				_parent: unknown,
+				{ input }: { input: Record<string, unknown> },
+				context: GraphQLContext,
+			) => {
+				const sanitized = sanitizeObject(input);
 
-			const [updated] = await context.db
-				.update(profiles)
-				.set({
-					...sanitized,
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(profiles.userId, context.userId))
-				.returning();
+				const [updated] = await context.db
+					.update(profiles)
+					.set({
+						...sanitized,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(profiles.userId, context.userId))
+					.returning();
 
-			return updated;
-		},
+				return updated;
+			},
+			{
+				action: AUDIT_ACTIONS.UPDATE,
+				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
+				getResourceId: (result) => result.userId,
+				getChanges: (result) => ({ after: result }),
+				getMetadata: (_result, args) => ({
+					updatedFields: Object.keys(args.input),
+					...(args.input.onboardingCompleted !== undefined && {
+						onboardingCompleted: args.input.onboardingCompleted,
+					}),
+				}),
+			},
+		),
 
 		// Update both user and profile in one mutation
 		updateMyAccount: async (

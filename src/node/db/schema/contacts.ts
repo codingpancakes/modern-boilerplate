@@ -11,7 +11,7 @@ import {
 import { citext } from "../types/citext";
 import { contactStatus, resourceVisibility, subscriptionStatus } from "./enums";
 import { messageChannels, messages, subscriptionTopics } from "./messaging";
-import { organizations } from "./organizations";
+import { organizations, orgUnits } from "./organizations";
 
 /**
  * Contacts table - Customer/contact records
@@ -20,9 +20,16 @@ export const contacts = pgTable(
 	"contacts",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		externalId: text("external_id"),
 		email: citext("email"),
 		phone: citext("phone"),
@@ -44,6 +51,11 @@ export const contacts = pgTable(
 	(table) => {
 		return {
 			ixContactsOrg: index("ix_contacts_org").on(table.organizationId),
+			ixContactsOrgUnit: index("ix_contacts_org_unit").on(table.orgUnitId),
+			ixContactsOrgAndUnit: index("ix_contacts_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixContactsEmail: index("ix_contacts_email").on(
 				table.email,
 				table.organizationId,
@@ -64,6 +76,10 @@ export const contacts = pgTable(
 				table.organizationId,
 				table.email,
 			),
+			uxContactsOrgExternal: uniqueIndex("ux_contacts_org_external").on(
+				table.organizationId,
+				table.externalId,
+			),
 		};
 	},
 );
@@ -75,6 +91,16 @@ export const contactLists = pgTable(
 	"contact_lists",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
@@ -91,9 +117,18 @@ export const contactLists = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
+			ixContactListsOrg: index("ix_contact_lists_org").on(table.organizationId),
+			ixContactListsOrgUnit: index("ix_contact_lists_org_unit").on(
+				table.orgUnitId,
+			),
+			ixContactListsOrgAndUnit: index("ix_contact_lists_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixContactListsKey: index("ix_contact_lists_key").on(table.key),
 			ixContactListsVisibility: index("ix_contact_lists_visibility").on(
 				table.visibility,
@@ -142,6 +177,16 @@ export const contactSegments = pgTable(
 	"contact_segments",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		key: text("key"),
 		name: text("name"),
 		description: text("description"),
@@ -159,9 +204,20 @@ export const contactSegments = pgTable(
 			withTimezone: true,
 			mode: "string",
 		}).defaultNow(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true, mode: "string" }),
 	},
 	(table) => {
 		return {
+			ixContactSegmentsOrg: index("ix_contact_segments_org").on(
+				table.organizationId,
+			),
+			ixContactSegmentsOrgUnit: index("ix_contact_segments_org_unit").on(
+				table.orgUnitId,
+			),
+			ixContactSegmentsOrgAndUnit: index("ix_contact_segments_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixContactSegmentsKey: index("ix_contact_segments_key").on(table.key),
 			ixContactSegmentsVisibility: index("ix_contact_segments_visibility").on(
 				table.visibility,
@@ -205,9 +261,16 @@ export const contactChannels = pgTable(
 		contactId: uuid("contact_id").references(() => contacts.id, {
 			onDelete: "cascade",
 		}),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		channelId: uuid("channel_id").references(() => messageChannels.id, {
 			onDelete: "set null",
 		}),
@@ -229,6 +292,13 @@ export const contactChannels = pgTable(
 		return {
 			ixContactChannelsContact: index("ix_contact_channels_contact").on(
 				table.contactId,
+			),
+			ixContactChannelsOrgUnit: index("ix_contact_channels_org_unit").on(
+				table.orgUnitId,
+			),
+			ixContactChannelsOrgAndUnit: index("ix_contact_channels_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
 			),
 			ixContactChannelsOrgKind: index("ix_contact_channels_org_kind").on(
 				table.channelKind,
@@ -257,9 +327,16 @@ export const contactSubscriptions = pgTable(
 		contactId: uuid("contact_id").references(() => contacts.id, {
 			onDelete: "cascade",
 		}),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		topicId: uuid("topic_id").references(() => subscriptionTopics.id, {
 			onDelete: "cascade",
 		}),
@@ -299,9 +376,16 @@ export const events = pgTable(
 	"events",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		contactId: uuid("contact_id").references(() => contacts.id, {
 			onDelete: "set null",
 		}),
@@ -329,6 +413,11 @@ export const events = pgTable(
 				table.occurredAt,
 				table.organizationId,
 			),
+			ixEventsOrgUnit: index("ix_events_org_unit").on(table.orgUnitId),
+			ixEventsOrgAndUnit: index("ix_events_org_and_unit").on(
+				table.organizationId,
+				table.orgUnitId,
+			),
 			ixEventsContactTime: index("ix_events_contact_time").on(
 				table.contactId,
 				table.occurredAt,
@@ -341,6 +430,83 @@ export const events = pgTable(
 			ixEventsInsertId: index("ix_events_insert_id").on(
 				table.insertId,
 				table.organizationId,
+			),
+		};
+	},
+);
+
+/**
+ * Global Unsubscribes table - Permanent unsubscribe tracking across all contacts
+ * Ensures compliance with CAN-SPAM, GDPR, and prevents re-subscription abuse
+ */
+export const globalUnsubscribes = pgTable(
+	"global_unsubscribes",
+	{
+		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+
+		// The identifier that's unsubscribed (at least one must be provided)
+		email: citext("email"),
+		phone: citext("phone"),
+
+		// What channel they unsubscribed from
+		channelKind: text("channel_kind").notNull(), // EMAIL, SMS, PUSH, etc.
+
+		// When and why
+		unsubscribedAt: timestamp("unsubscribed_at", {
+			withTimezone: true,
+			mode: "string",
+		})
+			.defaultNow()
+			.notNull(),
+		reason: text("reason"), // "User request", "Complaint", "Hard bounce", etc.
+		source: text("source"), // UNSUBSCRIBE_LINK, COMPLAINT, BOUNCE, ADMIN, API
+
+		// Optional: What topic they unsubscribed from (null = all topics)
+		topicId: uuid("topic_id").references(() => subscriptionTopics.id, {
+			onDelete: "set null",
+		}),
+
+		// Compliance tracking
+		userAgent: text("user_agent"),
+		ipAddress: text("ip_address"),
+		metadata: jsonb("metadata"), // Additional context
+
+		createdAt: timestamp("created_at", {
+			withTimezone: true,
+			mode: "string",
+		})
+			.defaultNow()
+			.notNull(),
+	},
+	(table) => {
+		return {
+			// Fast lookup before sending - email
+			uxGlobalUnsubEmail: uniqueIndex("ux_global_unsub_email").on(
+				table.organizationId,
+				table.email,
+				table.channelKind,
+			),
+			// Fast lookup before sending - phone
+			uxGlobalUnsubPhone: uniqueIndex("ux_global_unsub_phone").on(
+				table.organizationId,
+				table.phone,
+				table.channelKind,
+			),
+			// Query by organization
+			ixGlobalUnsubOrg: index("ix_global_unsub_org").on(table.organizationId),
+			// Query by date for reporting
+			ixGlobalUnsubCreated: index("ix_global_unsub_created").on(
+				table.unsubscribedAt,
+			),
+			// Query by source for analytics
+			ixGlobalUnsubSource: index("ix_global_unsub_source").on(
+				table.organizationId,
+				table.source,
 			),
 		};
 	},

@@ -2,6 +2,40 @@
 
 Complete guide for unit tests, integration tests, and testing the backend locally, staging, and production.
 
+**Last Updated**: December 10, 2025  
+**Framework**: Vitest (unit) + Bash scripts (integration)  
+**Status**: Consolidated & Production-Ready  
+**Coverage**: ~60% (Unit), 90% (Integration)
+
+---
+
+## 📁 Test Organization
+
+```
+tests/
+├── unit/                           # Vitest unit tests
+│   ├── setup.ts
+│   ├── lib/
+│   │   ├── validation.test.ts      ✅
+│   │   ├── errors.test.ts          ✅
+│   │   └── permissions.test.ts     ✅
+│   └── graphql/
+│       └── resolvers/
+│           └── users.test.ts       ✅
+│
+├── integration/                    # Integration tests
+│   ├── test-all.sh                 ✅ Master runner
+│   ├── test-handlers.sh            ✅ REST API
+│   ├── test-graphql.sh             ✅ GraphQL
+│   ├── test-api-auth.sh            ✅ Auth
+│   ├── test-health-checks.sh       ✅ Health
+│   ├── test-middleware.sh          ✅ Middleware
+│   ├── test-image-upload.ts        ✅ Image upload
+│   └── test-throttling.sh          ✅ Rate limiting
+│
+└── README.md                       # Test documentation
+```
+
 ---
 
 ## 🧪 Unit Tests
@@ -11,10 +45,10 @@ Complete guide for unit tests, integration tests, and testing the backend locall
 This project includes comprehensive unit tests to ensure code quality and catch regressions early.
 
 **Test Statistics:**
-- **Total Tests**: 29
-- **Test Files**: 3
-- **Execution Time**: ~270ms
-- **Coverage**: Auth helpers, Error handling, Validation schemas
+- **Total Tests**: 40+
+- **Test Files**: 4
+- **Execution Time**: ~300ms
+- **Coverage**: Validation, Error handling, Permissions, GraphQL resolvers
 
 ### Available Commands
 
@@ -99,6 +133,20 @@ pnpm test tests/unit/lib/auth.test.ts
 pnpm test:ui
 ```
 
+### GraphQL Resolver Tests
+
+**File**: `tests/unit/graphql/resolvers/users.test.ts`
+
+**Coverage:**
+- ✅ Query: `me` - Get current user
+- ✅ Mutation: `updateMe` - Update user fields
+- ✅ Mutation: `updateProfile` - Update profile fields
+- ✅ Mutation: `updateMyAccount` - Combined user + profile update
+- ✅ Field resolver: `User.profile` - Nested profile data
+- ✅ Field resolver: `User.organizations` - User's organizations
+
+**Why it matters**: Ensures GraphQL resolvers correctly interact with the database and handle errors.
+
 ### Unit Test Notes
 
 - Tests use **Vitest** (fast, modern test runner)
@@ -106,6 +154,37 @@ pnpm test:ui
 - Test setup in `tests/unit/setup.ts`
 - Configuration in `vitest.config.ts`
 - TypeScript paths configured in `tsconfig.json`
+
+---
+
+## 🔄 Integration Tests
+
+### Available Test Suites
+
+```bash
+# Run all integration tests
+./tests/integration/test-all.sh "YOUR_JWT_TOKEN"
+
+# Individual test suites
+./tests/integration/test-handlers.sh "JWT"      # REST API handlers
+./tests/integration/test-graphql.sh "JWT"       # GraphQL queries/mutations
+./tests/integration/test-health-checks.sh       # Health endpoints (no auth)
+./tests/integration/test-middleware.sh          # Middleware variants (no auth)
+./tests/integration/test-api-auth.sh "JWT"      # Authentication flow
+```
+
+### GraphQL Integration Tests
+
+**File**: `tests/integration/test-graphql.sh`
+
+**Coverage:**
+- ✅ Query: `me` - Current user data
+- ✅ Query: `images` - User's uploaded images
+- ✅ Mutation: `updateMe` - Update user
+- ✅ Mutation: `updateProfile` - Update profile
+- ✅ Mutation: `updateMyAccount` - Combined update
+- ✅ Error cases: Invalid syntax, unauthorized access
+- ✅ Nested resolvers: Profile, organizations
 
 ---
 

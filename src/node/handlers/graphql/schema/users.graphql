@@ -50,7 +50,7 @@ extend type Query {
 	user(id: ID!): User
 }
 
-# Response type for combined update
+# Response types
 type UpdateMeResponse {
 	user: User!
 	profile: Profile!
@@ -85,4 +85,5 @@ input UpdateProfileInput {
 	lgbtq: Boolean
 	ethnicity: String
 	languages: [String!]
+	onboardingCompleted: Boolean
 }

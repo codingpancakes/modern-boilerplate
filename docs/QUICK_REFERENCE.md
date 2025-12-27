@@ -274,7 +274,7 @@ git status
 - [AWS Pipeline Setup](./AWS_PIPELINE_SETUP.md) - Full CI/CD setup guide
 - [Sync Secrets](./SYNC_SECRETS.md) - Environment variable management
 - [Setup Guide](./SETUP_GUIDE.md) - Initial project setup
-- [Unit Testing](./UNIT_TESTING_GUIDE.md) - Writing and running tests
+- [Testing Guide](./guides/TESTING.md) - Writing and running tests
 
 ---
 

@@ -2,6 +2,12 @@ import { Logger } from "@aws-lambda-powertools/logger";
 import type { Context } from "aws-lambda";
 import { eq } from "drizzle-orm";
 import { profiles, users } from "../../db/schema/index";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	logAudit,
+} from "../../lib/audit";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
@@ -77,6 +83,18 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Build update objects automatically (only includes provided fields + updatedAt)
 	const updates = buildNestedUpdates(updateRequest);
 
+	// Fetch current data for audit logging (before changes)
+	const [currentUser] = await db
+		.select()
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1);
+	const [currentProfile] = await db
+		.select()
+		.from(profiles)
+		.where(eq(profiles.userId, userId))
+		.limit(1);
+
 	// Update user table if user fields provided
 	if (updates.user) {
 		await db.update(users).set(updates.user).where(eq(users.id, userId));
@@ -108,6 +126,28 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		.from(profiles)
 		.where(eq(profiles.userId, userId))
 		.limit(1);
+
+	// Audit log: Track user profile updates
+	await logAudit({
+		userId,
+		action: AUDIT_ACTIONS.UPDATE,
+		resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
+		resourceId: userId,
+		changes: {
+			before: { user: currentUser, profile: currentProfile },
+			after: { user: updatedUser, profile: updatedProfile },
+		},
+		ipAddress: event.requestContext?.http?.sourceIp,
+		userAgent: event.headers?.["user-agent"],
+		requestId: event.requestContext?.requestId,
+		status: AUDIT_STATUS.SUCCESS,
+		metadata: {
+			updatedFields: {
+				user: updates.user ? Object.keys(updates.user) : [],
+				profile: updates.profile ? Object.keys(updates.profile) : [],
+			},
+		},
+	});
 
 	return createSuccessResponse({
 		user: updatedUser,

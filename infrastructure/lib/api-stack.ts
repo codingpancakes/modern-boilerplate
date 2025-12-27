@@ -195,6 +195,7 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined, // Disabled to avoid AWS rate limits
+      // reservedConcurrentExecutions removed - use unreserved pool
     });
 
     this.httpApi.addRoutes({
@@ -218,6 +219,7 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined,
+      // reservedConcurrentExecutions removed - use unreserved pool
     });
 
     // TypeScript proxy handler for authenticated Python profile endpoint
@@ -257,7 +259,7 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined,
-      reservedConcurrentExecutions: 30, // GraphQL is primary API, needs high concurrency
+      // reservedConcurrentExecutions removed - use unreserved pool
       bundling: {
         minify: true,
         sourceMap: true,
@@ -300,7 +302,7 @@ export class ApiStack extends cdk.Stack {
       environment: {
         STAGE: props.stage,
       },
-      reservedConcurrentExecutions: 5, // Docs are low traffic
+      // reservedConcurrentExecutions removed - use unreserved pool
       bundling: {
         minify: true,
         sourceMap: false,

@@ -224,7 +224,8 @@ async function requireAuth(req: express.Request, res: express.Response, next: an
 }
 
 // Choose webhook handler implementation based on env
-const workosWebhookImpl = process.env.WORKOS_SECRET_ARN
+// Use real handler if either WORKOS_SECRET_ARN (deployed) or WORKOS_WEBHOOK_SECRET (local) is set
+const workosWebhookImpl = (process.env.WORKOS_SECRET_ARN || process.env.WORKOS_WEBHOOK_SECRET)
   ? workosWebhookHandler
   : async () => ({
       statusCode: 200,
@@ -298,7 +299,13 @@ function wrapHandler(handlerPath: string) {
 // Define routes
 // Public routes
 app.get('/v1/health', wrapHandler('../src/node/handlers/health'));
-app.post('/v1/webhooks/workos', wrapHandler('../src/node/handlers/webhooks/workos'));
+app.post('/v1/webhooks/workos', (req, res, next) => {
+  console.log('🔔 WEBHOOK ROUTE HIT - Request received at /v1/webhooks/workos');
+  console.log('Headers:', req.headers);
+  console.log('Body preview:', JSON.stringify(req.body).substring(0, 200));
+  const handler = wrapHandler('../src/node/handlers/webhooks/workos');
+  handler(req, res);
+});
 
 // Media endpoints (protected)
 app.post('/v1/media/upload-image', requireAuth, wrapHandler('../src/node/handlers/media/upload-image'));

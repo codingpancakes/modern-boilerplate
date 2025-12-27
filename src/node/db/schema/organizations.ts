@@ -44,6 +44,7 @@ export const organizations = pgTable(
 	(table) => {
 		return {
 			ixOrgSlug: index("ix_org_slug").on(table.slug),
+			uxOrgSlug: uniqueIndex("ux_org_slug").on(table.slug),
 			ixOrgType: index("ix_org_type").on(table.orgType),
 			ixOrgVisible: index("ix_org_visible").on(table.visibility),
 		};
@@ -57,9 +58,11 @@ export const orgUnits = pgTable(
 	"org_units",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		parentId: uuid("parent_id"),
 		code: text("code"),
 		name: text("name"),
@@ -95,12 +98,16 @@ export const groups = pgTable(
 	"groups",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
-		orgUnitId: uuid("org_unit_id").references(() => orgUnits.id, {
-			onDelete: "set null",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		parentId: uuid("parent_id"),
 		key: text("key"),
 		name: text("name"),
@@ -372,9 +379,16 @@ export const organizationMembers = pgTable(
 	"organization_members",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
-		organizationId: uuid("organization_id").references(() => organizations.id, {
-			onDelete: "cascade",
-		}),
+		organizationId: uuid("organization_id")
+			.references(() => organizations.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
+		orgUnitId: uuid("org_unit_id")
+			.references(() => orgUnits.id, {
+				onDelete: "cascade",
+			})
+			.notNull(),
 		userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
 		role: orgRole("role").default("MEMBER"),
 		status: assignmentStatus("status").default("ACTIVE"),

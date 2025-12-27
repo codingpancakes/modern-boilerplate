@@ -1204,6 +1204,78 @@ type PageInfo {
 
 ---
 
+## Interactive Documentation (GraphiQL)
+
+### Access Points
+
+**Local Development:**
+```bash
+pnpm dev
+```
+Then open: **http://localhost:3000/v1/graphql/docs**
+
+**Staging/Production:**
+After deployment: **https://your-api-domain.com/v1/graphql/docs**
+
+### Features
+
+GraphiQL provides an interactive GraphQL explorer with:
+
+- ✅ **Auto-complete** - Press Ctrl/Cmd + Space for suggestions
+- ✅ **Syntax highlighting** - Beautiful query editor
+- ✅ **Schema documentation** - Click "Docs" to explore all types
+- ✅ **Query history** - Previous queries are saved
+- ✅ **Variables editor** - Test queries with variables
+- ✅ **Real-time execution** - See results immediately
+
+### Authentication in GraphiQL
+
+To authenticate in GraphiQL:
+
+1. Get your JWT token from WorkOS
+2. Open browser console on the GraphiQL page
+3. Run:
+   ```javascript
+   localStorage.setItem('graphql-token', 'YOUR_JWT_TOKEN')
+   ```
+4. Refresh the page
+
+The token is automatically included in all requests.
+
+### Example Queries
+
+**Get current user:**
+```graphql
+query {
+  me {
+    id
+    email
+    firstName
+    lastName
+    profile {
+      bio
+      avatarUrl
+    }
+  }
+}
+```
+
+**Update user:**
+```graphql
+mutation {
+  updateMe(input: {
+    firstName: "John"
+    lastName: "Doe"
+  }) {
+    id
+    firstName
+    lastName
+  }
+}
+```
+
+---
+
 ## Summary
 
 ### Migration Checklist

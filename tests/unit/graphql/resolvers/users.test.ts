@@ -86,7 +86,7 @@ describe("User Resolvers", () => {
 
 			const input = { firstName: "Updated" };
 
-			const result = await resolvers.Mutation.updateMe(null, { input }, context);
+			const result = await resolvers.Mutation.updateMe(null, { input }, context, {} as any);
 
 			expect(result.firstName).toBe("Updated");
 			expect(context.db.update).toHaveBeenCalled();
@@ -115,7 +115,7 @@ describe("User Resolvers", () => {
 				__proto__: { malicious: true },
 			};
 
-			await resolvers.Mutation.updateMe(null, { input }, context);
+			await resolvers.Mutation.updateMe(null, { input }, context, {} as any);
 
 			// Verify sanitization removed __proto__
 			const setCall = mockSet.mock.calls[0][0];
@@ -145,6 +145,7 @@ describe("User Resolvers", () => {
 				null,
 				{ input },
 				context,
+				{} as any,
 			);
 
 			expect(result.preferredName).toBe("TestNick");
