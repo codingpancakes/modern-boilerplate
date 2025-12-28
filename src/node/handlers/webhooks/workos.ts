@@ -105,11 +105,7 @@ interface WorkOSOrgData {
 	[key: string]: unknown;
 }
 
-let webhookSecret: string | null = null;
-
 async function getWebhookSecret(): Promise<string> {
-	if (webhookSecret) return webhookSecret;
-
 	logger.info("🔑 Getting webhook secret...", {
 		hasEnvVar: !!process.env.WORKOS_WEBHOOK_SECRET,
 		hasSecretArn: !!process.env.WORKOS_SECRET_ARN,
@@ -118,8 +114,7 @@ async function getWebhookSecret(): Promise<string> {
 	// For local development, use env var directly
 	if (process.env.WORKOS_WEBHOOK_SECRET) {
 		logger.info("✅ Using local WORKOS_WEBHOOK_SECRET");
-		webhookSecret = process.env.WORKOS_WEBHOOK_SECRET;
-		return webhookSecret;
+		return process.env.WORKOS_WEBHOOK_SECRET;
 	}
 
 	// For deployed environments, fetch from Secrets Manager
@@ -131,10 +126,15 @@ async function getWebhookSecret(): Promise<string> {
 	const response = await client.send(command);
 	if (response.SecretString) {
 		const secret = JSON.parse(response.SecretString);
-		webhookSecret = secret.webhookSecret;
+		const webhookSecret = secret.webhookSecret;
 		if (!webhookSecret) {
 			throw new Error("WORKOS_WEBHOOK_SECRET not found in secrets");
 		}
+
+		logger.info("✅ Loaded webhook secret from Secrets Manager", {
+			secretLength: webhookSecret.length,
+			secretPrefix: webhookSecret.substring(0, 8),
+		});
 
 		return webhookSecret;
 	}
@@ -165,6 +165,10 @@ function verifySignature(
 
 	logger.info("Signature verification", {
 		timestamp,
+		payloadLength: payload.length,
+		payloadPreview: payload.substring(0, 100),
+		signedPayloadPreview: signedPayload.substring(0, 100),
+		secretPrefix: secret.substring(0, 8),
 		receivedSignature: signature,
 		expectedSignature,
 		match: signature === expectedSignature,

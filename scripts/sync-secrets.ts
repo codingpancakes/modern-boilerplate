@@ -65,9 +65,10 @@ const secretMappings = [
   {
     name: 'WorkOS Credentials',
     secretId: `/${projectName}/${stage}/workos`,
-    keys: ['WORKOS_CLIENT_ID'],
+    keys: ['WORKOS_CLIENT_ID', 'WORKOS_WEBHOOK_SECRET'],
     jsonKeys: {
       clientId: 'WORKOS_CLIENT_ID',
+      webhookSecret: 'WORKOS_WEBHOOK_SECRET',
     },
   },
   {
