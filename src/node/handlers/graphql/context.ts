@@ -1,8 +1,9 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import type { AuditContext } from "../../lib/audit";
 import { getClaims, getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
 
-export interface GraphQLContext {
+export interface GraphQLContext extends AuditContext {
 	userId: string;
 	orgId: string;
 	role: string;
@@ -10,6 +11,7 @@ export interface GraphQLContext {
 	providerSubject: string;
 	claims: Record<string, unknown>;
 	db: Awaited<ReturnType<typeof getDb>>;
+	organizationId?: string;
 }
 
 export async function createContext({

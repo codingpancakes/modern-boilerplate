@@ -264,6 +264,13 @@ export class ApiStack extends cdk.Stack {
         minify: true,
         sourceMap: true,
         externalModules: ['@aws-sdk/*'], // AWS SDK v3 is available in Lambda runtime
+        commandHooks: {
+          beforeBundling: (_inputDir: string, _outputDir: string): string[] => [],
+          afterBundling: (inputDir: string, outputDir: string): string[] => [
+            `cp -r ${inputDir}/src/node/handlers/graphql/schema/*.graphql ${outputDir}/`,
+          ],
+          beforeInstall: (_inputDir: string, _outputDir: string): string[] => [],
+        },
       },
     });
 
@@ -273,7 +280,7 @@ export class ApiStack extends cdk.Stack {
 
     // Add GraphQL route with WorkOS authorizer
     this.httpApi.addRoutes({
-      path: "/graphql",
+      path: "/v1/graphql",
       methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.GET], // GET for GraphQL Playground
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "GraphQLIntegration",
@@ -284,7 +291,7 @@ export class ApiStack extends cdk.Stack {
 
     // Output GraphQL endpoint
     new cdk.CfnOutput(this, "GraphQLEndpoint", {
-      value: `${this.httpApi.url}graphql`,
+      value: `${this.httpApi.url}v1/graphql`,
       description: "GraphQL API endpoint",
     });
 

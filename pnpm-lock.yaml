@@ -9,10 +9,10 @@ importers:
   .:
     dependencies:
       '@apollo/server':
-        specifier: ^5.2.0
+        specifier: ^5.0.0
         version: 5.2.0(graphql@16.12.0)
       '@as-integrations/aws-lambda':
-        specifier: ^4.0.1
+        specifier: ^4.0.0
         version: 4.0.1(@apollo/server@5.2.0(graphql@16.12.0))
       '@aws-cdk/aws-apigatewayv2-alpha':
         specifier: 2.114.1-alpha.0
@@ -11895,7 +11895,7 @@ snapshots:
 
   finalhandler@2.1.1:
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.3
       encodeurl: 2.0.0
       escape-html: 1.0.3
       on-finished: 2.4.1

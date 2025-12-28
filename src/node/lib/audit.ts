@@ -11,6 +11,14 @@ import {
 import { getDb } from "./db";
 
 /**
+ * Context with audit fields
+ */
+export interface AuditContext {
+	userId?: string;
+	organizationId?: string;
+}
+
+/**
  * Audit Log Entry
  */
 export interface AuditLogEntry {
@@ -20,13 +28,13 @@ export interface AuditLogEntry {
 	resourceType: AuditResourceType;
 	resourceId?: string;
 	changes?: {
-		before?: any;
-		after?: any;
+		before?: unknown;
+		after?: unknown;
 	};
 	ipAddress?: string;
 	userAgent?: string;
 	requestId?: string;
-	metadata?: Record<string, any>;
+	metadata?: Record<string, unknown>;
 	status?: AuditStatus;
 	errorMessage?: string;
 }
@@ -57,11 +65,11 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 			action: entry.action,
 			resourceType: entry.resourceType,
 			resourceId: entry.resourceId,
-			changes: entry.changes as any,
+			changes: entry.changes,
 			ipAddress: entry.ipAddress,
 			userAgent: entry.userAgent,
 			requestId: entry.requestId,
-			metadata: entry.metadata as any,
+			metadata: entry.metadata,
 			status: entry.status || AUDIT_STATUS.SUCCESS,
 			errorMessage: entry.errorMessage,
 		});
@@ -106,16 +114,19 @@ export function extractRequestContext(event: APIGatewayProxyEvent) {
  * );
  * ```
  */
-export function withAudit<T = any>(
+export function withAudit<T = unknown>(
 	handler: (
 		event: APIGatewayProxyEvent,
-		context: any,
+		context: AuditContext,
 		auditLog: (
 			entry: Omit<AuditLogEntry, "ipAddress" | "userAgent" | "requestId">,
 		) => Promise<void>,
 	) => Promise<T>,
 ) {
-	return async (event: APIGatewayProxyEvent, context: any): Promise<T> => {
+	return async (
+		event: APIGatewayProxyEvent,
+		context: AuditContext,
+	): Promise<T> => {
 		const requestContext = extractRequestContext(event);
 
 		// Create audit log function with pre-filled request context
@@ -157,12 +168,16 @@ export function withAudit<T = any>(
  * };
  * ```
  */
-export function auditResolver<TArgs = any, TResult = any>(
+export function auditResolver<
+	TArgs = unknown,
+	TResult = unknown,
+	TContext extends AuditContext = AuditContext,
+>(
 	resolver: (
-		parent: any,
+		parent: unknown,
 		args: TArgs,
-		context: any,
-		info: any,
+		context: TContext,
+		info: unknown,
 	) => Promise<TResult>,
 	options: {
 		action: AuditAction;
@@ -171,18 +186,18 @@ export function auditResolver<TArgs = any, TResult = any>(
 		getChanges?: (
 			result: TResult,
 			args: TArgs,
-		) => { before?: any; after?: any } | undefined;
+		) => { before?: unknown; after?: unknown } | undefined;
 		getMetadata?: (
 			result: TResult,
 			args: TArgs,
-		) => Record<string, any> | undefined;
+		) => Record<string, unknown> | undefined;
 	},
 ) {
 	return async (
-		parent: any,
+		parent: unknown,
 		args: TArgs,
-		context: any,
-		info: any,
+		context: TContext,
+		info: unknown,
 	): Promise<TResult> => {
 		let result: TResult;
 		let status: AuditStatus = AUDIT_STATUS.SUCCESS;
@@ -202,7 +217,7 @@ export function auditResolver<TArgs = any, TResult = any>(
 				resourceType: options.resourceType,
 				status,
 				errorMessage,
-				metadata: options.getMetadata?.(undefined as any, args),
+				metadata: options.getMetadata?.(undefined as TResult, args),
 			});
 
 			// Re-throw the error
@@ -216,7 +231,7 @@ export function auditResolver<TArgs = any, TResult = any>(
 			action: options.action,
 			resourceType: options.resourceType,
 			resourceId: options.getResourceId?.(result, args),
-			changes: options.getChanges?.(result, args) as any,
+			changes: options.getChanges?.(result, args),
 			metadata: options.getMetadata?.(result, args),
 			status,
 		});

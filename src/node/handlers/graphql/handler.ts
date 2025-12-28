@@ -1,10 +1,13 @@
-import { ApolloServer, type BaseContext } from "@apollo/server";
-import { startServerAndCreateLambdaHandler } from "@as-integrations/aws-lambda";
+import { ApolloServer } from "@apollo/server";
+import {
+	handlers,
+	startServerAndCreateLambdaHandler,
+} from "@as-integrations/aws-lambda";
 import type { GraphQLContext } from "./context";
 import { createContext } from "./context";
 import { mediaResolvers } from "./resolvers/media";
 import { userResolvers } from "./resolvers/users";
-import { typeDefs } from "./schema"; // Now loads from schema/index.ts
+import { typeDefs } from "./schema";
 
 // Merge all resolvers
 const resolvers = {
@@ -26,7 +29,7 @@ const resolvers = {
 const server = new ApolloServer<GraphQLContext>({
 	typeDefs,
 	resolvers,
-	introspection: process.env.STAGE !== "production", // Enable GraphQL Playground in dev/staging
+	introspection: process.env.STAGE !== "production",
 	formatError: (error) => {
 		console.error("GraphQL Error:", error);
 		return {
@@ -38,13 +41,13 @@ const server = new ApolloServer<GraphQLContext>({
 	},
 });
 
-// Export Lambda handler
-// Type assertion needed due to Apollo Server v4 + Lambda integration typing mismatch
-// biome-ignore lint/suspicious/noExplicitAny: Required for Apollo Server Lambda handler compatibility
-export const handler: any = startServerAndCreateLambdaHandler(
-	server as unknown as ApolloServer<BaseContext>,
+// Export Lambda handler following official Apollo Server docs
+export const handler = startServerAndCreateLambdaHandler(
+	server,
+	handlers.createAPIGatewayProxyEventV2RequestHandler(),
 	{
-		context: createContext,
-		// biome-ignore lint/suspicious/noExplicitAny: Required for Apollo Server Lambda integration
-	} as any,
+		context: async ({ event }) => {
+			return createContext({ event });
+		},
+	},
 );
