@@ -287,7 +287,142 @@ If internal routes are added in the future, they should use one of:
 
 ---
 
-## 5. Environment-Specific Configuration
+## 5. Why No VPC? (Architecture Decision)
+
+### 5.1 Database: Neon (External Serverless Postgres)
+
+**Current Setup:**
+- Database: Neon serverless Postgres (external managed service)
+- Connection: HTTPS-based queries via `@neondatabase/serverless`
+- Location: Outside AWS infrastructure
+
+**Why This Means No VPC:**
+
+1. **External Service**
+   - Neon is not in your AWS account
+   - Accessed via public internet (HTTPS)
+   - No AWS RDS instance to protect with VPC
+
+2. **HTTP-Based Connection**
+   ```typescript
+   // Neon uses fetch/HTTP, not traditional TCP
+   const sql = neon(DATABASE_URL, {
+     fetchOptions: { cache: "no-store" },
+     fullResults: false,  // Optimized for serverless
+   });
+   ```
+   - Works perfectly from Lambda without VPC
+   - No connection pooling issues
+   - Optimized for serverless cold starts
+
+3. **Performance Benefits**
+   - **No VPC:** ~500ms cold start
+   - **With VPC:** ~2000ms cold start (ENI setup)
+   - Faster response times for users
+
+4. **Cost Savings**
+   - **No VPC:** $0 networking costs
+   - **With VPC:** ~$32/month per NAT Gateway (per AZ)
+   - ~$64/month for multi-AZ setup
+
+5. **Simplicity**
+   - No VPC configuration needed
+   - No subnet management
+   - No security group rules
+   - Easier to deploy and maintain
+
+### 5.2 When You WOULD Need VPC
+
+**Only if you add these AWS resources:**
+
+1. **ElastiCache (Redis/Memcached)**
+   - Must be in VPC
+   - For caching user ID mappings, JWKS, sessions
+   - Would require all Lambdas to be in VPC
+
+2. **EFS (Elastic File System)**
+   - Must be in VPC
+   - For processing large files (>512MB)
+   - Shared storage across Lambdas
+
+3. **Private RDS (if migrating from Neon)**
+   - RDS in private subnet
+   - More control, but more complexity
+   - Not recommended - Neon is optimized for serverless
+
+4. **Internal-Only APIs**
+   - Service-to-service communication
+   - VPC endpoint for API Gateway
+   - Network-level isolation
+
+5. **Compliance Requirements**
+   - HIPAA, PCI-DSS, SOC2
+   - Network isolation mandated
+   - Audit trail of network access
+
+### 5.3 Current Architecture (No VPC)
+
+```
+┌─────────────────────────────────────────┐
+│ Internet                                │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│ API Gateway (Public)                    │
+│ - /v1/graphql                           │
+│ - /v1/users/*                           │
+│ - /v1/media/*                           │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│ Lambda Authorizer (WorkOS JWT)          │
+│ - Validates JWT                         │
+│ - Caches valid tokens (5 min)           │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│ Lambda Handlers (No VPC)                │
+│ - GraphQL                               │
+│ - REST endpoints                        │
+│ - Webhooks                              │
+└─────────────┬───────────────────────────┘
+              │
+              ▼ HTTPS
+┌─────────────────────────────────────────┐
+│ Neon Postgres (External)                │
+│ - Serverless database                   │
+│ - Auto-scaling                          │
+│ - Built-in connection pooling           │
+└─────────────────────────────────────────┘
+```
+
+**Benefits:**
+- ✅ Fast cold starts (~500ms)
+- ✅ No networking costs
+- ✅ Simple architecture
+- ✅ Easy to deploy
+- ✅ Optimized for serverless
+
+**Trade-offs:**
+- ⚠️ Database accessible via internet (mitigated by strong auth + TLS)
+- ⚠️ Can't use ElastiCache without VPC (use external Redis if needed)
+
+### 5.4 Recommendation
+
+**Keep current setup (no VPC)** unless:
+1. You add ElastiCache for caching
+2. You need EFS for large file processing
+3. Compliance requires network isolation
+4. You migrate from Neon to private RDS
+
+**For 99% of serverless apps with external databases: VPC is unnecessary overhead.**
+
+---
+
+## 6. Environment-Specific Configuration
 
 ### 5.1 Environment Variables
 
