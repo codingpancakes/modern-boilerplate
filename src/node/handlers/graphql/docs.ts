@@ -15,9 +15,9 @@ export const handler = async (
 	event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyResultV2> => {
 	// Get the GraphQL endpoint from the request
-	const protocol = event.headers["x-forwarded-proto"] || "https";
+	const protocol = event.headers["x-forwarded-proto"] || "http";
 	const host = event.headers.host || event.requestContext.domainName;
-	const graphqlEndpoint = `${protocol}://${host}/graphql`;
+	const graphqlEndpoint = `${protocol}://${host}/v1/graphql`;
 
 	// Return GraphiQL HTML
 	const html = `
@@ -88,7 +88,8 @@ export const handler = async (
 #    localStorage.setItem('graphql-token', 'YOUR_JWT_TOKEN')
 # 3. Refresh this page
 
-query GetCurrentUser {
+# Example: Get your user profile
+query Me {
   me {
     id
     email
@@ -110,18 +111,37 @@ query GetCurrentUser {
   }
 }
 
-query GetImages {
-  images(limit: 10) {
-    images {
-      key
-      url
-      size
-      lastModified
-      category
-    }
-    total
-  }
-}
+# Example: Update your account (both user and profile)
+# mutation UpdateMyAccount {
+#   updateMyAccount(
+#     user: { firstName: "John", lastName: "Doe" }
+#     profile: { preferredName: "Johnny" }
+#   ) {
+#     user {
+#       id
+#       firstName
+#       lastName
+#     }
+#     profile {
+#       userId
+#       preferredName
+#     }
+#   }
+# }
+
+# Example: List uploaded images
+# query GetImages {
+#   images(limit: 10) {
+#     images {
+#       key
+#       url
+#       size
+#       lastModified
+#       category
+#     }
+#     total
+#   }
+# }
 \`;
 
     root.render(

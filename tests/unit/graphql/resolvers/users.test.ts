@@ -13,6 +13,7 @@ const createMockDb = () => ({
 		},
 		organizationMembers: {
 			findFirst: vi.fn(),
+			findMany: vi.fn(),
 		},
 	},
 	select: vi.fn(),
@@ -222,6 +223,16 @@ describe("User Resolvers", () => {
 
 			// Mock profile fetch (not update)
 			(context.db.query.profiles.findFirst as any).mockResolvedValue(existingProfile);
+			
+			// Mock db.select() for profile fetch when not updated
+			(context.db.select as any).mockReturnValue({
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi.fn().mockResolvedValue([existingProfile]),
+					}),
+				}),
+			});
+			
 			const args = {
 				user: { firstName: "UpdatedFirst" },
 			};
@@ -272,13 +283,7 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.db.select as any).mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					leftJoin: vi.fn().mockReturnValue({
-						where: vi.fn().mockResolvedValue(mockOrgs),
-					}),
-				}),
-			});
+			(context.db.query.organizationMembers.findMany as any).mockResolvedValue(mockOrgs);
 
 			const result = await resolvers.User.organizations(parent, {}, context);
 

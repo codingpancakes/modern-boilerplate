@@ -1,0 +1,9 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Run tests before push
+echo "🧪 Running tests before push..."
+
+pnpm test:run || exit 1
+
+echo "✅ All tests passed! Safe to push."

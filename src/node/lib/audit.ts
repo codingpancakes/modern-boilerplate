@@ -75,7 +75,10 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 		});
 	} catch (error) {
 		// Don't throw - audit logging should never break the main flow
-		console.error("Failed to log audit event:", error);
+		// Silence in test environment (NODE_ENV=test or no DATABASE_URL)
+		if (process.env.NODE_ENV !== "test") {
+			console.error("Failed to log audit event:", error);
+		}
 	}
 }
 

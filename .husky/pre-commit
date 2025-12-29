@@ -1,4 +1,13 @@
 #!/bin/sh
 . "$(dirname "$0")/_/husky.sh"
 
-pnpm check
+# Fast checks before commit (lint + typecheck)
+echo "🔍 Running pre-commit checks..."
+
+echo "📝 Linting..."
+pnpm lint || exit 1
+
+echo "🔎 Type checking..."
+pnpm typecheck || exit 1
+
+echo "✅ Pre-commit checks passed!"
