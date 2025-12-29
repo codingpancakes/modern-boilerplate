@@ -297,41 +297,44 @@ export class ApiStack extends cdk.Stack {
 
     // ============================================
     // GRAPHQL DOCUMENTATION HANDLER (GraphiQL)
+    // Only enabled in development/local, disabled in staging/production for security
     // ============================================
-    const graphqlDocsHandler = new lambdaNodejs.NodejsFunction(this, "GraphQLDocsHandler", {
-      functionName: `${projectName}-${props.stage}-graphql-docs`,
-      entry: path.join(__dirname, "../../src/node/handlers/graphql/docs.ts"),
-      handler: "handler",
-      runtime: lambda.Runtime.NODEJS_20_X,
-      architecture: lambda.Architecture.ARM_64,
-      timeout: cdk.Duration.seconds(10),
-      memorySize: 256,
-      environment: {
-        STAGE: props.stage,
-      },
-      // reservedConcurrentExecutions removed - use unreserved pool
-      bundling: {
-        minify: true,
-        sourceMap: false,
-      },
-    });
+    if (props.stage === "development" || props.stage === "dev" || props.stage === "local") {
+      const graphqlDocsHandler = new lambdaNodejs.NodejsFunction(this, "GraphQLDocsHandler", {
+        functionName: `${projectName}-${props.stage}-graphql-docs`,
+        entry: path.join(__dirname, "../../src/node/handlers/graphql/docs.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_20_X,
+        architecture: lambda.Architecture.ARM_64,
+        timeout: cdk.Duration.seconds(10),
+        memorySize: 256,
+        environment: {
+          STAGE: props.stage,
+        },
+        // reservedConcurrentExecutions removed - use unreserved pool
+        bundling: {
+          minify: true,
+          sourceMap: false,
+        },
+      });
 
-    // Add GraphQL docs route (no auth required - public documentation)
-    this.httpApi.addRoutes({
-      path: "/graphql/docs",
-      methods: [apigwv2.HttpMethod.GET],
-      integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "GraphQLDocsIntegration",
-        graphqlDocsHandler
-      ),
-      // No authorizer - public access to documentation UI
-    });
+      // Add GraphQL docs route (no auth required - development only)
+      this.httpApi.addRoutes({
+        path: "/graphql/docs",
+        methods: [apigwv2.HttpMethod.GET],
+        integration: new apigwv2Integrations.HttpLambdaIntegration(
+          "GraphQLDocsIntegration",
+          graphqlDocsHandler
+        ),
+        // No authorizer - development environment only
+      });
 
-    // Output GraphQL docs endpoint
-    new cdk.CfnOutput(this, "GraphQLDocsEndpoint", {
-      value: `${this.httpApi.url}graphql/docs`,
-      description: "GraphQL interactive documentation (GraphiQL)",
-    });
+      // Output GraphQL docs endpoint
+      new cdk.CfnOutput(this, "GraphQLDocsEndpoint", {
+        value: `${this.httpApi.url}graphql/docs`,
+        description: "GraphQL interactive documentation (GraphiQL) - Development only",
+      });
+    }
 
     // Custom domain configuration (optional)
     if (process.env.API_DOMAIN) {
