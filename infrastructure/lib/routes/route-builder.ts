@@ -46,7 +46,7 @@ export class RouteBuilder {
 
     return new lambdaNodejs.NodejsFunction(this.scope, config.name, {
       functionName, // Clean, readable name
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       memorySize: config.memorySize || 512,
       timeout: config.timeout || cdk.Duration.seconds(30),
       environment: {
@@ -64,7 +64,7 @@ export class RouteBuilder {
         minify: true,
         sourceMap: true,
         sourcesContent: false,
-        target: "node20",
+        target: "node24",
         format: lambdaNodejs.OutputFormat.CJS,
         mainFields: ["main", "module"],
       },

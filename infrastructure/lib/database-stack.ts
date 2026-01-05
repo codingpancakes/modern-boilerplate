@@ -35,7 +35,7 @@ export class DatabaseStack extends cdk.Stack {
     const projectName = process.env.PROJECT_NAME;
     const migrationRunner = new lambdaNodejs.NodejsFunction(this, 'MigrationRunner', {
       functionName: `${projectName}-${props.stage}-migration-runner`,
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       architecture: lambda.Architecture.ARM_64,
       memorySize: 512,
       timeout: cdk.Duration.minutes(5),
@@ -49,7 +49,7 @@ export class DatabaseStack extends cdk.Stack {
       bundling: {
         minify: true,
         sourceMap: true,
-        target: 'node20',
+        target: 'node24',
         format: lambdaNodejs.OutputFormat.CJS,
         // Prefer CommonJS entry points for dependencies and bundle AWS SDK v3
         mainFields: ['main', 'module'],
