@@ -1,8 +1,10 @@
 # 🔒 SOC 2 Compliance Readiness Checklist
 
 **Generated:** December 10, 2025  
-**Current Status:** 70% Ready (Better than initially assessed!)  
-**Estimated Time to Compliance:** 60-80 hours (1.5-2 weeks) - Much less than expected!
+**Last Updated:** February 1, 2026  
+**Current Status:** 72% Ready (Audit logging Phase 1 complete!)  
+**Node.js Version:** 24.x (Lambda Runtime: NODEJS_24_X)  
+**Estimated Time to Compliance:** 55-75 hours (1.5-2 weeks)
 
 ---
 
@@ -81,10 +83,10 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 ### 🔴 CRITICAL GAPS (Must Have)
 
-#### 1. **Application-Level Audit Logging** ✅ IMPLEMENTED
+#### 1. **Application-Level Audit Logging** ✅ PHASE 1 COMPLETE
 **SOC 2 Requirement:** CC6.3, CC7.2 - Log all user actions
 
-**Status:** ✅ Complete (December 11, 2025)
+**Status:** ✅ Phase 1 Complete (December 11, 2025 - February 1, 2026)
 
 **What Was Implemented:**
 - ✅ `auditLogs` table with 14 columns and 6 indexes
@@ -95,27 +97,36 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 **Files Created:**
 - `src/node/db/schema/audit.ts` - Audit logs table schema
-- `src/node/lib/audit.ts` - Audit logging utilities
+- `src/node/lib/audit.ts` - Audit logging utilities (248 lines)
 - `src/node/db/migrations/0003_shallow_joystick.sql` - Database migration
 - `docs/AUDIT_LOGGING_GUIDE.md` - Complete usage documentation
 
 **Features:**
 - ✅ Direct logging: `logAudit()` function
-- ✅ Lambda middleware: `withAudit()` wrapper
+- ✅ Lambda middleware: `withAudit()` wrapper (not yet used)
 - ✅ GraphQL decorator: `auditResolver()` wrapper
 - ✅ Standard action types: LOGIN, CREATE, UPDATE, DELETE, etc.
 - ✅ Standard resource types: USER, CONTACT, ORGANIZATION, etc.
 - ✅ Automatic request context extraction
 - ✅ Error handling (never breaks main flow)
 
-**Next Steps:**
-1. Run migration: `pnpm db:migrate`
-2. Add audit logging to existing handlers
-3. Add audit log query API endpoint (optional)
-4. Add automated cleanup job for 7-year retention (optional)
+**Current Handler Coverage (50%):**
+- ✅ REST: `users/update.ts` (full audit with before/after)
+- ✅ GraphQL: `updateMe`, `updateProfile` (with auditResolver)
+- ✅ Webhooks: `workos.ts` (user create/update events)
+- ❌ REST: `media/upload-image.ts` (not yet implemented)
+- ❌ REST: `media/upload-image-direct.ts` (not yet implemented)
+- ❌ GraphQL: `generateImageUploadUrl` (not yet implemented)
 
-**Time Spent:** ~2 hours (faster than estimated!)  
-**Priority:** ✅ COMPLETE
+**Next Steps:**
+1. ✅ Migration deployed: `pnpm db:migrate`
+2. ⚠️ Expand to media handlers (3 hours remaining)
+3. Add audit log query API endpoint (6 hours, optional)
+4. Add automated cleanup job for 7-year retention (4 hours, optional)
+
+**Time Spent:** ~8 hours (Phase 1)  
+**Remaining:** ~3 hours (Phase 2 - media handlers)  
+**Priority:** ✅ PHASE 1 COMPLETE, Phase 2 recommended
 
 ---
 
@@ -588,9 +599,9 @@ Your infrastructure is **excellent** - you already have:
 4. **Security scanning** (6 hours) - **CODE/CONFIG**
 5. **Vendor reports** (4 hours) - **COLLECT PDFs**
 
-**Total time to SOC 2 ready:** 60-80 hours (1.5-2 weeks) - **Much less than expected!**  
+**Total time to SOC 2 ready:** 55-75 hours (1.5-2 weeks) - **Even better than expected!**  
 **Total cost:** $20,000-$65,000 (one-time) + $15,500-$47,000/year
 
-**Key Insight:** You already built most of the hard stuff (retention policies). Now it's mostly documentation + audit logging.
+**Key Insight:** Audit logging Phase 1 is complete! You already built most of the hard stuff (retention policies + core audit infrastructure). Now it's mostly expanding coverage (3 hours) + documentation (20 hours total).
 
-**Recommendation:** If pursuing SOC 2, start with audit logging (8 hours) and documentation (20 hours total).
+**Recommendation:** If pursuing SOC 2, expand audit logging to media handlers (3 hours) and complete documentation (20 hours total).

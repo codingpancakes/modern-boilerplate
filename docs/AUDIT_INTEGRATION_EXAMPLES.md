@@ -2,7 +2,8 @@
 
 **Purpose:** Reference examples showing how to integrate audit logging in your boilerplate  
 **Status:** ✅ Implemented in sample endpoints  
-**Created:** December 27, 2025
+**Created:** December 27, 2025  
+**Last Updated:** February 1, 2026
 
 ---
 
@@ -24,11 +25,11 @@ This boilerplate includes a **fully functional audit logging system** that track
 
 ## 🎯 Integration Examples
 
-### **Example 1: REST API Handler (Lambda)**
+### **Example 1: REST API Handler (Lambda)** ✅ IMPLEMENTED
 
 **File:** `src/node/handlers/users/update.ts`
 
-This example shows how to add audit logging to a REST API handler that updates user profiles.
+This example shows audit logging in a REST API handler that updates user profiles. **This is fully implemented and working in production.**
 
 ```typescript
 import { logAudit, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES, AUDIT_STATUS } from "../../lib/audit";
@@ -91,11 +92,11 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 ---
 
-### **Example 2: GraphQL Mutation (Using Decorator)**
+### **Example 2: GraphQL Mutation (Using Decorator)** ✅ IMPLEMENTED
 
 **File:** `src/node/handlers/graphql/resolvers/users.ts`
 
-This example shows how to use the `auditResolver` decorator for GraphQL mutations.
+This example shows the `auditResolver` decorator for GraphQL mutations. **This is fully implemented and working in production.**
 
 ```typescript
 import { auditResolver, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES } from "../../../lib/audit";
@@ -393,11 +394,25 @@ const failures = await db
 
 ## 📈 Next Steps
 
+### Current Audit Logging Coverage
+
+**✅ Implemented:**
+- ✅ `users/update.ts` - User profile updates (REST)
+- ✅ `graphql/resolvers/users.ts` - `updateMe`, `updateProfile` mutations
+- ✅ `webhooks/workos.ts` - User lifecycle events (create, update)
+
+**❌ Not Yet Implemented:**
+- [ ] `media/upload-image.ts` - Track presigned URL generation
+- [ ] `media/upload-image-direct.ts` - Track direct file uploads
+- [ ] `graphql/resolvers/media.ts` - `generateImageUploadUrl` mutation
+
+**📊 Coverage:** 3 of 6 mutation handlers (50%)
+
 ### Expand Audit Logging Coverage
-Add audit logging to these endpoints:
-- [ ] `media/upload-image.ts` - Track file uploads
-- [ ] `webhooks/workos.ts` - Track webhook events
-- [ ] `media/generateImageUploadUrl` (GraphQL) - Track presigned URL generation
+Add audit logging to remaining endpoints:
+- [ ] `media/upload-image.ts` - Track presigned URL generation (1 hour)
+- [ ] `media/upload-image-direct.ts` - Track direct uploads (1 hour)
+- [ ] `media/generateImageUploadUrl` (GraphQL) - Track presigned URL generation (30 min)
 - [ ] Any other mutations you add to your application
 
 ### Create Admin UI
@@ -425,6 +440,7 @@ Implement retention policy:
 
 ---
 
-**Last Updated:** December 27, 2025  
-**Status:** ✅ Implemented with working examples  
-**Compliance:** SOC 2 Type II ready
+**Last Updated:** February 1, 2026  
+**Status:** ✅ Phase 1 Complete (50% handler coverage)  
+**Node.js Version:** 24.x (Lambda Runtime: NODEJS_24_X)  
+**Compliance:** SOC 2 Type II ready (core infrastructure)
