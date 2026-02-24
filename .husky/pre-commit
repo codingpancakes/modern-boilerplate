@@ -1,6 +1,3 @@
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
-
 # Fast checks before commit (lint + typecheck)
 echo "🔍 Running pre-commit checks..."
 
