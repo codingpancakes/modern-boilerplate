@@ -21,8 +21,8 @@ def handler(event, context):
     Returns:
         User profile data
     """
-    # Extract user claims (already validated by TypeScript proxy)
-    claims = event.get('claims', {})
+    # Extract user claims from WorkOS authorizer context (injected by API Gateway)
+    claims = event.get('requestContext', {}).get('authorizer', {}).get('lambda', {})
     user_id = claims.get('sub')
     
     # Log for debugging (optional - remove in production if not needed)
@@ -41,10 +41,10 @@ def handler(event, context):
     # For example: ML inference, data processing, etc.
     profile_data = {
         'userId': user_id,
-        'email': claims.get('email'),
+        'orgId': claims.get('org_id'),
+        'role': claims.get('role'),
         'processedAt': datetime.utcnow().isoformat() + 'Z',
         'processedBy': 'Python Lambda',
-        'claims': claims,  # Include all claims for debugging
     }
     
     return {

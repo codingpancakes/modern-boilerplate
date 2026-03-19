@@ -147,12 +147,6 @@ export class ApiStack extends cdk.Stack {
               actions: ["s3:ListBucket"],
               resources: [`arn:aws:s3:::${process.env.IMAGES_BUCKET_PREFIX || `${projectName}-images-depot`}*`],
             }),
-            // Lambda invoke for TypeScript -> Python proxy pattern
-            new iam.PolicyStatement({
-              effect: iam.Effect.ALLOW,
-              actions: ["lambda:InvokeFunction"],
-              resources: [`arn:aws:lambda:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:function:${projectName}-${props.stage}-*`],
-            }),
           ],
         }),
       },
@@ -222,22 +216,12 @@ export class ApiStack extends cdk.Stack {
       // reservedConcurrentExecutions removed - use unreserved pool
     });
 
-    // TypeScript proxy handler for authenticated Python profile endpoint
-    const tsProxyProfileHandler = routeBuilder.createHandler({
-      name: "PythonProfileProxyHandler",
-      path: "handlers/users/python-profile.ts",
-      environment: {
-        ...commonEnv,
-        PYTHON_PROFILE_FUNCTION_NAME: pythonUserProfileHandler.functionName,
-      },
-    });
-
     this.httpApi.addRoutes({
       path: "/v1/users/python-profile",
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
-        "PythonProfileProxyIntegration",
-        tsProxyProfileHandler
+        "PythonProfileIntegration",
+        pythonUserProfileHandler
       ),
       authorizer: customAuthorizer,
     });
