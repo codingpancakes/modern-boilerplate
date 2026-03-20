@@ -1,492 +1,464 @@
-# 🎯 Using This Backend as a Boilerplate
+# Deploying a New Project from This Boilerplate
 
-This guide explains how to set up a new project using this backend as a boilerplate template.
-
----
-
-## 📋 What You Need to Change
-
-### 1. **Project Name & Branding** (Required)
-
-#### Files to Update:
-- **`package.json`** - Update `name` and `description`
-- **`.env.staging`** - Change `PROJECT_NAME=postway` to your project name
-- **`.env.production`** - Change `PROJECT_NAME=postway` to your project name
-- **`.env.local`** - Change `PROJECT_NAME=postway` to your project name (if exists)
-- **`README.md`** - Update title, description, and all references to "RailBranch" or "postway"
-
-#### Environment Variables to Change:
-```bash
-# In .env.staging, .env.production, .env.local
-PROJECT_NAME=your-project-name  # Change from "postway"
-```
-
-**Important:** `PROJECT_NAME` is used for:
-- CloudFormation stack names: `{PROJECT_NAME}-{STAGE}-ApiStack`
-- S3 bucket names: `{PROJECT_NAME}-{STAGE}-images`
-- CloudWatch log groups: `/aws/lambda/{PROJECT_NAME}-{STAGE}-*`
-- Secrets Manager paths: `/{PROJECT_NAME}/{STAGE}/database`
+A complete guide to setting up and deploying a new system using this CDK backend — from zero to running in AWS.
 
 ---
 
-### 2. **Domain Configuration** (Required)
+## Table of Contents
 
-#### Environment Variables:
-```bash
-# In .env.staging
-HOSTED_ZONE_NAME=your-domain.com
-HOSTED_ZONE_ID=Z0123456789ABC  # Your Route53 hosted zone ID
-API_DOMAIN=api-staging.your-domain.com
-IMAGES_CDN_URL=https://images-staging.your-domain.com
-CORS_DOMAIN_PATTERNS=*.your-domain.com,localhost:*
-
-# In .env.production
-HOSTED_ZONE_NAME=your-domain.com
-HOSTED_ZONE_ID=Z0123456789ABC
-API_DOMAIN=api.your-domain.com
-IMAGES_CDN_URL=https://images.your-domain.com
-CORS_DOMAIN_PATTERNS=*.your-domain.com
-```
-
-#### Files to Update:
-- **`docs/SETUP_GUIDE.md`** - Replace all `postway.services` and `postway.ai` references
-- **`docs/QUICK_REFERENCE.md`** - Update example URLs
-- **`src/node/lib/middleware.ts`** - Update CORS patterns if hardcoded
+1. [What You'll Need](#1-what-youll-need)
+2. [AWS Account Setup](#2-aws-account-setup)
+3. [Project Configuration](#3-project-configuration)
+4. [External Services](#4-external-services)
+5. [Environment Files](#5-environment-files)
+6. [First Deploy Sequence](#6-first-deploy-sequence)
+7. [CI/CD Pipeline](#7-cicd-pipeline)
+8. [Verify the Deployment](#8-verify-the-deployment)
+9. [Customize Schema and Handlers](#9-customize-schema-and-handlers)
+10. [Cleanup Checklist](#10-cleanup-checklist)
+11. [Troubleshooting](#11-troubleshooting)
 
 ---
 
-### 3. **Database Configuration** (Required)
+## 1. What You'll Need
 
-#### Create New Databases:
-1. **Neon (Recommended):** https://neon.tech
-   - Create staging database
-   - Create production database
-   - Get connection strings
+**Accounts to create first:**
+- [WorkOS](https://workos.com) — authentication (JWT/SSO)
+- [Neon](https://neon.tech) — serverless PostgreSQL
+- [Sentry](https://sentry.io) — error tracking (optional but recommended)
 
-2. **Update Environment Variables:**
+**Tools:**
+- Node.js 20+ and pnpm
+- AWS CLI configured (`aws configure`)
+- AWS CDK CLI: `npm install -g aws-cdk`
+
+**AWS prerequisites (must exist before deploy):**
+- A Route53 hosted zone for your domain
+- Your domain's nameservers pointing to Route53
+
+---
+
+## 2. AWS Account Setup
+
+### IAM permissions
+
+The user or role running CDK needs broad permissions. For simplicity, `AdministratorAccess` works in development. For a tighter production policy, the required services are:
+
+| Service | Permissions needed |
+|---|---|
+| CloudFormation | Full (`cloudformation:*`) |
+| Lambda | `CreateFunction`, `UpdateFunctionCode`, `AddPermission`, `InvokeFunction` |
+| API Gateway | Full (`apigateway:*`) |
+| S3 | Full (`s3:*`) |
+| CloudFront | `CreateDistribution`, `UpdateDistribution`, `CreateInvalidation` |
+| Route53 | `ChangeResourceRecordSets`, `GetHostedZone`, `ListHostedZones` |
+| ACM | `RequestCertificate`, `DescribeCertificate`, `ListCertificates` |
+| Secrets Manager | `CreateSecret`, `GetSecretValue`, `PutSecretValue`, `UpdateSecret` |
+| SSM | `PutParameter`, `GetParameter`, `GetParametersByPath` |
+| IAM | `CreateRole`, `AttachRolePolicy`, `PassRole`, `PutRolePolicy` |
+| CloudWatch | `PutMetricAlarm`, `DescribeAlarms`, `CreateLogGroup`, `PutRetentionPolicy` |
+| X-Ray | `PutTraceSegments`, `PutTelemetryRecords` |
+| CloudTrail | `CreateTrail`, `StartLogging` |
+| CodeBuild / CodePipeline / CodeConnections | Full (if using CI/CD pipeline) |
+| Budgets | `ModifyBudget` |
+
+`iam:PassRole` and `iam:CreateRole` are the most commonly forgotten — CDK creates execution roles for Lambda and must be able to assign them.
+
+### CDK bootstrap (required once per account/region)
+
+CDK needs a staging S3 bucket and ECR repository in your account before any deploy can run. This is a one-time operation:
+
 ```bash
-# In .env.staging
-DATABASE_URL=postgresql://user:pass@staging-host.neon.tech/dbname
+# Find your account ID
+aws sts get-caller-identity --query Account --output text
 
-# In .env.production
-DATABASE_URL=postgresql://user:pass@production-host.neon.tech/dbname
-
-# In .env.local
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/your_db_name?sslmode=disable
+# Bootstrap
+cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
 ```
 
-#### Run Migrations:
-```bash
-# Generate migrations from schema
-pnpm db:generate
+If you skip this, `pnpm deploy:staging` will fail with:
+```
+Error: This stack uses assets, so the toolkit stack must be deployed
+```
 
-# Run migrations
-pnpm migrate
+### Route53 hosted zone
+
+CDK looks up your hosted zone by ID — it does not create it. Create it first:
+
+1. Go to Route53 → Hosted zones → Create hosted zone
+2. Enter your domain name (e.g., `yourdomain.com`)
+3. Copy the Hosted Zone ID (format: `Z0123456789XXXX`)
+4. Update your domain registrar's nameservers to match the NS records Route53 assigned
+
+---
+
+## 3. Project Configuration
+
+### Rename the project
+
+`PROJECT_NAME` drives all AWS resource names: CloudFormation stacks, Lambda function names, S3 buckets, Secrets Manager paths, and CloudWatch log groups. Everything is namespaced as `{PROJECT_NAME}-{STAGE}-*`.
+
+Update it in:
+- `package.json` → `name` field
+- `.env.staging` → `PROJECT_NAME=your-project`
+- `.env.production` → `PROJECT_NAME=your-project`
+- `.env.local` → `PROJECT_NAME=your-project`
+
+S3 bucket names are globally unique. If your `PROJECT_NAME` is too generic, the deploy may fail with a bucket conflict — pick something distinctive.
+
+### Find and replace boilerplate references
+
+```bash
+grep -r "postway\|railbranch\|357225328504\|codingpancakes" . \
+  --include="*.ts" --include="*.md" --include="*.json" --include="*.sh" \
+  --exclude-dir=node_modules --exclude-dir=.git
+```
+
+Replace each occurrence with your own values:
+
+| Hardcoded value | Found in | Replace with |
+|---|---|---|
+| `postway` | `.env.*`, `docs/` | Your project name |
+| `postway.services`, `postway.ai` | `docs/`, `.env.*` | Your domain |
+| `357225328504` | `docs/QUICK_REFERENCE.md`, `docs/AWS_PIPELINE_SETUP.md` | Your AWS account ID |
+| `codingpancakes` | `docs/AWS_PIPELINE_SETUP.md` | Your GitHub username or org |
+
+### Things hardcoded in source that need attention
+
+**Alert email** — `infrastructure/bin/app.ts` line 71:
+`ALERT_EMAIL` has no fallback. If unset, CloudWatch alarms are created but have no notification destination. Set it in your `.env` files:
+```bash
+ALERT_EMAIL=you@yourdomain.com
+```
+
+**Monthly budget** — `infrastructure/bin/app.ts` line 72:
+```typescript
+monthlyBudget: stage === 'production' ? 200 : 50  // $200 prod, $50 staging
+```
+Adjust to match your expected AWS spend.
+
+**GitHub vars required at synth time** — `infrastructure/bin/app.ts` lines 26–34:
+`GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_BRANCH` are validated at CDK synth time. They must be present in your `.env` file even before you set up CI/CD, otherwise `pnpm deploy:staging` will throw immediately.
+
+---
+
+## 4. External Services
+
+### WorkOS
+
+1. Create an account at [workos.com](https://workos.com)
+2. Create a new application
+3. Copy the Client ID (different for staging and production)
+
+```bash
+# .env.staging
+WORKOS_CLIENT_ID=client_staging_xxxxxxxx
+
+# .env.production
+WORKOS_CLIENT_ID=client_production_xxxxxxxx
+```
+
+### Neon (PostgreSQL)
+
+1. Create an account at [neon.tech](https://neon.tech)
+2. Create a project; provision two databases — one for staging, one for production
+3. Copy the connection strings (always include `?sslmode=require` for Neon)
+
+```bash
+# .env.staging
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/staging_db?sslmode=require
+
+# .env.production
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-1.aws.neon.tech/production_db?sslmode=require
+```
+
+### Sentry (optional)
+
+1. Create a project at [sentry.io](https://sentry.io), choose Node.js
+2. Copy the DSN from Project Settings → Client Keys
+
+```bash
+SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
+SENTRY_ENVIRONMENT=staging
 ```
 
 ---
 
-### 4. **Authentication (WorkOS)** (Required)
+## 5. Environment Files
 
-#### Setup:
-1. Create WorkOS account: https://workos.com
-2. Create new WorkOS application
-3. Get Client ID and API Key
-
-#### Update Environment Variables:
-```bash
-# In .env.staging
-WORKOS_CLIENT_ID=client_staging_xxx
-WORKOS_API_KEY=sk_staging_xxx  # Store in AWS Secrets Manager
-
-# In .env.production
-WORKOS_CLIENT_ID=client_prod_xxx
-WORKOS_API_KEY=sk_prod_xxx  # Store in AWS Secrets Manager
-
-# In .env.local
-WORKOS_CLIENT_ID=client_staging_xxx  # Use staging for local dev
-```
-
----
-
-### 5. **AWS Configuration** (Required)
-
-#### Environment Variables:
-```bash
-# In .env.staging and .env.production
-AWS_REGION=us-east-1  # Or your preferred region
-CDK_DEFAULT_ACCOUNT=357225328504  # Your AWS account ID
-```
-
-#### AWS Secrets Manager:
-After first deployment, manually create secrets:
-```bash
-# Database secret
-aws secretsmanager create-secret \
-  --name /your-project/staging/database \
-  --secret-string '{"url":"postgresql://..."}'
-
-# WorkOS secret
-aws secretsmanager create-secret \
-  --name /your-project/staging/workos \
-  --secret-string '{"clientId":"client_xxx","apiKey":"sk_xxx"}'
-```
-
-Or use the sync script:
-```bash
-pnpm sync-secrets
-```
-
----
-
-### 6. **GitHub Actions (Optional but Recommended)**
-
-#### Setup:
-1. Go to GitHub repository → Settings → Secrets and variables → Actions
-2. Add these secrets:
+Create `.env.staging` (repeat with production values for `.env.production`):
 
 ```bash
-# AWS Credentials
-AWS_ACCESS_KEY_ID=<your-access-key>
-AWS_SECRET_ACCESS_KEY=<your-secret-key>
+# Identity
+PROJECT_NAME=your-project
+STAGE=staging
+
+# AWS
 AWS_REGION=us-east-1
+CDK_DEFAULT_ACCOUNT=YOUR_12_DIGIT_AWS_ACCOUNT_ID
 
-# Project Configuration
-PROJECT_NAME=your-project-name
-HOSTED_ZONE_NAME=your-domain.com
-HOSTED_ZONE_ID=Z0123456789ABC
+# Domain
+HOSTED_ZONE_NAME=yourdomain.com
+HOSTED_ZONE_ID=Z0123456789YOURID
+API_DOMAIN=api-staging.yourdomain.com
 
-# GitHub Configuration
-GITHUB_OWNER=your-github-username
-GITHUB_REPO=your-repo-name
-GITHUB_BRANCH=main
+# Media / Storage
+IMAGES_BUCKET=your-project-staging-images
+IMAGES_CDN_URL=https://images-staging.yourdomain.com
 
-# Staging Environment
-STAGING_DATABASE_URL=postgresql://...
-STAGING_WORKOS_CLIENT_ID=client_xxx
-STAGING_IMAGES_BUCKET=your-project-staging-images
-STAGING_IMAGES_CDN_URL=https://images-staging.your-domain.com
-STAGING_CORS_DOMAIN_PATTERNS=*.your-domain.com,localhost:*
-STAGING_API_DOMAIN=api-staging.your-domain.com
-STAGING_API_URL=https://api-staging.your-domain.com
+# CORS
+CORS_DOMAIN_PATTERNS=*.yourdomain.com,localhost:*
 
-# Production Environment
-PRODUCTION_DATABASE_URL=postgresql://...
-PRODUCTION_WORKOS_CLIENT_ID=client_xxx
-PRODUCTION_IMAGES_BUCKET=your-project-production-images
-PRODUCTION_IMAGES_CDN_URL=https://images.your-domain.com
-PRODUCTION_CORS_DOMAIN_PATTERNS=*.your-domain.com
-PRODUCTION_API_DOMAIN=api.your-domain.com
-PRODUCTION_API_URL=https://api.your-domain.com
-```
+# Auth (WorkOS)
+WORKOS_CLIENT_ID=client_staging_xxx
 
-#### Files to Update:
-- **`.github/workflows/*.yml`** - Update project references if needed
+# Database (Neon)
+DATABASE_URL=postgresql://user:pass@host.neon.tech/dbname?sslmode=require
 
----
-
-### 7. **Monitoring & Error Tracking** (Optional)
-
-#### Sentry Setup:
-1. Create Sentry account: https://sentry.io
-2. Create new project
-3. Get DSN
-
-```bash
-# In .env.staging
+# Monitoring
+ALERT_EMAIL=you@yourdomain.com
 SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
 SENTRY_ENVIRONMENT=staging
 
-# In .env.production
-SENTRY_DSN=https://xxx@xxx.ingest.sentry.io/xxx
-SENTRY_ENVIRONMENT=production
+# GitHub (required for CDK to synthesize the pipeline stack)
+GITHUB_OWNER=your-github-username
+GITHUB_REPO=your-repo-name
+GITHUB_BRANCH=develop
 ```
 
-#### CloudWatch Alarms:
-- Already configured in `infrastructure/lib/monitoring-stack.ts`
-- Update email addresses in `infrastructure/bin/app.ts`:
-```typescript
-alertEmail: process.env.ALERT_EMAIL || 'your-email@domain.com'
-```
+Never commit `.env.*` files — they are gitignored.
 
 ---
 
-### 8. **Database Schema** (Customize)
+## 6. First Deploy Sequence
 
-#### Current Schema:
-The boilerplate includes a **customer engagement platform** schema with:
-- Users, profiles, organizations
-- Contacts, segments, lists
-- Journeys, campaigns
-- Messages, templates
-- Events, webhooks
+Run these steps in order. Each depends on the previous.
 
-#### To Customize:
-1. **Keep what you need:**
-   - User authentication (users, profiles, authIdentities)
-   - Audit logging (auditLogs)
-   - Organizations (if multi-tenant)
-
-2. **Remove what you don't need:**
-   ```bash
-   # Delete schema files
-   rm src/node/db/schema/contacts.ts
-   rm src/node/db/schema/journeys.ts
-   rm src/node/db/schema/messaging.ts
-   
-   # Update schema index
-   # Edit src/node/db/schema/index.ts
-   ```
-
-3. **Add your own tables:**
-   ```bash
-   # Create new schema file
-   touch src/node/db/schema/your-domain.ts
-   
-   # Generate migration
-   pnpm db:generate
-   
-   # Run migration
-   pnpm migrate
-   ```
-
----
-
-### 9. **API Handlers** (Customize)
-
-#### Current Handlers:
-```
-src/node/handlers/
-├── users/          # User profile management
-├── media/          # Image uploads
-├── webhooks/       # WorkOS webhooks
-├── test/           # Test endpoints
-└── utils/          # Health checks
-```
-
-#### To Customize:
-1. **Keep:**
-   - `users/` - User authentication and profiles
-   - `webhooks/workos.ts` - WorkOS integration
-   - `utils/health.ts` - Health checks
-
-2. **Remove or modify:**
-   - `media/` - If you don't need image uploads
-   - `test/` - Remove in production
-
-3. **Add your own:**
-   ```bash
-   # Use templates
-   cp templates/user-scoped.ts.template src/node/handlers/your-resource/action.ts
-   
-   # Register route in infrastructure/lib/routes/
-   ```
-
----
-
-### 10. **Documentation** (Update)
-
-#### Files to Update:
-- **`README.md`** - Project overview
-- **`docs/SETUP_GUIDE.md`** - Replace all project-specific references
-- **`docs/QUICK_REFERENCE.md`** - Update commands and URLs
-- **`docs/architecture/README.md`** - Update architecture diagrams
-- **`CONTRIBUTING.md`** - Update contribution guidelines
-
-#### Remove Boilerplate Docs:
 ```bash
-rm docs/BOILERPLATE_SETUP.md  # This file, after you're done
-```
-
----
-
-## 🚀 Step-by-Step Setup
-
-### Step 1: Clone and Clean
-```bash
-# Clone the repository
-git clone <your-fork-url> your-project-name
-cd your-project-name
-
-# Remove git history (optional - start fresh)
-rm -rf .git
-git init
-git add .
-git commit -m "Initial commit from boilerplate"
-```
-
-### Step 2: Update Project Name
-```bash
-# Update package.json
-sed -i '' 's/"name": "serverless-backend"/"name": "your-project-name"/' package.json
-
-# Create environment files
-cp .env.staging .env.staging.backup
-cp .env.production .env.production.backup
-
-# Update PROJECT_NAME in all .env files
-# (Do this manually or with sed)
-```
-
-### Step 3: Update Domains
-```bash
-# Update all domain references
-# Search for "postway" and replace with your domain
-grep -r "postway" . --exclude-dir=node_modules --exclude-dir=.git
-```
-
-### Step 4: Setup Databases
-```bash
-# Create Neon databases
-# Update DATABASE_URL in .env files
-
-# Generate and run migrations
+# 1. Install dependencies
 pnpm install
+
+# 2. Bootstrap CDK (one-time per account/region — skip if already done)
+cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
+
+# 3. Push secrets and config to AWS Secrets Manager and SSM Parameter Store
+pnpm sync-secrets
+
+# 4. Deploy all CDK stacks to staging
+pnpm deploy:staging
+
+# 5. Run database migrations against the Neon staging database
+pnpm migrate
+
+# 6. Verify
+curl https://api-staging.yourdomain.com/v1/health
+curl https://api-staging.yourdomain.com/v1/health/detailed
+```
+
+CDK resolves stack dependency order automatically. The effective deploy order is:
+
+```
+SecurityStack (secrets, IAM)
+    ↓
+DatabaseStack + MediaStack + MonitoringStack + CostMonitoringStack + CloudTrailStack
+    ↓
+ApiStack (depends on SecurityStack + MediaStack)
+    ↓
+PipelineStack (staging/production only, depends on SecurityStack)
+```
+
+**After deploy:** DNS propagation for new Route53 records takes 1–5 minutes. ACM certificate validation can take up to 30 minutes if CDK is issuing a new certificate.
+
+---
+
+## 7. CI/CD Pipeline
+
+The project uses AWS CodePipeline (not GitHub Actions). Every push to your branch automatically runs: lint → typecheck → test → migrate → CDK deploy.
+
+For the full setup walkthrough, see [AWS_PIPELINE_SETUP.md](./AWS_PIPELINE_SETUP.md).
+
+Short version:
+
+1. Create a GitHub → AWS connection in the CodePipeline console
+2. Store the connection ARN in SSM:
+   ```bash
+   aws ssm put-parameter \
+     --name /github/connection-arn \
+     --value "arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/YOUR_CONNECTION_ID" \
+     --type String \
+     --region us-east-1
+   ```
+3. The pipeline stack deploys automatically as part of `pnpm deploy:staging` — no manual CodePipeline setup needed beyond the GitHub connection
+
+---
+
+## 8. Verify the Deployment
+
+```bash
+# Health check (no auth required)
+curl https://api-staging.yourdomain.com/v1/health | jq .
+
+# Detailed health including database connectivity
+curl https://api-staging.yourdomain.com/v1/health/detailed | jq .
+
+# Authenticated endpoint (requires a WorkOS JWT)
+curl -H "Authorization: Bearer YOUR_JWT" \
+  https://api-staging.yourdomain.com/v1/users/me | jq .
+
+# Confirm security headers are present
+curl -I https://api-staging.yourdomain.com/v1/health
+# Expected: Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options, CSP
+```
+
+Check in the AWS console:
+- **CloudWatch Logs** → `/aws/lambda/your-project-staging-*` — confirm Lambda invocations are logging
+- **X-Ray** → Service Map — confirm traces flowing from Lambda to database
+- **CloudWatch Alarms** → confirm all alarms are in OK state
+- **SNS** → confirm you've confirmed the email subscription for alarm notifications
+- **Secrets Manager** → confirm `/your-project/staging/workos` and `/your-project/staging/database` exist
+
+---
+
+## 9. Customize Schema and Handlers
+
+### What to keep (core infrastructure)
+
+- `src/node/db/schema/users.ts` — auth identities, profiles
+- `src/node/db/schema/audit.ts` — SOC 2 audit log (don't remove this)
+- `src/node/handlers/users/` — user profile endpoints
+- `src/node/handlers/webhooks/workos.ts` — WorkOS user sync
+- `src/node/handlers/utils/health.ts` — health checks
+
+### What to remove if you don't need it
+
+```bash
+# Example: strip the CRM-specific schema if building something else
+rm src/node/db/schema/contacts.ts
+rm src/node/db/schema/journeys.ts
+rm src/node/db/schema/messaging.ts
+
+# Update the schema barrel export
+# Edit: src/node/db/schema/index.ts
+
+# Remove test endpoints in production
+rm -rf src/node/handlers/test/
+```
+
+### Add your own tables
+
+```bash
+# Create a new schema file
+touch src/node/db/schema/your-domain.ts
+
+# Generate the migration SQL
 pnpm db:generate
+
+# Apply to your database
 pnpm migrate
 ```
 
-### Step 5: Setup WorkOS
+### Add your own handlers
+
+Templates in `templates/` show the standard handler structure:
+
 ```bash
-# Create WorkOS application
-# Update WORKOS_CLIENT_ID in .env files
+cp templates/user-scoped.ts.template src/node/handlers/your-resource/action.ts
 ```
 
-### Step 6: Deploy Staging
-```bash
-# Deploy to AWS
-pnpm deploy:staging
+Register the route in:
+- `infrastructure/lib/routes/protected-routes.ts` — JWT-required endpoints
+- `infrastructure/lib/routes/public-routes.ts` — no auth
+- `infrastructure/lib/routes/internal-routes.ts` — API key / webhook auth
 
-# Sync secrets to AWS Secrets Manager
+---
+
+## 10. Cleanup Checklist
+
+- [ ] `PROJECT_NAME` updated in all `.env.*` files and `package.json`
+- [ ] All `postway`, `railbranch`, `postway.services`, `postway.ai` references replaced
+- [ ] `CDK_DEFAULT_ACCOUNT` set to your actual AWS account ID
+- [ ] `ALERT_EMAIL` set so CloudWatch alarms have a notification destination
+- [ ] Budget amounts adjusted in `infrastructure/bin/app.ts`
+- [ ] Route53 hosted zone created and nameservers configured at your registrar
+- [ ] CDK bootstrapped in your account/region (`cdk bootstrap`)
+- [ ] GitHub connection ARN stored in SSM
+- [ ] Unused schema files removed
+- [ ] `test/` handlers removed for production
+- [ ] Sentry project pointing to the right project
+- [ ] SNS alarm email subscription confirmed
+- [ ] Delete this file when setup is complete
+
+---
+
+## 11. Troubleshooting
+
+### "This stack uses assets, so the toolkit stack must be deployed"
+
+CDK bootstrap hasn't been run. Execute:
+```bash
+cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
+```
+
+### "Stack already exists" or CloudFormation conflict
+
+```bash
+aws cloudformation list-stacks \
+  --region us-east-1 \
+  --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE
+```
+
+Delete conflicting stacks if they're from a previous project attempt.
+
+### S3 bucket name conflict on deploy
+
+S3 names are globally unique. Either pick a more distinctive `PROJECT_NAME` or explicitly set `IMAGES_BUCKET` to a unique value in your `.env` file.
+
+### DNS not resolving after deploy
+
+Wait 5–10 minutes, then:
+```bash
+dig api-staging.yourdomain.com
+```
+
+If ACM certificate validation is pending, check the ACM console — it can take up to 30 minutes.
+
+### WorkOS authentication failing
+
+Common causes:
+- Wrong `WORKOS_CLIENT_ID` (staging key used in production or vice versa)
+- JWT issuer mismatch — check the authorizer Lambda logs in CloudWatch
+- JWKS endpoint unreachable — check Lambda has outbound internet access
+
+### Database connection failing
+
+Common causes:
+- Missing `?sslmode=require` on Neon connection strings
+- Secrets not synced to Secrets Manager — run `pnpm sync-secrets`
+- Migrations not run — run `pnpm migrate`
+
+Test DB connectivity:
+```bash
+curl https://api-staging.yourdomain.com/v1/health/detailed | jq '.data.checks.database'
+```
+
+### Pipeline fails: "Secret not found"
+
+Secrets haven't been synced yet. Run:
+```bash
 pnpm sync-secrets
 ```
 
-### Step 7: Test
-```bash
-# Test health endpoint
-curl https://api-staging.your-domain.com/v1/health
+Then re-trigger the pipeline.
 
-# Test authenticated endpoint
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://api-staging.your-domain.com/v1/users/me
-```
+### CDK synth fails: "GITHUB_OWNER is required"
 
-### Step 8: Deploy Production
-```bash
-# Deploy to production
-pnpm deploy:production
-
-# Sync production secrets
-ENV_FILE=.env.production pnpm sync-secrets
-```
+`GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_BRANCH` are validated at synth time even if you haven't set up CI/CD yet. Add them to your `.env` file with placeholder values if needed.
 
 ---
 
-## 🧹 Cleanup Checklist
+## Further Reading
 
-After setup, remove boilerplate-specific items:
-
-- [ ] Update `package.json` name and description
-- [ ] Update `README.md` title and content
-- [ ] Replace all "postway" references with your project name
-- [ ] Replace all "railbranch" references with your project name
-- [ ] Update domain names in all files
-- [ ] Remove unused database schema files
-- [ ] Remove unused API handlers
-- [ ] Update documentation
-- [ ] Remove `docs/BOILERPLATE_SETUP.md` (this file)
-- [ ] Update `CONTRIBUTING.md`
-- [ ] Remove example test data
-- [ ] Update CloudWatch alarm emails
-- [ ] Update Sentry project name
-- [ ] Remove boilerplate-specific comments
-
----
-
-## 📊 Quick Reference: Files to Change
-
-### Must Change (Core Identity)
-1. `package.json` - name, description
-2. `.env.staging` - PROJECT_NAME, domains, credentials
-3. `.env.production` - PROJECT_NAME, domains, credentials
-4. `.env.local` - PROJECT_NAME, local DB
-5. `README.md` - all content
-6. `docs/SETUP_GUIDE.md` - all examples
-
-### Should Change (Customization)
-7. `src/node/db/schema/*.ts` - your data model
-8. `src/node/handlers/*` - your API endpoints
-9. `infrastructure/bin/app.ts` - alert emails
-10. `docs/architecture/README.md` - your architecture
-
-### Optional Change (Branding)
-11. `CONTRIBUTING.md` - contribution guidelines
-12. `.github/workflows/*.yml` - CI/CD customization
-13. `docs/QUICK_REFERENCE.md` - command examples
-14. `tests/integration/*.sh` - test scripts
-
----
-
-## 🎯 Common Pitfalls
-
-### 1. **Stack Name Conflicts**
-If you get "Stack already exists" errors:
-```bash
-# Check existing stacks
-aws cloudformation list-stacks --region us-east-1
-
-# Delete old stacks if needed
-./scripts/force-delete-stacks.sh
-```
-
-### 2. **S3 Bucket Name Conflicts**
-S3 bucket names are globally unique. If deployment fails:
-- Change `PROJECT_NAME` to something more unique
-- Or manually specify bucket names in environment variables
-
-### 3. **Domain Not Resolving**
-After deployment, DNS propagation takes time:
-- Wait 5-10 minutes for Route53 changes
-- Check DNS: `dig api-staging.your-domain.com`
-- Verify ACM certificate is issued
-
-### 4. **Database Connection Fails**
-Common issues:
-- Wrong connection string format
-- Missing SSL parameters
-- Firewall blocking connections
-- Check Neon dashboard for connection details
-
-### 5. **WorkOS Authentication Fails**
-Common issues:
-- Wrong Client ID
-- JWT not properly formatted
-- JWKS endpoint not accessible
-- Check WorkOS dashboard for configuration
-
----
-
-## 💡 Tips
-
-1. **Start Small:** Deploy with minimal schema first, then add features
-2. **Test Locally:** Always test locally before deploying
-3. **Use Staging:** Deploy to staging first, test thoroughly
-4. **Monitor Costs:** Set up AWS Budgets (already configured)
-5. **Version Control:** Commit after each major change
-6. **Document Changes:** Update docs as you customize
-7. **Keep Audit Logs:** Don't remove the audit logging system
-8. **Use Templates:** Use handler templates for consistency
-
----
-
-## 🆘 Need Help?
-
-- **AWS Issues:** Check CloudWatch logs
-- **Database Issues:** Check Neon dashboard
-- **Auth Issues:** Check WorkOS dashboard
-- **Deployment Issues:** Check GitHub Actions logs
-- **General Issues:** Check existing documentation in `docs/`
-
----
-
-**Good luck with your new project! 🚀**
+- [AWS_PIPELINE_SETUP.md](./AWS_PIPELINE_SETUP.md) — CI/CD pipeline detailed walkthrough
+- [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) — full reference for every env var
+- [SYNC_SECRETS.md](./SYNC_SECRETS.md) — how the secrets sync script works
+- [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) — daily development commands

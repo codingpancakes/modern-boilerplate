@@ -19,16 +19,18 @@ export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
 		permissions?: string;
 		exp?: number;
 		iat?: number;
-		// WorkOS custom claims with URN format
-		"urn:postway:email"?: string;
-		"urn:postway:first_name"?: string;
-		"urn:postway:last_name"?: string;
-		"urn:postway:metadata"?: string;
-		"urn:postway:external_id"?: string;
-		"urn:postway:org_unit"?: string;
-		// Allow any additional claims
+		// Additional claims (including WorkOS custom claims) accessible via customClaim()
 		[key: string]: string | number | boolean | undefined;
 	};
+}
+
+/**
+ * Returns the WorkOS custom claim key for the given name.
+ * Namespace is derived from PROJECT_NAME env var (e.g. "urn:myapp:email").
+ * Configure matching claim names in your WorkOS dashboard.
+ */
+export function customClaim(name: string): string {
+	return `urn:${process.env.PROJECT_NAME || "app"}:${name}`;
 }
 
 export interface HandlerResponse {
@@ -79,13 +81,6 @@ export const withAuth = (
 					body: JSON.stringify({ error: "unauthorized" }),
 				};
 			}
-
-			// Set user context for Sentry
-			Sentry.setUser(
-				claims.sub,
-				claims["urn:postway:email"],
-				claims["urn:postway:first_name"] || undefined,
-			);
 
 			// Add user ID to trace
 			const segment = tracer.getSegment();

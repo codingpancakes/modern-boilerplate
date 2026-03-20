@@ -46,14 +46,14 @@ AWS needs permission to access your GitHub repository.
 
 4. **Copy Connection ARN**:
    ```
-   arn:aws:codeconnections:us-east-1:357225328504:connection/abc123...
+   arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/abc123...
    ```
 
 5. **Store Connection ARN in SSM Parameter Store**:
    ```bash
    aws ssm put-parameter \
      --name /github/connection-arn \
-     --value "arn:aws:codeconnections:us-east-1:357225328504:connection/YOUR_CONNECTION_ID" \
+     --value "arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/YOUR_CONNECTION_ID" \
      --type String \
      --description "GitHub connection for CodePipeline (shared across all projects)" \
      --region us-east-1 \
@@ -73,7 +73,7 @@ aws codeconnections list-connections --region us-east-1
 # 3. Store it in SSM (or update existing)
 aws ssm put-parameter \
   --name /github/connection-arn \
-  --value "arn:aws:codeconnections:us-east-1:357225328504:connection/YOUR_CONNECTION_ID" \
+  --value "arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/YOUR_CONNECTION_ID" \
   --type String \
   --description "GitHub connection for CodePipeline (shared across all projects)" \
   --region us-east-1 \
@@ -112,8 +112,8 @@ See [SYNC_SECRETS.md](./SYNC_SECRETS.md) for detailed documentation.
 aws secretsmanager list-secrets --region us-east-1
 
 # View secret (staging)
-aws secretsmanager get-secret-value --secret-id /postway/staging/workos --region us-east-1
-aws secretsmanager get-secret-value --secret-id /postway/staging/database --region us-east-1
+aws secretsmanager get-secret-value --secret-id /{PROJECT_NAME}/staging/workos --region us-east-1
+aws secretsmanager get-secret-value --secret-id /{PROJECT_NAME}/staging/database --region us-east-1
 ```
 
 #### Create Secrets Manually
@@ -121,13 +121,13 @@ aws secretsmanager get-secret-value --secret-id /postway/staging/database --regi
 ```bash
 # Create WorkOS secret
 aws secretsmanager create-secret \
-  --name /postway/staging/workos \
+  --name /{PROJECT_NAME}/staging/workos \
   --secret-string '{"clientId":"client_xxx"}' \
   --region us-east-1
 
 # Create DB secret
 aws secretsmanager create-secret \
-  --name /postway/staging/database \
+  --name /{PROJECT_NAME}/staging/database \
   --secret-string '{"url":"postgresql://user:pass@host/db"}' \
   --region us-east-1
 ```
@@ -161,7 +161,7 @@ import { PipelineStack } from '../lib/pipeline-stack';
 const pipelineStack = new PipelineStack(app, `${stackPrefix}-PipelineStack`, {
   env,
   stage,
-  githubOwner: 'codingpancakes',
+  githubOwner: process.env.GITHUB_OWNER,
   githubRepo: 'backend-boilerplate-cdk-workos',
   githubBranch: stage === 'production' ? 'main' : 'develop',
   dbSecret: securityStack.dbSecret,
@@ -235,7 +235,7 @@ git push origin develop
    https://console.aws.amazon.com/codesuite/codepipeline/pipelines
    ```
 
-2. **Click on your pipeline**: `postway-staging-pipeline`
+2. **Click on your pipeline**: `{PROJECT_NAME}-staging-pipeline`
 
 3. **Watch the stages**:
    - ✅ Source (pulls from GitHub)
@@ -395,7 +395,7 @@ const buildProject = new codebuild.PipelineProject(this, 'BuildProject', {
 
 ```bash
 # List recent builds
-aws codebuild list-builds-for-project --project-name postway-staging-build
+aws codebuild list-builds-for-project --project-name {PROJECT_NAME}-staging-build
 
 # Get build logs
 aws codebuild batch-get-builds --ids <build-id>
@@ -409,7 +409,7 @@ All build logs are automatically sent to CloudWatch:
 https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups
 ```
 
-Look for: `/aws/codebuild/postway-staging-build`
+Look for: `/aws/codebuild/{PROJECT_NAME}-staging-build`
 
 ---
 

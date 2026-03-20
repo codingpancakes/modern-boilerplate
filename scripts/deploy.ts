@@ -57,18 +57,7 @@ async function deploy() {
     execSync('npm run migrate', { stdio: 'inherit' });
     
     // Get AWS profile from environment or use stage-specific default
-    let awsProfile = process.env.AWS_PROFILE;
-    if (!awsProfile) {
-      // Auto-select profile based on stage
-      switch(stage) {
-        case 'production':
-        case 'staging':
-          awsProfile = 'outdream';
-          break;
-        default:
-          awsProfile = 'default';
-      }
-    }
+    const awsProfile = process.env.AWS_PROFILE || 'default';
     console.log(`🔑 Using AWS Profile: ${awsProfile}`);
     
     // Bootstrap CDK (if needed)

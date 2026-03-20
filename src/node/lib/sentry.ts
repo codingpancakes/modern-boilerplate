@@ -52,16 +52,14 @@ export function wrapHandler<THandler extends (...args: unknown[]) => unknown>(
 }
 
 /**
- * Set user context for error tracking
+ * Set anonymous user context for error tracking.
+ * Only pass the internal DB user ID — never WorkOS sub, email, or name.
+ * Call this from handlers after resolving the internal user ID, not from middleware.
  */
-export function setUser(userId: string, email?: string, username?: string) {
+export function setUser(internalUserId: string) {
 	if (!SENTRY_ENABLED) return;
 
-	Sentry.setUser({
-		id: userId,
-		email,
-		username,
-	});
+	Sentry.setUser({ id: internalUserId });
 }
 
 /**

@@ -55,7 +55,7 @@ echo "5️⃣  Direct API Gateway Endpoint"
 STACK_PREFIX=$(get_stack_prefix "$STAGE")
 GATEWAY_URL=$(aws cloudformation describe-stacks \
   --stack-name ${STACK_PREFIX}-ApiStack \
-  --profile outdream \
+  ${AWS_PROFILE:+--profile $AWS_PROFILE} \
   --region us-east-1 \
   --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
   --output text 2>/dev/null)

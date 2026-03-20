@@ -32,7 +32,7 @@ open "https://console.aws.amazon.com/codesuite/settings/connections"
 # 2. After creating, store the ARN in SSM
 aws ssm put-parameter \
   --name /github/connection-arn \
-  --value "arn:aws:codeconnections:us-east-1:357225328504:connection/YOUR_CONNECTION_ID" \
+  --value "arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/YOUR_CONNECTION_ID" \
   --type String \
   --description "GitHub connection for CodePipeline (shared across all projects)" \
   --region us-east-1 \
@@ -48,7 +48,7 @@ aws codeconnections list-connections --region us-east-1
 # Update SSM with existing connection ARN
 aws ssm put-parameter \
   --name /github/connection-arn \
-  --value "arn:aws:codeconnections:us-east-1:357225328504:connection/EXISTING_ID" \
+  --value "arn:aws:codeconnections:us-east-1:YOUR_ACCOUNT_ID:connection/EXISTING_ID" \
   --type String \
   --region us-east-1 \
   --overwrite
@@ -91,7 +91,7 @@ pnpm deploy:production
 
 ```bash
 # Quick health check
-curl https://api-staging.postway.services/v1/health/detailed | jq .
+curl https://api-staging.yourdomain.com/v1/health/detailed | jq .
 
 # Basic API tests (no auth needed)
 ./tests/integration/test-api.sh staging
@@ -104,7 +104,7 @@ curl https://api-staging.postway.services/v1/health/detailed | jq .
 
 ```bash
 # Health check
-curl https://api.postway.services/v1/health/detailed | jq .
+curl https://api.yourdomain.com/v1/health/detailed | jq .
 
 # Basic tests
 ./tests/integration/test-api.sh production
@@ -141,12 +141,12 @@ pnpm migrate
 ```bash
 # Staging pipeline
 aws codepipeline get-pipeline-state \
-  --name postway-staging-pipeline \
+  --name {PROJECT_NAME}-staging-pipeline \
   --region us-east-1
 
 # Production pipeline
 aws codepipeline get-pipeline-state \
-  --name postway-production-pipeline \
+  --name {PROJECT_NAME}-production-pipeline \
   --region us-east-1
 ```
 
@@ -154,10 +154,10 @@ aws codepipeline get-pipeline-state \
 
 ```bash
 # Staging
-open "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/postway-staging-pipeline/view"
+open "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/{PROJECT_NAME}-staging-pipeline/view"
 
 # Production
-open "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/postway-production-pipeline/view"
+open "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/{PROJECT_NAME}-production-pipeline/view"
 ```
 
 ### Trigger Pipeline Manually
@@ -165,12 +165,12 @@ open "https://console.aws.amazon.com/codesuite/codepipeline/pipelines/postway-pr
 ```bash
 # Staging
 aws codepipeline start-pipeline-execution \
-  --name postway-staging-pipeline \
+  --name {PROJECT_NAME}-staging-pipeline \
   --region us-east-1
 
 # Production
 aws codepipeline start-pipeline-execution \
-  --name postway-production-pipeline \
+  --name {PROJECT_NAME}-production-pipeline \
   --region us-east-1
 ```
 
@@ -225,7 +225,7 @@ aws secretsmanager list-secrets --region us-east-1
 
 # View specific secret
 aws secretsmanager get-secret-value \
-  --secret-id /postway/staging/workos \
+  --secret-id /{PROJECT_NAME}/staging/workos \
   --region us-east-1 \
   --query SecretString \
   --output text | jq .
@@ -236,12 +236,12 @@ aws secretsmanager get-secret-value \
 ```bash
 # List all parameters
 aws ssm get-parameters-by-path \
-  --path /postway/staging \
+  --path /{PROJECT_NAME}/staging \
   --region us-east-1
 
 # View specific parameter
 aws ssm get-parameter \
-  --name /postway/staging/api-domain \
+  --name /{PROJECT_NAME}/staging/api-domain \
   --region us-east-1
 ```
 
@@ -286,7 +286,7 @@ git status
 # Check build logs
 aws codebuild batch-get-builds \
   --ids $(aws codepipeline get-pipeline-state \
-    --name postway-staging-pipeline \
+    --name {PROJECT_NAME}-staging-pipeline \
     --region us-east-1 \
     --query 'stageStates[1].actionStates[0].latestExecution.externalExecutionId' \
     --output text) \
@@ -304,7 +304,7 @@ pnpm cdk context --clear
 
 ```bash
 # Test database connectivity
-curl https://api-staging.postway.services/v1/health/detailed | jq '.data.checks.database'
+curl https://api-staging.yourdomain.com/v1/health/detailed | jq '.data.checks.database'
 ```
 
 ---
@@ -328,5 +328,5 @@ curl https://api-staging.postway.services/v1/health/detailed | jq '.data.checks.
 
 4. **Use health endpoint to verify deployments:**
    ```bash
-   curl https://api-staging.postway.services/v1/health/detailed | jq .
+   curl https://api-staging.yourdomain.com/v1/health/detailed | jq .
    ```

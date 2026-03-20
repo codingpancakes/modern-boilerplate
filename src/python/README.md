@@ -103,7 +103,7 @@ The included `handlers/test/hello.py` demonstrates:
 
 Test it:
 ```bash
-curl https://api-staging.postway.services/v1/test/python
+curl https://api-staging.yourdomain.com/v1/test/python
 ```
 
 ## Best Practices

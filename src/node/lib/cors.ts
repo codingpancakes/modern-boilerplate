@@ -119,9 +119,8 @@ export function getExternalCorsHeaders(
 		/^https:\/\/.*\.sendgrid\.com$/.test(origin) ||
 		/^https:\/\/.*\.workos\.com$/.test(origin) ||
 		/^https:\/\/.*\.github\.com$/.test(origin) ||
-		/^https:\/\/.*\.slack\.com$/.test(origin) ||
-		// Add more external services as needed
-		origin === "https://api.external-service.com";
+		/^https:\/\/.*\.slack\.com$/.test(origin);
+	// Add more external service patterns here as needed
 
 	if (isAllowedExternalOrigin) {
 		headers["Access-Control-Allow-Origin"] = origin;

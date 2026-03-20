@@ -1,12 +1,12 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "postway API",
+    "title": "API",
     "version": "1.0.0",
     "description": "Production-grade serverless REST API with TypeScript and Python Lambda support",
     "contact": {
       "name": "API Support",
-      "email": "support@postway.services"
+      "email": "support@yourdomain.com"
     }
   },
   "servers": [
@@ -15,11 +15,11 @@
       "description": "Local development server"
     },
     {
-      "url": "https://api-staging.postway.services",
+      "url": "https://api-staging.yourdomain.com",
       "description": "Staging environment"
     },
     {
-      "url": "https://api.postway.services",
+      "url": "https://api.yourdomain.com",
       "description": "Production environment"
     }
   ],

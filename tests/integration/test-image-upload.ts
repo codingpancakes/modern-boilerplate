@@ -18,7 +18,7 @@ dotenv.config({ path: envFile });
 const BUCKET_NAME = process.env.IMAGES_BUCKET;
 const CDN_URL = process.env.IMAGES_CDN_URL;
 const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
-const AWS_PROFILE = process.env.AWS_PROFILE || 'outdream';
+const AWS_PROFILE = process.env.AWS_PROFILE || 'default';
 
 if (!BUCKET_NAME) {
   console.error('❌ IMAGES_BUCKET not set in environment');
