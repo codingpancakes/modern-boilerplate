@@ -48,10 +48,10 @@ export interface AuditLogEntry {
  *   userId: user.id,
  *   organizationId: org.id,
  *   action: AUDIT_ACTIONS.CREATE,
- *   resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
- *   resourceId: contact.id,
- *   changes: { after: contact },
- *   ipAddress: event.requestContext.identity.sourceIp,
+ *   resourceType: AUDIT_RESOURCE_TYPES.USER,
+ *   resourceId: newUser.id,
+ *   changes: { after: newUser },
+ *   ipAddress: event.requestContext?.http?.sourceIp,
  *   status: AUDIT_STATUS.SUCCESS,
  * });
  * ```
@@ -102,17 +102,14 @@ export function extractRequestContext(event: APIGatewayProxyEventV2) {
  * ```typescript
  * export const handler = withAudit(
  *   async (event, context, auditLog) => {
- *     const contact = await createContact(data);
- *
- *     // Log the audit event
+ *     const user = await updateUser(data);
  *     await auditLog({
- *       action: AUDIT_ACTIONS.CREATE,
- *       resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
- *       resourceId: contact.id,
- *       changes: { after: contact },
+ *       action: AUDIT_ACTIONS.UPDATE,
+ *       resourceType: AUDIT_RESOURCE_TYPES.USER,
+ *       resourceId: user.id,
+ *       changes: { after: user },
  *     });
- *
- *     return { statusCode: 200, body: JSON.stringify(contact) };
+ *     return { statusCode: 200, body: JSON.stringify(user) };
  *   }
  * );
  * ```
@@ -155,14 +152,14 @@ export function withAudit<T = unknown>(
  * ```typescript
  * const resolvers = {
  *   Mutation: {
- *     createContact: auditResolver(
+ *     updateMe: auditResolver(
  *       async (parent, args, context) => {
- *         const contact = await createContact(args.input);
- *         return contact;
+ *         const user = await updateUser(args.input);
+ *         return user;
  *       },
  *       {
- *         action: AUDIT_ACTIONS.CREATE,
- *         resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
+ *         action: AUDIT_ACTIONS.UPDATE,
+ *         resourceType: AUDIT_RESOURCE_TYPES.USER,
  *         getResourceId: (result) => result.id,
  *         getChanges: (result) => ({ after: result }),
  *       }

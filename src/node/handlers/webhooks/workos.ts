@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
-import { Tracer } from "@aws-lambda-powertools/tracer";
+
 import {
 	GetSecretValueCommand,
 	SecretsManagerClient,
@@ -27,7 +27,6 @@ import { validate, webhookSchemas } from "../../lib/validation";
 import { withPublicCors } from "../../lib/withPublicCors";
 
 const logger = new Logger({ serviceName: "workos-webhook" });
-const _tracer = new Tracer({ serviceName: "workos-webhook" });
 
 /**
  * @swagger
@@ -107,14 +106,14 @@ interface WorkOSOrgData {
 }
 
 async function getWebhookSecret(): Promise<string> {
-	logger.info("🔑 Getting webhook secret...", {
+	logger.info("Getting webhook secret", {
 		hasEnvVar: !!process.env.WORKOS_WEBHOOK_SECRET,
 		hasSecretArn: !!process.env.WORKOS_SECRET_ARN,
 	});
 
 	// For local development, use env var directly
 	if (process.env.WORKOS_WEBHOOK_SECRET) {
-		logger.info("✅ Using local WORKOS_WEBHOOK_SECRET");
+		logger.info("Using local WORKOS_WEBHOOK_SECRET");
 		return process.env.WORKOS_WEBHOOK_SECRET;
 	}
 
@@ -184,38 +183,37 @@ const webhookHandler = async (
 	logger.addContext(context);
 
 	try {
-		logger.info("🔔 Webhook received", {
-			headers: event.headers,
-			body: event.body?.substring(0, 200),
+		logger.info("Webhook received", {
+			hasSignature: !!(
+				event.headers["workos-signature"] || event.headers["WorkOS-Signature"]
+			),
+			bodyLength: event.body?.length ?? 0,
 		});
 
 		// Get signature from headers
 		const signature =
 			event.headers["workos-signature"] || event.headers["WorkOS-Signature"];
 		if (!signature) {
-			logger.error("❌ No signature in headers");
+			logger.error("No signature in headers");
 			throw Errors.Unauthorized();
 		}
 
 		// Verify signature
-		logger.info("🔐 Verifying signature...");
 		const secret = await getWebhookSecret();
 		const payload = event.body || "";
 
 		if (!verifySignature(payload, signature, secret)) {
-			logger.error("❌ Invalid webhook signature");
+			logger.error("Invalid webhook signature");
 			throw Errors.Unauthorized();
 		}
-		logger.info("✅ Signature verified");
+		logger.info("Signature verified");
 
 		// Parse and validate webhook event
-		logger.info("📦 Parsing webhook payload...");
 		const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
 
-		logger.info("✅ Processing WorkOS webhook", {
+		logger.info("Processing WorkOS webhook", {
 			eventId: webhookEvent.id,
 			eventType: webhookEvent.event,
-			data: webhookEvent.data,
 		});
 
 		const db = await getDb();
@@ -229,20 +227,20 @@ const webhookHandler = async (
 			.limit(1);
 
 		if (existing && existing.status === "completed") {
-			logger.warn("⚠️ Duplicate event detected, skipping", { idempotencyKey });
+			logger.warn("Duplicate event detected, skipping", { idempotencyKey });
 			return createSuccessResponse({ message: "Event already processed" });
 		}
 
 		if (existing && existing.status === "processing") {
 			// Previous attempt failed mid-processing -- delete stale key and retry
-			logger.warn("⚠️ Found stale processing key, retrying", {
+			logger.warn("Found stale processing key, retrying", {
 				idempotencyKey,
 			});
 			await db
 				.delete(idempotencyKeys)
 				.where(eq(idempotencyKeys.key, idempotencyKey));
 		}
-		logger.info("✅ New event, processing...");
+		logger.info("New event, processing");
 
 		// Store idempotency key
 		await db.insert(idempotencyKeys).values({
@@ -271,7 +269,7 @@ const webhookHandler = async (
 					.limit(1);
 
 				if (existingAuth?.userId) {
-					logger.info("👤 User exists, updating...", {
+					logger.info("User exists, updating", {
 						userId: existingAuth.userId,
 					});
 					// Update existing user
@@ -299,7 +297,7 @@ const webhookHandler = async (
 						},
 					});
 				} else {
-					logger.info("🆕 Creating new user...", { email: userData.email });
+					logger.info("Creating new user", { providerSubject: userData.id });
 					// Create new user and auth identity
 					const [newUser] = await db
 						.insert(users)
@@ -311,13 +309,13 @@ const webhookHandler = async (
 						})
 						.returning({ id: users.id });
 
-					logger.info("📝 Creating profile...", { userId: newUser.id });
+					logger.info("Creating profile", { userId: newUser.id });
 					// Create profile record
 					await db.insert(profiles).values({
 						userId: newUser.id,
 					});
 
-					logger.info("🔑 Creating auth identity...", {
+					logger.info("Creating auth identity", {
 						userId: newUser.id,
 						providerSubject: userData.id,
 					});
@@ -329,7 +327,7 @@ const webhookHandler = async (
 						emailAtProvider: userData.email,
 					});
 
-					logger.info("📊 Creating audit log...", { userId: newUser.id });
+					logger.info("Creating audit log", { userId: newUser.id });
 					// Audit log: Track user creation from WorkOS
 					await logAudit({
 						userId: newUser.id,
@@ -341,13 +339,11 @@ const webhookHandler = async (
 							source: "workos_webhook",
 							eventType: webhookEvent.event,
 							providerSubject: userData.id,
-							email: userData.email,
 						},
 					});
 
-					logger.info("✅ User created successfully", {
+					logger.info("User created successfully", {
 						userId: newUser.id,
-						email: userData.email,
 						providerSubject: userData.id,
 					});
 				}

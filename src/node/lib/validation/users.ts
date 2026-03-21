@@ -13,7 +13,6 @@ export const createUser = z.object({
 	email: z.string().email(),
 	firstName: z.string().min(1).max(100),
 	lastName: z.string().min(1).max(100),
-	organizationId: z.string().uuid().optional(),
 });
 
 /**
@@ -26,7 +25,6 @@ export const updateUser = z.object({
 	firstName: z.string().min(1).max(100).optional(),
 	lastName: z.string().min(1).max(100).optional(),
 	defaultTimezone: z.string().max(50).optional(),
-	organizationId: z.string().uuid().optional(),
 });
 
 /**

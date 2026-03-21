@@ -110,12 +110,6 @@ export function getExternalCorsHeaders(
 
 	// Exact allow-list of known external service origins (no wildcards)
 	const ALLOWED_EXTERNAL_ORIGINS = new Set([
-		"https://dashboard.stripe.com",
-		"https://js.stripe.com",
-		"https://hooks.stripe.com",
-		"https://api.twilio.com",
-		"https://sendgrid.com",
-		"https://app.sendgrid.com",
 		"https://api.workos.com",
 		"https://dashboard.workos.com",
 		"https://github.com",

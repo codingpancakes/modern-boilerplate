@@ -1,10 +1,8 @@
 import { Logger } from "@aws-lambda-powertools/logger";
-import { Tracer } from "@aws-lambda-powertools/tracer";
 import type { ScheduledHandler } from "aws-lambda";
 import { cleanupExpiredKeys } from "../../lib/idempotency";
 
 const logger = new Logger({ serviceName: "idempotency-janitor" });
-const _tracer = new Tracer({ serviceName: "idempotency-janitor" });
 
 export const handler: ScheduledHandler = async (_event, context) => {
 	logger.addContext(context);

@@ -5,8 +5,8 @@
  * Used by API handlers to enforce authorization rules.
  */
 
-import { and, eq, or } from "drizzle-orm";
-import { organizationMembers, resourceOwners } from "../db/schema/index";
+import { and, eq } from "drizzle-orm";
+import { organizationMembers } from "../db/schema/index";
 import { getDb } from "./db";
 import { Errors } from "./errors";
 
@@ -66,63 +66,6 @@ export async function requireOrgMembership(
 	}
 
 	return membership;
-}
-
-/**
- * Check if user can access a resource via resource_owners table
- *
- * @param resourceType - Type of resource (e.g., 'contact_list', 'campaign')
- * @param resourceId - Resource UUID
- * @param userId - User ID from JWT claims
- * @param orgId - Organization ID from request
- * @returns Resource ownership record
- * @throws NotFound if resource doesn't exist or user has no access
- *
- * @example
- * const ownership = await requireResourceAccess(
- *   'contact_list',
- *   listId,
- *   userId,
- *   orgId
- * );
- */
-export async function requireResourceAccess(
-	resourceType: string,
-	resourceId: string,
-	userId: string,
-	orgId: string,
-) {
-	const db = await getDb();
-
-	const [ownership] = await db
-		.select()
-		.from(resourceOwners)
-		.where(
-			and(
-				eq(resourceOwners.resourceType, resourceType),
-				eq(resourceOwners.resourceId, resourceId),
-				or(
-					// User owns it directly
-					and(
-						eq(resourceOwners.ownerType, "USER"),
-						eq(resourceOwners.ownerId, userId),
-					),
-					// Organization owns it (and user is member)
-					and(
-						eq(resourceOwners.ownerType, "ORGANIZATION"),
-						eq(resourceOwners.ownerId, orgId),
-					),
-				),
-			),
-		)
-		.limit(1);
-
-	if (!ownership) {
-		// Don't reveal if resource exists - just say not found
-		throw Errors.NotFound("Resource");
-	}
-
-	return ownership;
 }
 
 /**

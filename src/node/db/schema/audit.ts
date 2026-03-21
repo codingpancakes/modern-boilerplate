@@ -34,8 +34,8 @@ export const auditLogs = pgTable(
 		}),
 
 		// What action was performed
-		action: text("action").notNull(), // CREATE, UPDATE, DELETE, LOGIN, LOGOUT, etc.
-		resourceType: text("resource_type").notNull(), // USER, CONTACT, MEDIA, ORGANIZATION, etc.
+		action: text("action").notNull(),
+		resourceType: text("resource_type").notNull(),
 		resourceId: uuid("resource_id"), // ID of the affected resource
 
 		// Details of the change
@@ -150,12 +150,6 @@ export const AUDIT_RESOURCE_TYPES = {
 	PROFILE: "PROFILE",
 	ORGANIZATION: "ORGANIZATION",
 	ORGANIZATION_MEMBER: "ORGANIZATION_MEMBER",
-	CONTACT: "CONTACT",
-	CONTACT_LIST: "CONTACT_LIST",
-	JOURNEY: "JOURNEY",
-	CAMPAIGN: "CAMPAIGN",
-	MESSAGE: "MESSAGE",
-	MESSAGE_TEMPLATE: "MESSAGE_TEMPLATE",
 	MEDIA: "MEDIA",
 	WEBHOOK: "WEBHOOK",
 	API_KEY: "API_KEY",
