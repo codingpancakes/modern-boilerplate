@@ -93,6 +93,12 @@ export const auditLogs = pgTable(
 				table.userId,
 				table.timestamp,
 			),
+
+			// Composite index for org audit queries over time
+			ixAuditLogsOrgTime: index("ix_audit_logs_org_time").on(
+				table.organizationId,
+				table.timestamp,
+			),
 		};
 	},
 );

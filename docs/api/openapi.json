@@ -1,12 +1,12 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "API",
+    "title": "postway API",
     "version": "1.0.0",
     "description": "Production-grade serverless REST API with TypeScript and Python Lambda support",
     "contact": {
       "name": "API Support",
-      "email": "support@yourdomain.com"
+      "email": "support@postway.services"
     }
   },
   "servers": [
@@ -15,11 +15,11 @@
       "description": "Local development server"
     },
     {
-      "url": "https://api-staging.yourdomain.com",
+      "url": "https://api-staging.postway.services",
       "description": "Staging environment"
     },
     {
-      "url": "https://api.yourdomain.com",
+      "url": "https://api.postway.services",
       "description": "Production environment"
     }
   ],
@@ -726,70 +726,6 @@
           },
           "401": {
             "description": "Unauthorized"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
-      }
-    },
-    "/v1/users/python-profile": {
-      "get": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Get user profile (Python example)",
-        "description": "Example endpoint demonstrating TypeScript → Python Lambda proxy pattern.\nTypeScript handles authentication, Python handles business logic.\n\n**Architecture:**\n1. API Gateway validates JWT via WorkOS authorizer\n2. TypeScript proxy receives authenticated claims\n3. TypeScript invokes Python Lambda with claims\n4. Python processes request and returns data\n5. TypeScript returns response to client\n\n**Security:** Python Lambda is NOT publicly accessible.\n",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "User profile data from Python Lambda",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean",
-                      "example": true
-                    },
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "userId": {
-                          "type": "string",
-                          "example": "user_01KAYCTKV0Y8SDSABDMQNP60XB"
-                        },
-                        "email": {
-                          "type": "string",
-                          "example": "user@example.com"
-                        },
-                        "processedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "example": "2025-12-05T19:29:10.081867Z"
-                        },
-                        "processedBy": {
-                          "type": "string",
-                          "example": "Python Lambda"
-                        },
-                        "claims": {
-                          "type": "object",
-                          "description": "Full JWT claims from WorkOS"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - Invalid or missing JWT token"
           },
           "500": {
             "description": "Internal server error"

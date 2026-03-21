@@ -11,7 +11,7 @@ const s3Client = new S3Client({
 	region: process.env.AWS_REGION || "us-east-1",
 });
 const IMAGES_BUCKET = process.env.IMAGES_BUCKET ?? "";
-const CDN_URL = process.env.CDN_URL || "";
+const CDN_URL = process.env.IMAGES_CDN_URL || "";
 
 export const mediaResolvers = {
 	Query: {
@@ -25,8 +25,8 @@ export const mediaResolvers = {
 			context: GraphQLContext,
 		) => {
 			const prefix = category
-				? `${context.userId}/${category}/`
-				: `${context.userId}/`;
+				? `users/${context.userId}/${category}/`
+				: `users/${context.userId}/`;
 
 			const command = new ListObjectsV2Command({
 				Bucket: IMAGES_BUCKET,
@@ -45,7 +45,7 @@ export const mediaResolvers = {
 				size: item.Size || 0,
 				lastModified:
 					item.LastModified?.toISOString() || new Date().toISOString(),
-				category: item.Key?.split("/")[1] || null,
+				category: item.Key?.split("/")[2] || null,
 			}));
 
 			return {
@@ -80,8 +80,8 @@ export const mediaResolvers = {
 			const timestamp = Date.now();
 			const randomString = Math.random().toString(36).substring(2, 15);
 			const key = category
-				? `${context.userId}/${category}/${timestamp}-${randomString}-${safeFilename}`
-				: `${context.userId}/${timestamp}-${randomString}-${safeFilename}`;
+				? `users/${context.userId}/${category}/${timestamp}-${randomString}-${safeFilename}`
+				: `users/${context.userId}/general/${timestamp}-${randomString}-${safeFilename}`;
 
 			// Generate presigned URL
 			const command = new PutObjectCommand({

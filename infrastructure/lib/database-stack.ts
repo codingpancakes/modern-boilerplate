@@ -62,9 +62,7 @@ export class DatabaseStack extends cdk.Stack {
       description: 'ARN of migration runner Lambda',
     });
 
-    // Apply LogRetention aspect with proper sequencing to avoid rate limits
-    const logRetentionAspect = new LogRetentionAspect(stage);
-    Aspects.of(this).add(logRetentionAspect);
-    logRetentionAspect.applyLogRetention(this);
+    // Apply LogRetention aspect -- visit() applies retention during the prepare phase
+    Aspects.of(this).add(new LogRetentionAspect(stage));
   }
 }

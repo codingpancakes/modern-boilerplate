@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type {
 	APIGatewayProxyEventV2,
 	APIGatewayProxyHandlerV2,
@@ -10,6 +11,7 @@ import {
 	handleExternalOptionsRequest,
 	handleOpenOptionsRequest,
 	handleOptionsRequest,
+	securityHeaders,
 } from "./cors";
 import { Errors, formatError } from "./errors";
 
@@ -40,7 +42,10 @@ function validateHeader(
 	// Validate header value
 	let isValid = false;
 	if (config.expectedValue) {
-		isValid = headerValue === config.expectedValue;
+		// Constant-time comparison to prevent timing attacks on API keys / secret tokens
+		const a = Buffer.from(headerValue);
+		const b = Buffer.from(config.expectedValue);
+		isValid = a.length === b.length && timingSafeEqual(a, b);
 	} else if (config.validateFn) {
 		isValid = config.validateFn(headerValue);
 	} else {
@@ -112,12 +117,13 @@ export const withCustomHeader = (
 		try {
 			validateHeader(event, config);
 			const response = await handlerFn(event, context);
-			const corsHeaders = getCorsHeaders(origin);
-			return wrapResponse(response, corsHeaders);
+			return wrapResponse(response, securityHeaders(getCorsHeaders(origin)));
 		} catch (error: unknown) {
-			const corsHeaders = getCorsHeaders(origin);
 			const errorResponse = formatError(error, context.awsRequestId);
-			return wrapResponse(errorResponse, corsHeaders);
+			return wrapResponse(
+				errorResponse,
+				securityHeaders(getCorsHeaders(origin)),
+			);
 		}
 	};
 };
@@ -189,12 +195,16 @@ export const withExternalHeader = (
 		try {
 			validateHeader(event, config);
 			const response = await handlerFn(event, context);
-			const corsHeaders = getExternalCorsHeaders(origin);
-			return wrapResponse(response, corsHeaders);
+			return wrapResponse(
+				response,
+				securityHeaders(getExternalCorsHeaders(origin)),
+			);
 		} catch (error: unknown) {
-			const corsHeaders = getExternalCorsHeaders(origin);
 			const errorResponse = formatError(error, context.awsRequestId);
-			return wrapResponse(errorResponse, corsHeaders);
+			return wrapResponse(
+				errorResponse,
+				securityHeaders(getExternalCorsHeaders(origin)),
+			);
 		}
 	};
 };
@@ -216,12 +226,10 @@ export const withOpenHeader = (
 		try {
 			validateHeader(event, config);
 			const response = await handlerFn(event, context);
-			const corsHeaders = getOpenCorsHeaders();
-			return wrapResponse(response, corsHeaders);
+			return wrapResponse(response, securityHeaders(getOpenCorsHeaders()));
 		} catch (error: unknown) {
-			const corsHeaders = getOpenCorsHeaders();
 			const errorResponse = formatError(error, context.awsRequestId);
-			return wrapResponse(errorResponse, corsHeaders);
+			return wrapResponse(errorResponse, securityHeaders(getOpenCorsHeaders()));
 		}
 	};
 };

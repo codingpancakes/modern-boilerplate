@@ -125,6 +125,27 @@ export function sanitizeFilename(
 }
 
 /**
+ * Check if a hostname resolves to a private/loopback/link-local address (SSRF protection)
+ */
+function isPrivateHost(hostname: string): boolean {
+	const lower = hostname.toLowerCase();
+	if (lower === "localhost" || lower === "[::1]" || lower === "0.0.0.0") {
+		return true;
+	}
+	const parts = lower.split(".").map(Number);
+	if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
+	const [a, b] = parts;
+	return (
+		a === 127 ||
+		a === 10 ||
+		a === 0 ||
+		(a === 172 && b >= 16 && b <= 31) ||
+		(a === 192 && b === 168) ||
+		(a === 169 && b === 254)
+	);
+}
+
+/**
  * Sanitize URL to prevent open redirect and SSRF attacks
  *
  * @param url - The URL to sanitize
@@ -149,6 +170,11 @@ export function sanitizeUrl(
 
 		// Check protocol
 		if (!allowedProtocols.includes(parsed.protocol)) {
+			return null;
+		}
+
+		// Block private/loopback/link-local addresses (SSRF protection)
+		if (isPrivateHost(parsed.hostname)) {
 			return null;
 		}
 
@@ -179,21 +205,48 @@ export function sanitizeUrl(
  * @param options - Sanitization options
  * @returns Sanitized object
  */
+// Keys whose string values should NOT be HTML-escaped (URLs, JSON, etc.)
+const RAW_STRING_KEYS = new Set([
+	"photoUrl",
+	"photo_url",
+	"imageUrl",
+	"image_url",
+	"avatarUrl",
+	"avatar_url",
+	"url",
+	"href",
+	"src",
+	"callback",
+	"callbackUrl",
+	"callback_url",
+	"redirectUrl",
+	"redirect_url",
+	"websiteUrl",
+	"website_url",
+]);
+
 export function sanitizeObject<T extends Record<string, unknown>>(
 	obj: T,
 	options: {
 		maxStringLength?: number;
 		allowHtml?: boolean;
+		rawKeys?: Set<string>;
 	} = {},
 ): T {
+	const skipEscape = options.rawKeys ?? RAW_STRING_KEYS;
 	const sanitized: Record<string, unknown> = {};
 
 	for (const [key, value] of Object.entries(obj)) {
 		if (typeof value === "string") {
-			sanitized[key] = sanitizeString(value, {
-				maxLength: options.maxStringLength,
-				allowHtml: options.allowHtml,
-			});
+			if (skipEscape.has(key)) {
+				// Trim only -- no HTML escaping for URL/path fields
+				sanitized[key] = value.trim();
+			} else {
+				sanitized[key] = sanitizeString(value, {
+					maxLength: options.maxStringLength,
+					allowHtml: options.allowHtml,
+				});
+			}
 		} else if (value && typeof value === "object" && !Array.isArray(value)) {
 			sanitized[key] = sanitizeObject(
 				value as Record<string, unknown>,

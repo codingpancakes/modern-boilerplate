@@ -116,27 +116,39 @@ echo "🏗️  Step 5: Destroying CDK stacks (in reverse dependency order)..."
 
 # Destroy stacks in reverse dependency order
 echo ""
-echo "  1️⃣  Destroying API Stack..."
+echo "  1️⃣  Destroying Pipeline Stack..."
+cdk destroy ${STACK_PREFIX}-PipelineStack --force || echo "  ⚠️  Pipeline Stack not found or already deleted"
+
+echo ""
+echo "  2️⃣  Destroying API Stack..."
 cdk destroy ${STACK_PREFIX}-ApiStack --force || echo "  ⚠️  API Stack not found or already deleted"
 
 echo ""
-echo "  2️⃣  Destroying Public Assets Stack..."
+echo "  3️⃣  Destroying Public Assets Stack..."
 cdk destroy ${STACK_PREFIX}-PublicAssetsStack --force || echo "  ⚠️  Public Assets Stack not found or already deleted"
 
 echo ""
-echo "  3️⃣  Destroying Media Stack..."
+echo "  4️⃣  Destroying Media Stack..."
 cdk destroy ${STACK_PREFIX}-MediaStack --force || echo "  ⚠️  Media Stack not found or already deleted"
 
 echo ""
-echo "  4️⃣  Destroying Monitoring Stack..."
+echo "  5️⃣  Destroying Monitoring Stack..."
 cdk destroy ${STACK_PREFIX}-MonitoringStack --force || echo "  ⚠️  Monitoring Stack not found or already deleted"
 
 echo ""
-echo "  5️⃣  Destroying Database Stack..."
+echo "  6️⃣  Destroying Cost Monitoring Stack..."
+cdk destroy ${STACK_PREFIX}-CostMonitoringStack --force || echo "  ⚠️  Cost Monitoring Stack not found or already deleted"
+
+echo ""
+echo "  7️⃣  Destroying CloudTrail Stack..."
+cdk destroy ${STACK_PREFIX}-CloudTrailStack --force || echo "  ⚠️  CloudTrail Stack not found or already deleted"
+
+echo ""
+echo "  8️⃣  Destroying Database Stack..."
 cdk destroy ${STACK_PREFIX}-DatabaseStack --force || echo "  ⚠️  Database Stack not found or already deleted"
 
 echo ""
-echo "  6️⃣  Destroying Security Stack..."
+echo "  9️⃣  Destroying Security Stack..."
 cdk destroy ${STACK_PREFIX}-SecurityStack --force || echo "  ⚠️  Security Stack not found or already deleted"
 
 echo ""

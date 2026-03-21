@@ -38,20 +38,6 @@ if (SENTRY_ENABLED) {
 }
 
 /**
- * Wrap Lambda handler with Sentry error tracking
- * Use this in your handler's try-catch block instead of automatic wrapping
- */
-export function wrapHandler<THandler extends (...args: unknown[]) => unknown>(
-	handler: THandler,
-): THandler {
-	if (!SENTRY_ENABLED) {
-		return handler;
-	}
-	// Manual error tracking - use captureException in catch blocks
-	return handler;
-}
-
-/**
  * Set anonymous user context for error tracking.
  * Only pass the internal DB user ID — never WorkOS sub, email, or name.
  * Call this from handlers after resolving the internal user ID, not from middleware.
@@ -62,6 +48,20 @@ export function setUser(internalUserId: string) {
 	Sentry.setUser({ id: internalUserId });
 }
 
+const SENSITIVE_QUERY_KEYS = new Set([
+	"token",
+	"key",
+	"secret",
+	"password",
+	"auth",
+	"api_key",
+	"apikey",
+	"access_token",
+	"refresh_token",
+	"session",
+	"code",
+]);
+
 /**
  * Set request context for error tracking
  */
@@ -71,14 +71,19 @@ export function setRequestContext(event: APIGatewayProxyEventV2) {
 	Sentry.setContext("request", {
 		method: event.requestContext.http.method,
 		path: event.requestContext.http.path,
-		ip: event.requestContext.http.sourceIp,
 		userAgent: event.requestContext.http.userAgent,
 		requestId: event.requestContext.requestId,
 	});
 
-	// Add query parameters if present
+	// Add query parameters with sensitive values redacted
 	if (event.queryStringParameters) {
-		Sentry.setContext("query", event.queryStringParameters);
+		const filtered: Record<string, string> = {};
+		for (const [k, v] of Object.entries(event.queryStringParameters)) {
+			filtered[k] = SENSITIVE_QUERY_KEYS.has(k.toLowerCase())
+				? "[REDACTED]"
+				: (v ?? "");
+		}
+		Sentry.setContext("query", filtered);
 	}
 }
 

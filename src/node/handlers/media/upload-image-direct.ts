@@ -90,9 +90,11 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	const CDN_URL = process.env.IMAGES_CDN_URL;
 
 	if (!BUCKET_NAME || !CDN_URL) {
-		throw new Error(
-			"IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set",
-		);
+		logger.error("Missing required environment variables", {
+			bucket: !!BUCKET_NAME,
+			cdn: !!CDN_URL,
+		});
+		throw Errors.InternalServerError();
 	}
 
 	// Validate request body with Zod
@@ -106,16 +108,19 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	let imageBuffer: Buffer;
 	try {
 		// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-		const base64Data = input.imageData.replace(/^data:image\/\w+;base64,/, "");
+		const base64Data = input.imageData.replace(/^data:[^;]*;base64,/, "");
 		imageBuffer = Buffer.from(base64Data, "base64");
 	} catch (_error) {
 		throw Errors.BadRequest("Invalid base64 image data");
 	}
 
-	// Validate image size (max 10MB)
-	const maxSize = 10 * 1024 * 1024; // 10MB
+	// Lambda synchronous payload limit is ~6MB. Base64 encoding adds ~33% overhead,
+	// so the effective max decoded image size is ~4.5MB.
+	const maxSize = 4.5 * 1024 * 1024;
 	if (imageBuffer.length > maxSize) {
-		throw Errors.BadRequest("Image size exceeds maximum allowed size of 10MB");
+		throw Errors.BadRequest(
+			"Image size exceeds maximum allowed size of 4.5MB for direct upload. Use the presigned URL endpoint (/v1/media/upload-image) for larger files.",
+		);
 	}
 
 	// Generate unique S3 key

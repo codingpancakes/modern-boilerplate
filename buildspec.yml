@@ -23,7 +23,7 @@ phases:
     commands:
       - echo "Loading environment variables from SSM and Secrets Manager..."
       - echo "Loading PROJECT_NAME from SSM..."
-      - export PROJECT_NAME=$(aws ssm get-parameter --name "/github/project-name" --query 'Parameter.Value' --output text --region us-east-1)
+      - export PROJECT_NAME=$(aws ssm get-parameter --name "/github/project-name" --query 'Parameter.Value' --output text --region $AWS_REGION)
       - export NODE_ENV=production
       - echo "Using PROJECT_NAME=${PROJECT_NAME}"
       - |
@@ -33,24 +33,22 @@ phases:
           exit 1
         fi
       - echo "Loading SSM parameters..."
-      - export API_DOMAIN=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/api-domain" --query 'Parameter.Value' --output text --region us-east-1)
-      - export HOSTED_ZONE_ID=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-id" --query 'Parameter.Value' --output text --region us-east-1)
-      - export HOSTED_ZONE_NAME=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-name" --query 'Parameter.Value' --output text --region us-east-1)
-      - export IMAGES_BUCKET=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket" --query 'Parameter.Value' --output text --region us-east-1)
-      - export IMAGES_BUCKET_PREFIX=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket-prefix" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
-      - export IMAGES_CDN_URL=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-cdn-url" --query 'Parameter.Value' --output text --region us-east-1)
-      - export CORS_DOMAIN_PATTERNS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-domain-patterns" --query 'Parameter.Value' --output text --region us-east-1)
-      - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
-      - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region us-east-1 2>/dev/null || echo "")
+      - export API_DOMAIN=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/api-domain" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export HOSTED_ZONE_ID=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-id" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export HOSTED_ZONE_NAME=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/hosted-zone-name" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export IMAGES_BUCKET=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export IMAGES_BUCKET_PREFIX=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-bucket-prefix" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
+      - export IMAGES_CDN_URL=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/images-cdn-url" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export CORS_DOMAIN_PATTERNS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-domain-patterns" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
+      - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
       - echo "Loading GitHub configuration..."
-      - export GITHUB_OWNER=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-owner" --query 'Parameter.Value' --output text --region us-east-1)
-      - export GITHUB_REPO=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-repo" --query 'Parameter.Value' --output text --region us-east-1)
-      - export GITHUB_BRANCH=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-branch" --query 'Parameter.Value' --output text --region us-east-1)
+      - export GITHUB_OWNER=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-owner" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export GITHUB_REPO=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-repo" --query 'Parameter.Value' --output text --region $AWS_REGION)
+      - export GITHUB_BRANCH=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-branch" --query 'Parameter.Value' --output text --region $AWS_REGION)
       - echo "Loading Secrets Manager secrets..."
-      - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region us-east-1)
+      - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region $AWS_REGION)
       - export WORKOS_CLIENT_ID=$(echo $WORKOS_SECRET | jq -r '.clientId')
-      - DB_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/database" --query 'SecretString' --output text --region us-east-1)
-      - export DATABASE_URL=$(echo $DB_SECRET | jq -r '.url')
       - echo "✓ Loaded all environment variables"
       - echo "  PROJECT_NAME=$PROJECT_NAME"
       - echo "  STAGE=$STAGE"

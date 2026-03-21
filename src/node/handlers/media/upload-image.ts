@@ -93,9 +93,11 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	const CDN_URL = process.env.IMAGES_CDN_URL;
 
 	if (!BUCKET_NAME || !CDN_URL) {
-		throw new Error(
-			"IMAGES_BUCKET and IMAGES_CDN_URL environment variables must be set",
-		);
+		logger.error("Missing required environment variables", {
+			bucket: !!BUCKET_NAME,
+			cdn: !!CDN_URL,
+		});
+		throw Errors.InternalServerError();
 	}
 
 	// Validate request body with Zod

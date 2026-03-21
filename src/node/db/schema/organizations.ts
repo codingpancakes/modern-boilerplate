@@ -23,6 +23,7 @@ export const organizations = pgTable(
 	"organizations",
 	{
 		id: uuid("id").defaultRandom().primaryKey().notNull(),
+		workosOrgId: text("workos_org_id"),
 		name: text("name"),
 		slug: text("slug"),
 		orgType: text("org_type"),
@@ -45,6 +46,7 @@ export const organizations = pgTable(
 		return {
 			ixOrgSlug: index("ix_org_slug").on(table.slug),
 			uxOrgSlug: uniqueIndex("ux_org_slug").on(table.slug),
+			uxWorkosOrgId: uniqueIndex("ux_workos_org_id").on(table.workosOrgId),
 			ixOrgType: index("ix_org_type").on(table.orgType),
 			ixOrgVisible: index("ix_org_visible").on(table.visibility),
 		};
@@ -368,6 +370,9 @@ export const idempotencyKeys = pgTable(
 			keyRequestHashUnique: uniqueIndex(
 				"idempotency_keys_key_request_hash_unique",
 			).on(table.key, table.requestHash),
+			ixIdempotencyKeysExpires: index("ix_idempotency_keys_expires").on(
+				table.expiresAt,
+			),
 		};
 	},
 );

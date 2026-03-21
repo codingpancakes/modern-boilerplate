@@ -3,7 +3,7 @@ import type {
 	APIGatewayProxyHandlerV2,
 	Context,
 } from "aws-lambda";
-import { getCorsHeaders, handleOptionsRequest } from "./cors";
+import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { formatError } from "./errors";
 
 /**
@@ -23,35 +23,22 @@ export const withPublicCors = (
 
 		try {
 			const response = await handlerFn(event, context);
-			const corsHeaders = getCorsHeaders(origin);
+			const headers = securityHeaders(getCorsHeaders(origin));
 
-			// Ensure response has headers
 			if (typeof response === "object" && response !== null) {
 				return {
 					...response,
-					headers: {
-						...(response.headers || {}),
-						...corsHeaders,
-					},
+					headers: { ...(response.headers || {}), ...headers },
 				};
 			}
 
-			// For simple responses
-			return {
-				statusCode: 200,
-				headers: corsHeaders,
-				body: JSON.stringify(response),
-			};
+			return { statusCode: 200, headers, body: JSON.stringify(response) };
 		} catch (error: any) {
-			const corsHeaders = getCorsHeaders(origin);
+			const headers = securityHeaders(getCorsHeaders(origin));
 			const errorResponse = formatError(error, context.awsRequestId);
-
 			return {
 				...errorResponse,
-				headers: {
-					...(errorResponse.headers || {}),
-					...corsHeaders,
-				},
+				headers: { ...(errorResponse.headers || {}), ...headers },
 			};
 		}
 	};

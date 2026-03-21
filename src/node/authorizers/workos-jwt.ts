@@ -32,29 +32,16 @@ type SimpleAuthorizerResult = {
 export const handler = async (
 	event: APIGatewayRequestAuthorizerEvent,
 ): Promise<SimpleAuthorizerResult> => {
-	console.log("🔐 Authorizer started");
-	console.log("📋 Event:", JSON.stringify(event, null, 2));
-
 	try {
 		const auth =
 			event.headers?.authorization ?? event.headers?.Authorization ?? "";
-
-		console.log(
-			"🔑 Auth header:",
-			auth ? `Bearer ${auth.slice(0, 20)}...` : "missing",
-		);
 
 		const token = auth.startsWith("Bearer ")
 			? auth.slice("Bearer ".length).trim()
 			: "";
 
-		console.log(
-			"Extracted token:",
-			token ? `${token.slice(0, 20)}...${token.slice(-20)}` : "missing",
-		);
-
 		if (!token) {
-			console.log("No token found, rejecting");
+			console.log("No token, rejecting");
 			return { isAuthorized: false };
 		}
 
@@ -64,40 +51,48 @@ export const handler = async (
 		}
 
 		try {
-			console.log("🔍 Starting JWT verification...");
-			console.log("🏢 CLIENT_ID:", CLIENT_ID);
-			console.log("🌐 AUTH_ISSUER:", AUTH_ISSUER);
-
 			// Add timeout to prevent hanging promises
+			let timer: ReturnType<typeof setTimeout> | undefined;
 			const verifyPromise = jwtVerify(token, JWKS, {
 				issuer: [
 					AUTH_ISSUER,
 					`https://api.workos.com/user_management/${CLIENT_ID}`,
-				], // Accept both issuers like local
-				algorithms: ["RS256"], // pin the alg
-				clockTolerance: 60, // seconds of skew tolerance
+				],
+				algorithms: ["RS256"],
+				clockTolerance: 60,
 			});
 
-			const timeoutPromise = new Promise((_, reject) => {
-				setTimeout(() => reject(new Error("JWT verification timeout")), 5000);
+			const timeoutPromise = new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error("JWT verification timeout")),
+					5000,
+				);
 			});
 
-			console.log("⏱️ Starting Promise.race for JWT verification...");
-			const { payload } = (await Promise.race([
-				verifyPromise,
-				timeoutPromise,
-			])) as JWTVerifyResult;
-			console.log("✅ JWT verification successful");
+			let payload: JWTVerifyResult["payload"];
+			try {
+				const result = (await Promise.race([
+					verifyPromise,
+					timeoutPromise,
+				])) as JWTVerifyResult;
+				payload = result.payload;
+			} finally {
+				clearTimeout(timer);
+			}
 
-			// Debug logging
-			console.log("JWT payload:", JSON.stringify(payload, null, 2));
+			// Reject tokens without a subject claim
+			if (!payload.sub) {
+				console.error("JWT missing sub claim, rejecting");
+				return { isAuthorized: false };
+			}
 
 			// Construct a string-only context object for HTTP API simple authorizers
 			const payloadData = payload as Record<string, unknown>;
 			const ctx: Record<string, string> = {
-				sub: String(payload.sub ?? ""),
+				sub: String(payload.sub),
 				sid: String(payloadData.sid ?? ""),
 				iss: String(payload.iss ?? ""),
+				email: String(payloadData.email ?? ""),
 				org_id: String(payloadData.org_id ?? ""),
 				role: String(payloadData.role ?? ""),
 				permissions: JSON.stringify(payloadData.permissions ?? []),
@@ -105,24 +100,26 @@ export const handler = async (
 				iat: payload.iat ? String(payload.iat) : "",
 			};
 
-			console.log("🎉 Authorization successful, returning context");
+			// Forward custom claims (urn:* namespace) so handlers can access them via customClaim()
+			for (const [key, val] of Object.entries(payloadData)) {
+				if (key.startsWith("urn:") && val !== undefined) {
+					ctx[key] = typeof val === "string" ? val : JSON.stringify(val);
+				}
+			}
+
 			return { isAuthorized: true, context: ctx };
 		} catch (err) {
-			// Classify for observability (these do not change the 401 body)
+			// Classify for observability
 			const reason =
 				err instanceof errors.JWTExpired ? "token_expired" : "invalid_token";
-			console.error("❌ JWT verification failed:", {
+			console.error("JWT verification failed:", {
 				reason,
 				error: (err as Error).message,
-				clientId: CLIENT_ID,
-				issuer: AUTH_ISSUER,
 			});
 			return { isAuthorized: false };
 		}
 	} catch (globalErr) {
-		// Catch any other errors to prevent unsettled promises
-		console.error("💥 Authorizer global error:", (globalErr as Error).message);
-		console.error("💥 Stack trace:", (globalErr as Error).stack);
+		console.error("Authorizer error:", (globalErr as Error).message);
 		return { isAuthorized: false };
 	}
 };

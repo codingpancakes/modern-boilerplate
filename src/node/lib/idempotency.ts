@@ -30,40 +30,10 @@ export async function withIdempotency(
 	const ttl = options.ttlSeconds || 86400; // 24 hours default
 	const expiresAt = new Date(Date.now() + ttl * 1000);
 
-	// Check for existing idempotency key
-	const [existing] = await db
-		.select()
-		.from(idempotencyKeys)
-		.where(eq(idempotencyKeys.key, idempotencyKey))
-		.limit(1);
-
-	if (existing) {
-		// If request hash doesn't match, it's a different request with same key
-		if (existing.requestHash !== requestHash) {
-			throw new ApiError(
-				422,
-				"IDEMPOTENCY_KEY_REUSED",
-				"Idempotency key already used for different request",
-			);
-		}
-
-		// If still processing, return conflict
-		if (existing.status === "processing") {
-			throw new ApiError(
-				409,
-				"REQUEST_IN_PROGRESS",
-				"Request is still being processed",
-			);
-		}
-
-		// Return cached response
-		if (existing.status === "completed" && existing.response) {
-			return JSON.parse(existing.response);
-		}
-	}
-
-	// Insert or update to processing status
-	await db
+	// Atomic upsert: INSERT the key as "processing" or DO NOTHING if it already exists.
+	// This eliminates the race condition where two concurrent requests both pass a
+	// SELECT-then-INSERT check before either inserts.
+	const insertResult = await db
 		.insert(idempotencyKeys)
 		.values({
 			key: idempotencyKey,
@@ -72,13 +42,50 @@ export async function withIdempotency(
 			createdAt: new Date().toISOString(),
 			expiresAt: expiresAt.toISOString(),
 		})
-		.onConflictDoUpdate({
-			target: idempotencyKeys.key,
-			set: {
+		.onConflictDoNothing({ target: idempotencyKeys.key });
+
+	// If insert succeeded (rowCount > 0), we own the key — proceed to execute.
+	// If insert was a no-op (rowCount === 0), the key already existed — check its state.
+	if ((insertResult.rowCount ?? 0) === 0) {
+		const [existing] = await db
+			.select()
+			.from(idempotencyKeys)
+			.where(eq(idempotencyKeys.key, idempotencyKey))
+			.limit(1);
+
+		if (existing) {
+			if (existing.requestHash !== requestHash) {
+				throw new ApiError(
+					422,
+					"IDEMPOTENCY_KEY_REUSED",
+					"Idempotency key already used for different request",
+				);
+			}
+
+			if (existing.status === "processing") {
+				throw new ApiError(
+					409,
+					"REQUEST_IN_PROGRESS",
+					"Request is still being processed",
+				);
+			}
+
+			if (existing.status === "completed" && existing.response) {
+				return JSON.parse(existing.response);
+			}
+		}
+
+		// Key existed but was in a failed/expired state — reclaim it
+		await db
+			.update(idempotencyKeys)
+			.set({
 				status: "processing",
+				requestHash,
 				updatedAt: new Date().toISOString(),
-			},
-		});
+				expiresAt: expiresAt.toISOString(),
+			})
+			.where(eq(idempotencyKeys.key, idempotencyKey));
+	}
 
 	try {
 		// Execute the handler

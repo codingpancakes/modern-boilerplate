@@ -62,6 +62,7 @@ const databaseStack = new DatabaseStack(app, `${stackPrefix}-DatabaseStack`, {
 const monitoringStack = new MonitoringStack(app, `${stackPrefix}-MonitoringStack`, {
   env,
   stage,
+  alarmEmail: process.env.ALERT_EMAIL,
 });
 
 // Cost monitoring stack (AWS Budgets)

@@ -38,7 +38,6 @@ const ALLOWED_REQ_HEADERS = [
 	"x-secret-token",
 	"x-webhook-signature",
 	"x-request-id",
-	"x-csrf-token",
 ];
 
 export function isAllowedOrigin(origin?: string): boolean {
@@ -109,18 +108,23 @@ export function getExternalCorsHeaders(
 		return headers;
 	}
 
-	// Check if origin matches external service patterns
+	// Exact allow-list of known external service origins (no wildcards)
+	const ALLOWED_EXTERNAL_ORIGINS = new Set([
+		"https://dashboard.stripe.com",
+		"https://js.stripe.com",
+		"https://hooks.stripe.com",
+		"https://api.twilio.com",
+		"https://sendgrid.com",
+		"https://app.sendgrid.com",
+		"https://api.workos.com",
+		"https://dashboard.workos.com",
+		"https://github.com",
+		"https://hooks.slack.com",
+	]);
+
 	const isAllowedExternalOrigin =
-		// Development origins
-		/^http:\/\/localhost:\d+$/.test(origin) ||
-		// External service origins
-		/^https:\/\/.*\.stripe\.com$/.test(origin) ||
-		/^https:\/\/.*\.twilio\.com$/.test(origin) ||
-		/^https:\/\/.*\.sendgrid\.com$/.test(origin) ||
-		/^https:\/\/.*\.workos\.com$/.test(origin) ||
-		/^https:\/\/.*\.github\.com$/.test(origin) ||
-		/^https:\/\/.*\.slack\.com$/.test(origin);
-	// Add more external service patterns here as needed
+		(DEV && /^http:\/\/localhost:\d+$/.test(origin)) ||
+		ALLOWED_EXTERNAL_ORIGINS.has(origin);
 
 	if (isAllowedExternalOrigin) {
 		headers["Access-Control-Allow-Origin"] = origin;
@@ -145,6 +149,23 @@ export function getOpenCorsHeaders(): Record<string, string> {
 		"Access-Control-Allow-Headers":
 			"Authorization, Content-Type, Idempotency-Key, X-Requested-With, X-API-Key, X-Secret-Token, X-Webhook-Signature",
 		"Access-Control-Max-Age": "86400",
+	};
+}
+
+/**
+ * Standard security headers — apply to every response regardless of auth model
+ */
+export function securityHeaders(
+	headers: Record<string, string>,
+): Record<string, string> {
+	return {
+		...headers,
+		"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options": "DENY",
+		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+		"Referrer-Policy": "strict-origin-when-cross-origin",
+		"Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 	};
 }
 

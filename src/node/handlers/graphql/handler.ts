@@ -3,6 +3,7 @@ import {
 	handlers,
 	startServerAndCreateLambdaHandler,
 } from "@as-integrations/aws-lambda";
+import depthLimit from "graphql-depth-limit";
 import type { GraphQLContext } from "./context";
 import { createContext } from "./context";
 import { mediaResolvers } from "./resolvers/media";
@@ -30,6 +31,7 @@ const server = new ApolloServer<GraphQLContext>({
 	typeDefs,
 	resolvers,
 	introspection: process.env.STAGE !== "production",
+	validationRules: [depthLimit(10)],
 	formatError: (error) => {
 		console.error("GraphQL Error:", error);
 		return {

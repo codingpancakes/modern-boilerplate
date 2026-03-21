@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
-import { eq } from "drizzle-orm";
-import { authIdentities } from "../db/schema/index";
+import { and, eq } from "drizzle-orm";
+import { authIdentities, profiles, users } from "../db/schema/index";
 import { getDb } from "./db";
 import { Errors } from "./errors";
 
@@ -38,18 +38,11 @@ export function getOrgId(evt: APIGatewayProxyEventV2): string | undefined {
 }
 
 /**
- * Get the internal user ID from JWT claims by looking up authIdentities
+ * Get the internal user ID from JWT claims by looking up authIdentities.
+ * If no record exists (race condition on first login before webhook fires),
+ * provisions the user JIT from JWT claims.
  *
  * IMPORTANT: claims.sub is the WorkOS provider subject, NOT the internal user ID.
- * This function queries the authIdentities table to get the actual users.id.
- *
- * @param evt - API Gateway event with JWT claims
- * @returns Internal user ID from users table
- * @throws Unauthorized if user not found in authIdentities
- *
- * @example
- * const userId = await getUserIdFromClaims(event);
- * // userId is now the internal UUID from users.id
  */
 export async function getUserIdFromClaims(
 	evt: APIGatewayProxyEventV2,
@@ -59,16 +52,59 @@ export async function getUserIdFromClaims(
 
 	const db = await getDb();
 
-	// Look up internal user ID from provider subject
-	const authResult = await db
-		.select({ userId: authIdentities.userId })
-		.from(authIdentities)
-		.where(eq(authIdentities.providerSubject, providerSubject))
-		.limit(1);
+	const lookup = () =>
+		db
+			.select({ userId: authIdentities.userId })
+			.from(authIdentities)
+			.where(
+				and(
+					eq(authIdentities.providerType, "workos"),
+					eq(authIdentities.providerSubject, providerSubject),
+				),
+			)
+			.limit(1);
 
-	if (!authResult || authResult.length === 0 || !authResult[0].userId) {
-		throw Errors.Unauthorized();
+	const authResult = await lookup();
+	if (authResult[0]?.userId) {
+		return authResult[0].userId;
 	}
 
-	return authResult[0].userId;
+	// First login race condition: webhook hasn't fired yet — provision JIT
+	try {
+		const [newUser] = await db
+			.insert(users)
+			.values({
+				email: claims.email || null,
+				type: "MEMBER",
+			})
+			.returning({ id: users.id });
+
+		await db.insert(profiles).values({ userId: newUser.id });
+
+		await db.insert(authIdentities).values({
+			userId: newUser.id,
+			providerType: "workos",
+			providerSubject,
+			emailAtProvider: claims.email || null,
+		});
+
+		return newUser.id;
+	} catch (err) {
+		// Unique-constraint violation means a concurrent request already provisioned
+		const message = err instanceof Error ? err.message : String(err);
+		const isUniqueViolation =
+			message.includes("unique") ||
+			message.includes("duplicate") ||
+			message.includes("23505");
+
+		if (isUniqueViolation) {
+			const retry = await lookup();
+			if (retry[0]?.userId) {
+				return retry[0].userId;
+			}
+		}
+
+		// Real DB errors should surface as 500, not masquerade as 401
+		throw err;
+	}
 }

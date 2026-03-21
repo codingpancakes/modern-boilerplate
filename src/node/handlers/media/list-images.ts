@@ -6,6 +6,7 @@ import {
 } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
+import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { mediaSchemas, parseQuery } from "../../lib/validation";
@@ -92,7 +93,8 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Validate environment variables
 	const BUCKET_NAME = process.env.IMAGES_BUCKET;
 	if (!BUCKET_NAME) {
-		throw new Error("IMAGES_BUCKET environment variable must be set");
+		logger.error("Missing required environment variable: IMAGES_BUCKET");
+		throw Errors.InternalServerError();
 	}
 
 	// Parse and validate query parameters
@@ -123,7 +125,8 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	const images = (response.Contents || []).map((obj: _Object) => {
 		const key = obj.Key || "";
 		const parts = key.split("/");
-		const categoryFromPath = parts.length > 3 ? parts[3] : "general";
+		// S3 key format: users/{userId}/{category}/{timestamp}_{uuid}_{filename}
+		const categoryFromPath = parts.length > 2 ? parts[2] : "general";
 
 		return {
 			key,

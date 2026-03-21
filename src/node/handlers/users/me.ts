@@ -58,24 +58,16 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	const db = await getDb();
 
-	// Get user data
-	const userResult = await db
-		.select()
-		.from(users)
-		.where(eq(users.id, userId))
-		.limit(1);
+	// Fetch user and profile in parallel (independent queries)
+	const [userResult, profileResult] = await Promise.all([
+		db.select().from(users).where(eq(users.id, userId)).limit(1),
+		db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
+	]);
 
 	if (userResult.length === 0) {
 		logger.error("User record not found after auth lookup");
 		throw Errors.Unauthorized();
 	}
-
-	// Get profile data (may not exist yet)
-	const profileResult = await db
-		.select()
-		.from(profiles)
-		.where(eq(profiles.userId, userId))
-		.limit(1);
 
 	const user = userResult[0];
 	const profile = profileResult[0] || null;

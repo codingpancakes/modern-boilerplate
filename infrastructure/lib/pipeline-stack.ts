@@ -107,13 +107,63 @@ export class PipelineStack extends cdk.Stack {
 
       buildSpec: codebuild.BuildSpec.fromSourceFilename('buildspec.yml'),
 
-      // Grant permissions to deploy CDK stacks
+      // Scoped role: CodeBuild assumes CDK bootstrap roles for deployment
+      // Actual resource-creation permissions live on the CloudFormation execution role
+      // created by `cdk bootstrap`. This role only needs to drive the deployment.
       role: new iam.Role(this, 'BuildRole', {
         assumedBy: new iam.ServicePrincipal('codebuild.amazonaws.com'),
-        managedPolicies: [
-          // Full permissions for CDK deployment
-          iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess'),
-        ],
+        inlinePolicies: {
+          CdkDeployPolicy: new iam.PolicyDocument({
+            statements: [
+              // Assume CDK bootstrap roles (created by `cdk bootstrap`)
+              new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ['sts:AssumeRole'],
+                resources: [
+                  `arn:aws:iam::${this.account}:role/cdk-*-deploy-role-${this.account}-${this.region}`,
+                  `arn:aws:iam::${this.account}:role/cdk-*-file-publishing-role-${this.account}-${this.region}`,
+                  `arn:aws:iam::${this.account}:role/cdk-*-image-publishing-role-${this.account}-${this.region}`,
+                  `arn:aws:iam::${this.account}:role/cdk-*-lookup-role-${this.account}-${this.region}`,
+                ],
+              }),
+              // CloudFormation operations on project stacks only
+              new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: [
+                  'cloudformation:DescribeStacks',
+                  'cloudformation:DescribeStackEvents',
+                  'cloudformation:GetTemplate',
+                  'cloudformation:CreateChangeSet',
+                  'cloudformation:DescribeChangeSet',
+                  'cloudformation:ExecuteChangeSet',
+                  'cloudformation:DeleteChangeSet',
+                ],
+                resources: [
+                  `arn:aws:cloudformation:${this.region}:${this.account}:stack/${projectName}-*/*`,
+                  `arn:aws:cloudformation:${this.region}:${this.account}:stack/CDKToolkit/*`,
+                ],
+              }),
+              // CDK staging bucket access
+              new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ['s3:GetObject', 's3:PutObject', 's3:ListBucket', 's3:GetBucketLocation'],
+                resources: [
+                  `arn:aws:s3:::cdk-*-assets-${this.account}-${this.region}`,
+                  `arn:aws:s3:::cdk-*-assets-${this.account}-${this.region}/*`,
+                ],
+              }),
+              // SSM parameter reads (for config lookups during synthesis)
+              new iam.PolicyStatement({
+                effect: iam.Effect.ALLOW,
+                actions: ['ssm:GetParameter', 'ssm:GetParameters'],
+                resources: [
+                  `arn:aws:ssm:${this.region}:${this.account}:parameter/${projectName}/*`,
+                  `arn:aws:ssm:${this.region}:${this.account}:parameter/github/*`,
+                ],
+              }),
+            ],
+          }),
+        },
       }),
 
       cache: codebuild.Cache.local(

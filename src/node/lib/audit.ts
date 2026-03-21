@@ -1,4 +1,4 @@
-import type { APIGatewayProxyEvent } from "aws-lambda";
+import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -83,12 +83,12 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 }
 
 /**
- * Extract request context from API Gateway event
+ * Extract request context from API Gateway V2 event
  */
-export function extractRequestContext(event: APIGatewayProxyEvent) {
+export function extractRequestContext(event: APIGatewayProxyEventV2) {
 	return {
-		ipAddress: event.requestContext?.identity?.sourceIp,
-		userAgent: event.headers?.["User-Agent"] || event.headers?.["user-agent"],
+		ipAddress: event.requestContext?.http?.sourceIp,
+		userAgent: event.headers?.["user-agent"],
 		requestId: event.requestContext?.requestId,
 	};
 }
@@ -119,7 +119,7 @@ export function extractRequestContext(event: APIGatewayProxyEvent) {
  */
 export function withAudit<T = unknown>(
 	handler: (
-		event: APIGatewayProxyEvent,
+		event: APIGatewayProxyEventV2,
 		context: AuditContext,
 		auditLog: (
 			entry: Omit<AuditLogEntry, "ipAddress" | "userAgent" | "requestId">,
@@ -127,7 +127,7 @@ export function withAudit<T = unknown>(
 	) => Promise<T>,
 ) {
 	return async (
-		event: APIGatewayProxyEvent,
+		event: APIGatewayProxyEventV2,
 		context: AuditContext,
 	): Promise<T> => {
 		const requestContext = extractRequestContext(event);

@@ -24,7 +24,7 @@ async function getDbUrl(): Promise<string> {
 		return dbUrl;
 	}
 
-	// Option 2: Build from Secrets Manager
+	// Option 2: Fetch from Secrets Manager (preferred in deployed environments)
 	if (process.env.DB_SECRET_ARN) {
 		const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
 		const command = new GetSecretValueCommand({
@@ -35,7 +35,12 @@ async function getDbUrl(): Promise<string> {
 			const response = await client.send(command);
 			if (response.SecretString) {
 				const secret = JSON.parse(response.SecretString);
-				// Build connection string from secret
+				// Format stored by sync-secrets script: { url: "postgresql://..." }
+				if (secret.url) {
+					dbUrl = String(secret.url);
+					return dbUrl;
+				}
+				// Fallback: RDS-style secret with individual fields
 				const sslmode = secret.sslmode || "require";
 				const channelBinding = secret.channel_binding
 					? `&channel_binding=${secret.channel_binding}`
@@ -44,7 +49,8 @@ async function getDbUrl(): Promise<string> {
 				return dbUrl;
 			}
 		} catch (error) {
-			console.error("Failed to retrieve database secret:", error);
+			const message = error instanceof Error ? error.message : String(error);
+			console.error("Failed to retrieve database secret:", message);
 			throw new Error("Failed to retrieve database credentials");
 		}
 	}
@@ -95,18 +101,20 @@ async function createDbConnection(
 		if (retryCount < MAX_RETRIES) {
 			// Exponential backoff
 			const delay = RETRY_DELAY_MS * 2 ** retryCount;
+			const message = error instanceof Error ? error.message : String(error);
 			console.warn(
-				`Database connection attempt ${retryCount + 1} failed, retrying in ${delay}ms...`,
-				error,
+				`Database connection attempt ${retryCount + 1} failed, retrying in ${delay}ms:`,
+				message,
 			);
 
 			await new Promise((resolve) => setTimeout(resolve, delay));
 			return createDbConnection(url, retryCount + 1);
 		}
 
+		const message = error instanceof Error ? error.message : String(error);
 		console.error("Database connection failed after retries", {
 			attempts: connectionAttempts,
-			error,
+			error: message,
 		});
 		throw new Error("Failed to connect to database after multiple attempts");
 	}

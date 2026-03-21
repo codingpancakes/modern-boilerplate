@@ -20,10 +20,11 @@ export function decodeCursor(
 	try {
 		const decoded = Buffer.from(cursor, "base64url").toString("utf-8");
 		const [timestamp, id] = decoded.split("_");
-		return {
-			timestamp: Number.parseInt(timestamp, 10),
-			id,
-		};
+		const ts = Number.parseInt(timestamp, 10);
+		if (Number.isNaN(ts) || !id) {
+			return null;
+		}
+		return { timestamp: ts, id };
 	} catch {
 		return null;
 	}

@@ -80,6 +80,10 @@ export const contacts = pgTable(
 				table.organizationId,
 				table.externalId,
 			),
+			ixContactsOrgPhone: index("ix_contacts_org_phone").on(
+				table.organizationId,
+				table.phone,
+			),
 		};
 	},
 );

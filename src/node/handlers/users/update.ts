@@ -83,52 +83,51 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Build update objects automatically (only includes provided fields + updatedAt)
 	const updates = buildNestedUpdates(updateRequest);
 
-	// Fetch current data for audit logging (before changes)
-	const [currentUser] = await db
-		.select()
-		.from(users)
-		.where(eq(users.id, userId))
-		.limit(1);
-	const [currentProfile] = await db
-		.select()
-		.from(profiles)
-		.where(eq(profiles.userId, userId))
-		.limit(1);
+	// Fetch current snapshots in parallel (for audit "before")
+	const [currentResults] = await Promise.all([
+		Promise.all([
+			db.select().from(users).where(eq(users.id, userId)).limit(1),
+			db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
+		]),
+	]);
+	const [currentUserRows, currentProfileRows] = currentResults;
+	const currentUser = currentUserRows[0];
+	const currentProfile = currentProfileRows[0];
 
-	// Update user table if user fields provided
-	if (updates.user) {
-		await db.update(users).set(updates.user).where(eq(users.id, userId));
+	// Run updates in parallel, using RETURNING to get the "after" state in one round-trip
+	const [updatedUser, updatedProfile] = await Promise.all([
+		updates.user
+			? db
+					.update(users)
+					.set(updates.user)
+					.where(eq(users.id, userId))
+					.returning()
+					.then((rows) => {
+						logger.info("User updated", {
+							userId,
+							fields: Object.keys(updates.user ?? {}),
+						});
+						return rows[0];
+					})
+			: Promise.resolve(currentUser),
+		updates.profile
+			? db
+					.update(profiles)
+					.set(updates.profile)
+					.where(eq(profiles.userId, userId))
+					.returning()
+					.then((rows) => {
+						logger.info("Profile updated", {
+							userId,
+							fields: Object.keys(updates.profile ?? {}),
+						});
+						return rows[0];
+					})
+			: Promise.resolve(currentProfile),
+	]);
 
-		logger.info("User updated", { userId, fields: Object.keys(updates.user) });
-	}
-
-	// Update profile table if profile fields provided
-	if (updates.profile) {
-		await db
-			.update(profiles)
-			.set(updates.profile)
-			.where(eq(profiles.userId, userId));
-
-		logger.info("Profile updated", {
-			userId,
-			fields: Object.keys(updates.profile),
-		});
-	}
-
-	// Fetch updated user and profile
-	const [updatedUser] = await db
-		.select()
-		.from(users)
-		.where(eq(users.id, userId))
-		.limit(1);
-	const [updatedProfile] = await db
-		.select()
-		.from(profiles)
-		.where(eq(profiles.userId, userId))
-		.limit(1);
-
-	// Audit log: Track user profile updates
-	await logAudit({
+	// Fire-and-forget audit log -- don't block the response
+	void logAudit({
 		userId,
 		action: AUDIT_ACTIONS.UPDATE,
 		resourceType: AUDIT_RESOURCE_TYPES.PROFILE,

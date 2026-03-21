@@ -314,6 +314,11 @@ export const journeyRuns = pgTable(
 				table.journeyId,
 			),
 			ixJourneyRunsStatus: index("ix_journey_runs_status").on(table.status),
+			ixJourneyRunsReentry: index("ix_journey_runs_reentry").on(
+				table.journeyId,
+				table.contactId,
+				table.status,
+			),
 		};
 	},
 );

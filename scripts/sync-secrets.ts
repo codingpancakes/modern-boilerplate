@@ -115,22 +115,20 @@ for (const mapping of secretMappings) {
     // Secret doesn't exist
   }
   
-  // Create or update secret
+  // Create or update secret — pipe via stdin so values never appear in `ps` output
   try {
     const secretString = JSON.stringify(secretValue);
     
     if (secretExists) {
-      // Update existing secret
       execSync(
-        `aws secretsmanager put-secret-value --secret-id "${mapping.secretId}" --secret-string '${secretString}' --region ${awsRegion}`,
-        { stdio: 'pipe' }
+        `aws secretsmanager put-secret-value --secret-id "${mapping.secretId}" --secret-string file:///dev/stdin --region ${awsRegion}`,
+        { input: secretString, stdio: ['pipe', 'pipe', 'pipe'] }
       );
       console.log(`   ✅ Updated secret: ${mapping.secretId}\n`);
     } else {
-      // Create new secret
       execSync(
-        `aws secretsmanager create-secret --name "${mapping.secretId}" --description "${mapping.name} for ${stage}" --secret-string '${secretString}' --region ${awsRegion}`,
-        { stdio: 'pipe' }
+        `aws secretsmanager create-secret --name "${mapping.secretId}" --description "${mapping.name} for ${stage}" --secret-string file:///dev/stdin --region ${awsRegion}`,
+        { input: secretString, stdio: ['pipe', 'pipe', 'pipe'] }
       );
       console.log(`   ✅ Created secret: ${mapping.secretId}\n`);
     }
@@ -142,12 +140,24 @@ for (const mapping of secretMappings) {
 // Sync SSM parameters (non-sensitive config)
 console.log('📝 Syncing SSM Parameters...');
 
+// Helper: put SSM parameter safely via --cli-input-json to avoid shell injection
+function putSsmParameter(name: string, value: string, description: string) {
+  const jsonInput = JSON.stringify({
+    Name: name,
+    Value: value,
+    Type: 'String',
+    Description: description,
+    Overwrite: true,
+  });
+  execSync(
+    `aws ssm put-parameter --cli-input-json file:///dev/stdin --region ${awsRegion}`,
+    { input: jsonInput, stdio: ['pipe', 'pipe', 'pipe'] }
+  );
+}
+
 // First, sync PROJECT_NAME to a global parameter (used by CI/CD pipeline)
 try {
-  execSync(
-    `aws ssm put-parameter --name "/github/project-name" --value "${projectName}" --type String --description "Project name for CI/CD pipeline" --overwrite --region ${awsRegion}`,
-    { stdio: 'pipe' }
-  );
+  putSsmParameter('/github/project-name', projectName, 'Project name for CI/CD pipeline');
   console.log(`   ✓ Global PROJECT_NAME parameter`);
 } catch (error) {
   console.error(`   ❌ Failed to sync global PROJECT_NAME:`, error);
@@ -190,11 +200,7 @@ for (const mapping of ssmMappings) {
   }
   
   try {
-    // Always use --overwrite to update existing or create new
-    execSync(
-      `aws ssm put-parameter --name "${mapping.paramName}" --value "${envVars[mapping.key]}" --type String --description "${mapping.name} for ${stage}" --overwrite --region ${awsRegion}`,
-      { stdio: 'pipe' }
-    );
+    putSsmParameter(mapping.paramName, envVars[mapping.key], `${mapping.name} for ${stage}`);
     console.log(`   ✓ ${mapping.name}`);
   } catch (error) {
     console.error(`   ❌ Failed to sync ${mapping.name}:`, error);

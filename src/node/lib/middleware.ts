@@ -3,7 +3,13 @@ import type {
 	APIGatewayProxyHandlerV2,
 	Context,
 } from "aws-lambda";
-import { getCorsHeaders, handleOptionsRequest } from "./cors";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	logAudit,
+} from "./audit";
+import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 // Auth claims are now provided by API Gateway authorizer
 import { formatError } from "./errors";
 import * as Sentry from "./sentry";
@@ -75,6 +81,20 @@ export const withAuth = (
 				if (segment) {
 					segment.addAnnotation("authFailed", true);
 				}
+				// Fire-and-forget — never block the 401 response
+				void logAudit({
+					action: AUDIT_ACTIONS.ACCESS_DENIED,
+					resourceType: AUDIT_RESOURCE_TYPES.USER,
+					status: AUDIT_STATUS.FAILURE,
+					ipAddress: event.requestContext?.http?.sourceIp,
+					userAgent: event.headers?.["user-agent"],
+					requestId: event.requestContext?.requestId,
+					metadata: {
+						reason: "missing_claims",
+						path: event.requestContext?.http?.path,
+						method: event.requestContext?.http?.method,
+					},
+				});
 				return {
 					statusCode: 401,
 					headers: securityHeaders(corsHeaders(origin)),
@@ -130,35 +150,9 @@ export const withAuth = (
 };
 
 function corsHeaders(origin?: string) {
-	const base = getCorsHeaders(origin); // implement strict allow-list internally
 	return {
-		...base,
+		...getCorsHeaders(origin),
 		Vary: "Origin",
-		"Access-Control-Allow-Headers":
-			"authorization,content-type,x-request-id,x-csrf-token",
 		"Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-	};
-}
-
-/**
- * Add security headers to response
- */
-function securityHeaders(
-	headers: Record<string, string>,
-): Record<string, string> {
-	return {
-		...headers,
-		// HSTS - Force HTTPS for 1 year
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-		// Prevent MIME type sniffing
-		"X-Content-Type-Options": "nosniff",
-		// Prevent clickjacking
-		"X-Frame-Options": "DENY",
-		// CSP - API only returns JSON, no scripts
-		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-		// Referrer policy
-		"Referrer-Policy": "strict-origin-when-cross-origin",
-		// Permissions policy
-		"Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 	};
 }

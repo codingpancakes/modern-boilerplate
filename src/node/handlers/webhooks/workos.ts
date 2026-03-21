@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import { Tracer } from "@aws-lambda-powertools/tracer";
 import {
@@ -101,6 +101,7 @@ interface WorkOSUserData {
 }
 
 interface WorkOSOrgData {
+	id: string;
 	name: string;
 	[key: string]: unknown;
 }
@@ -131,11 +132,6 @@ async function getWebhookSecret(): Promise<string> {
 			throw new Error("WORKOS_WEBHOOK_SECRET not found in secrets");
 		}
 
-		logger.info("✅ Loaded webhook secret from Secrets Manager", {
-			secretLength: webhookSecret.length,
-			secretPrefix: webhookSecret.substring(0, 8),
-		});
-
 		return webhookSecret;
 	}
 
@@ -163,18 +159,21 @@ function verifySignature(
 		.update(signedPayload)
 		.digest("hex");
 
+	const sigBuffer = Buffer.from(signature, "hex");
+	const expectedBuffer = Buffer.from(expectedSignature, "hex");
+
+	// Reject immediately if lengths differ (avoids timingSafeEqual throwing)
+	if (sigBuffer.length !== expectedBuffer.length) {
+		return false;
+	}
+
+	const match = timingSafeEqual(sigBuffer, expectedBuffer);
 	logger.info("Signature verification", {
 		timestamp,
 		payloadLength: payload.length,
-		payloadPreview: payload.substring(0, 100),
-		signedPayloadPreview: signedPayload.substring(0, 100),
-		secretPrefix: secret.substring(0, 8),
-		receivedSignature: signature,
-		expectedSignature,
-		match: signature === expectedSignature,
+		match,
 	});
-
-	return signature === expectedSignature;
+	return match;
 }
 
 const webhookHandler = async (
@@ -229,9 +228,19 @@ const webhookHandler = async (
 			.where(eq(idempotencyKeys.key, idempotencyKey))
 			.limit(1);
 
-		if (existing) {
+		if (existing && existing.status === "completed") {
 			logger.warn("⚠️ Duplicate event detected, skipping", { idempotencyKey });
 			return createSuccessResponse({ message: "Event already processed" });
+		}
+
+		if (existing && existing.status === "processing") {
+			// Previous attempt failed mid-processing -- delete stale key and retry
+			logger.warn("⚠️ Found stale processing key, retrying", {
+				idempotencyKey,
+			});
+			await db
+				.delete(idempotencyKeys)
+				.where(eq(idempotencyKeys.key, idempotencyKey));
 		}
 		logger.info("✅ New event, processing...");
 
@@ -361,8 +370,20 @@ const webhookHandler = async (
 					.limit(1);
 
 				if (authIdentity?.userId) {
-					// Delete user (auth_identities will cascade)
 					await db.delete(users).where(eq(users.id, authIdentity.userId));
+
+					await logAudit({
+						userId: authIdentity.userId,
+						action: AUDIT_ACTIONS.DELETE,
+						resourceType: AUDIT_RESOURCE_TYPES.USER,
+						resourceId: authIdentity.userId,
+						status: AUDIT_STATUS.SUCCESS,
+						metadata: {
+							source: "workos_webhook",
+							eventType: webhookEvent.event,
+							providerSubject: userData.id,
+						},
+					});
 				}
 				break;
 			}
@@ -371,21 +392,28 @@ const webhookHandler = async (
 			case "organization.updated": {
 				const orgData = webhookEvent.data as WorkOSOrgData;
 
-				// For organizations, we'll use name as identifier since no workosId or slug column
-				// Note: This may create duplicates if multiple orgs have same name
-				await db.insert(organizations).values({
-					name: orgData.name,
-				});
+				await db
+					.insert(organizations)
+					.values({
+						workosOrgId: orgData.id,
+						name: orgData.name,
+					})
+					.onConflictDoUpdate({
+						target: organizations.workosOrgId,
+						set: {
+							name: orgData.name,
+							updatedAt: new Date().toISOString(),
+						},
+					});
 				break;
 			}
 
 			case "organization.deleted": {
 				const orgData = webhookEvent.data as WorkOSOrgData;
 
-				// Delete organization by name (not ideal but no other identifier available)
 				await db
 					.delete(organizations)
-					.where(eq(organizations.name, orgData.name));
+					.where(eq(organizations.workosOrgId, orgData.id));
 				break;
 			}
 		}

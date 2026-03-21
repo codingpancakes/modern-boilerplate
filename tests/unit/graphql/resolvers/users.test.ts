@@ -20,6 +20,15 @@ const createMockDb = () => ({
 	update: vi.fn(),
 });
 
+// Mock loaders
+const createMockLoaders = () => ({
+	userById: { load: vi.fn() },
+	profileByUserId: { load: vi.fn() },
+	orgById: { load: vi.fn() },
+	membershipsByUserId: { load: vi.fn() },
+	membershipsByOrgId: { load: vi.fn() },
+});
+
 // Mock context
 const createMockContext = (overrides = {}): GraphQLContext => {
 	const mockDb = createMockDb();
@@ -31,6 +40,7 @@ const createMockContext = (overrides = {}): GraphQLContext => {
 		providerSubject: "workos-123",
 		claims: {},
 		db: mockDb as any,
+		loaders: createMockLoaders() as any,
 		...overrides,
 	};
 };
@@ -258,7 +268,7 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.db.query.profiles.findFirst as any).mockResolvedValue(mockProfile);
+			(context.loaders.profileByUserId.load as any).mockResolvedValue(mockProfile);
 
 			const result = await resolvers.User.profile(parent, {}, context);
 
@@ -283,7 +293,7 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.db.query.organizationMembers.findMany as any).mockResolvedValue(mockOrgs);
+			(context.loaders.membershipsByUserId.load as any).mockResolvedValue(mockOrgs);
 
 			const result = await resolvers.User.organizations(parent, {}, context);
 

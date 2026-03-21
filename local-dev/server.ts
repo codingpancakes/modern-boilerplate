@@ -17,6 +17,7 @@ import { handler as usersMeHandler } from '../src/node/handlers/users/me';
 import { handler as usersUpdateHandler } from '../src/node/handlers/users/update';
 import { handler as testApiKeyHandler } from '../src/node/handlers/test/api-key';
 import { handler as testWebhookHandler } from '../src/node/handlers/test/webhook';
+import { createLoaders } from '../src/node/handlers/graphql/context';
 // GraphQL handler needs special treatment - don't import the Lambda handler
 import { handler as graphqlDocsHandler } from '../src/node/handlers/graphql/docs';
 import { ApolloServer } from '@apollo/server';
@@ -351,6 +352,7 @@ app.post('/v1/graphql', requireAuth, async (req, res) => {
       providerSubject, // WorkOS ID
       claims: user,
       db,
+      loaders: createLoaders(db),
     };
     
     const { query, variables, operationName } = req.body;
@@ -407,6 +409,7 @@ app.get('/v1/graphql', requireAuth, async (req, res) => {
       providerSubject, // WorkOS ID
       claims: user,
       db,
+      loaders: createLoaders(db),
     };
     
     const response = await apolloServer.executeOperation(

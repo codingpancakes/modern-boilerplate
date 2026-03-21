@@ -6,6 +6,7 @@ import {
 	pgTable,
 	text,
 	timestamp,
+	uniqueIndex,
 	uuid,
 } from "drizzle-orm/pg-core";
 import { citext } from "../types/citext";
@@ -40,7 +41,7 @@ export const users = pgTable(
 	},
 	(table) => {
 		return {
-			ixUsersEmail: index("ix_users_email").on(table.email),
+			uxUsersEmail: uniqueIndex("ux_users_email").on(table.email),
 			ixUsersPhone: index("ix_users_phone").on(table.phone),
 		};
 	},

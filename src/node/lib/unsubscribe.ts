@@ -66,16 +66,27 @@ export async function canSendMessage(
 	}
 
 	// 2. Check global unsubscribe (HIGHEST PRIORITY)
-	const globalUnsub = await db.query.globalUnsubscribes.findFirst({
-		where: and(
-			eq(globalUnsubscribes.organizationId, organizationId),
-			eq(globalUnsubscribes.channelKind, channelKind),
-			or(
-				contact.email ? eq(globalUnsubscribes.email, contact.email) : undefined,
-				contact.phone ? eq(globalUnsubscribes.phone, contact.phone) : undefined,
-			),
-		),
-	});
+	// Skip if contact has neither email nor phone — cannot match any unsubscribe record
+	const emailCondition = contact.email
+		? eq(globalUnsubscribes.email, contact.email)
+		: undefined;
+	const phoneCondition = contact.phone
+		? eq(globalUnsubscribes.phone, contact.phone)
+		: undefined;
+	const identifierCondition =
+		emailCondition && phoneCondition
+			? or(emailCondition, phoneCondition)
+			: emailCondition || phoneCondition;
+
+	const globalUnsub = identifierCondition
+		? await db.query.globalUnsubscribes.findFirst({
+				where: and(
+					eq(globalUnsubscribes.organizationId, organizationId),
+					eq(globalUnsubscribes.channelKind, channelKind),
+					identifierCondition,
+				),
+			})
+		: undefined;
 
 	if (globalUnsub) {
 		return {

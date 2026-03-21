@@ -8,7 +8,9 @@ import {
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
 	auditResolver,
+	logAudit,
 } from "../../../lib/audit";
 import { sanitizeObject } from "../../../lib/sanitize";
 import { userSchemas } from "../../../lib/validation";
@@ -219,6 +221,24 @@ export const userResolvers = {
 				updatedProfile = result[0];
 			}
 
+			// Fire-and-forget audit log
+			void logAudit({
+				userId: context.userId,
+				organizationId: context.orgId || undefined,
+				action: AUDIT_ACTIONS.UPDATE,
+				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
+				resourceId: context.userId,
+				changes: { after: { user: updatedUser, profile: updatedProfile } },
+				status: AUDIT_STATUS.SUCCESS,
+				metadata: {
+					source: "graphql",
+					updatedFields: {
+						user: args.user ? Object.keys(args.user) : [],
+						profile: args.profile ? Object.keys(args.profile) : [],
+					},
+				},
+			});
+
 			return {
 				user: updatedUser,
 				profile: updatedProfile,
@@ -226,72 +246,47 @@ export const userResolvers = {
 		},
 	},
 
-	// Field resolvers
+	// Field resolvers — use DataLoaders to batch and deduplicate DB queries
 	User: {
-		profile: async (
-			user: { id: string },
-			_args: unknown,
-			context: GraphQLContext,
-		) => {
-			return context.db.query.profiles.findFirst({
-				where: eq(profiles.userId, user.id),
-			});
-		},
+		profile: (user: { id: string }, _args: unknown, context: GraphQLContext) =>
+			context.loaders.profileByUserId.load(user.id),
 
-		organizations: async (
+		organizations: (
 			user: { id: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => {
-			return context.db.query.organizationMembers.findMany({
-				where: eq(organizationMembers.userId, user.id),
-			});
-		},
+		) => context.loaders.membershipsByUserId.load(user.id),
 	},
 
 	Profile: {
-		user: async (
+		user: (
 			profile: { userId: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => {
-			return context.db.query.users.findFirst({
-				where: eq(users.id, profile.userId),
-			});
-		},
+		) => context.loaders.userById.load(profile.userId),
 	},
 
 	OrganizationMembership: {
-		user: async (
+		user: (
 			membership: { userId: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => {
-			return context.db.query.users.findFirst({
-				where: eq(users.id, membership.userId),
-			});
-		},
+		) => context.loaders.userById.load(membership.userId),
 
-		organization: async (
+		organization: (
 			membership: { organizationId: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => {
-			return context.db.query.organizations.findFirst({
-				where: eq(organizations.id, membership.organizationId),
-			});
-		},
+		) => context.loaders.orgById.load(membership.organizationId),
+
+		// DB column is createdAt, GraphQL field is joinedAt
+		joinedAt: (membership: { createdAt: string }) => membership.createdAt,
+		// No leftAt column on organizationMembers; always null
+		leftAt: () => null,
 	},
 
 	Organization: {
-		members: async (
-			org: { id: string },
-			_args: unknown,
-			context: GraphQLContext,
-		) => {
-			return context.db.query.organizationMembers.findMany({
-				where: eq(organizationMembers.organizationId, org.id),
-			});
-		},
+		members: (org: { id: string }, _args: unknown, context: GraphQLContext) =>
+			context.loaders.membershipsByOrgId.load(org.id),
 	},
 };

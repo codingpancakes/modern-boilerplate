@@ -18,10 +18,14 @@ export const createUser = z.object({
 
 /**
  * Update user schema (partial)
+ * Must stay in sync with GraphQL UpdateUserInput
  */
 export const updateUser = z.object({
+	email: z.string().email().optional(),
+	phone: z.string().max(20).optional(),
 	firstName: z.string().min(1).max(100).optional(),
 	lastName: z.string().min(1).max(100).optional(),
+	defaultTimezone: z.string().max(50).optional(),
 	organizationId: z.string().uuid().optional(),
 });
 
