@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
 	ListObjectsV2Command,
 	PutObjectCommand,
@@ -12,6 +13,14 @@ const s3Client = new S3Client({
 });
 const IMAGES_BUCKET = process.env.IMAGES_BUCKET ?? "";
 const CDN_URL = process.env.IMAGES_CDN_URL || "";
+const UPLOAD_EXPIRY_SECONDS = 300;
+
+const ALLOWED_CONTENT_TYPES: Record<string, string[]> = {
+	"image/jpeg": ["jpg", "jpeg"],
+	"image/png": ["png"],
+	"image/gif": ["gif"],
+	"image/webp": ["webp"],
+};
 
 export const mediaResolvers = {
 	Query: {
@@ -66,32 +75,48 @@ export const mediaResolvers = {
 			}: { filename: string; contentType: string; category?: string },
 			context: GraphQLContext,
 		) => {
-			// Validate file
 			const safeFilename = sanitizeFilename(filename);
 
-			// Validate file extension for images
 			if (!validateFileExtension(safeFilename, "IMAGE")) {
 				throw new Error(
 					"Invalid file extension. Allowed: jpg, jpeg, png, gif, webp",
 				);
 			}
 
-			// Generate S3 key
-			const timestamp = Date.now();
-			const randomString = Math.random().toString(36).substring(2, 15);
-			const key = category
-				? `users/${context.userId}/${category}/${timestamp}-${randomString}-${safeFilename}`
-				: `users/${context.userId}/general/${timestamp}-${randomString}-${safeFilename}`;
+			// Validate contentType against allowlist and check extension match
+			const allowedExts = ALLOWED_CONTENT_TYPES[contentType];
+			if (!allowedExts) {
+				throw new Error(
+					`Invalid content type. Allowed: ${Object.keys(ALLOWED_CONTENT_TYPES).join(", ")}`,
+				);
+			}
+			const ext = safeFilename.split(".").pop()?.toLowerCase() || "";
+			if (!allowedExts.includes(ext)) {
+				throw new Error(
+					`Content type ${contentType} does not match file extension .${ext}`,
+				);
+			}
 
-			// Generate presigned URL
+			const timestamp = Date.now();
+			const uniqueId = randomUUID();
+			const key = category
+				? `users/${context.userId}/${category}/${timestamp}_${uniqueId}_${safeFilename}`
+				: `users/${context.userId}/general/${timestamp}_${uniqueId}_${safeFilename}`;
+
 			const command = new PutObjectCommand({
 				Bucket: IMAGES_BUCKET,
 				Key: key,
 				ContentType: contentType,
+				ServerSideEncryption: "AES256",
+				Metadata: {
+					userId: context.userId,
+					originalFilename: filename,
+					uploadedAt: new Date().toISOString(),
+				},
 			});
 
 			const uploadUrl = await getSignedUrl(s3Client, command, {
-				expiresIn: 3600, // 1 hour
+				expiresIn: UPLOAD_EXPIRY_SECONDS,
 			});
 
 			const imageUrl = CDN_URL
@@ -102,7 +127,7 @@ export const mediaResolvers = {
 				uploadUrl,
 				imageUrl,
 				key,
-				expiresIn: 3600,
+				expiresIn: UPLOAD_EXPIRY_SECONDS,
 			};
 		},
 	},

@@ -38,9 +38,6 @@ export function createSuccessResponse<T>(
 export function createNoContentResponse(): SuccessResponse {
 	return {
 		statusCode: 204,
-		headers: {
-			"Content-Type": "application/json",
-		},
 		body: "",
 	};
 }

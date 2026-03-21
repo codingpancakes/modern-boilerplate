@@ -166,13 +166,7 @@ function verifySignature(
 		return false;
 	}
 
-	const match = timingSafeEqual(sigBuffer, expectedBuffer);
-	logger.info("Signature verification", {
-		timestamp,
-		payloadLength: payload.length,
-		match,
-	});
-	return match;
+	return timingSafeEqual(sigBuffer, expectedBuffer);
 }
 
 const webhookHandler = async (
@@ -388,7 +382,7 @@ const webhookHandler = async (
 			case "organization.updated": {
 				const orgData = webhookEvent.data as WorkOSOrgData;
 
-				await db
+				const [org] = await db
 					.insert(organizations)
 					.values({
 						workosOrgId: orgData.id,
@@ -400,16 +394,54 @@ const webhookHandler = async (
 							name: orgData.name,
 							updatedAt: new Date().toISOString(),
 						},
-					});
+					})
+					.returning({ id: organizations.id });
+
+				await logAudit({
+					organizationId: org?.id,
+					action:
+						webhookEvent.event === "organization.created"
+							? AUDIT_ACTIONS.CREATE
+							: AUDIT_ACTIONS.UPDATE,
+					resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+					resourceId: org?.id,
+					status: AUDIT_STATUS.SUCCESS,
+					metadata: {
+						source: "workos_webhook",
+						eventType: webhookEvent.event,
+						workosOrgId: orgData.id,
+					},
+				});
 				break;
 			}
 
 			case "organization.deleted": {
 				const orgData = webhookEvent.data as WorkOSOrgData;
 
+				const [deleted] = await db
+					.select({ id: organizations.id })
+					.from(organizations)
+					.where(eq(organizations.workosOrgId, orgData.id))
+					.limit(1);
+
 				await db
 					.delete(organizations)
 					.where(eq(organizations.workosOrgId, orgData.id));
+
+				if (deleted) {
+					await logAudit({
+						organizationId: deleted.id,
+						action: AUDIT_ACTIONS.DELETE,
+						resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+						resourceId: deleted.id,
+						status: AUDIT_STATUS.SUCCESS,
+						metadata: {
+							source: "workos_webhook",
+							eventType: webhookEvent.event,
+							workosOrgId: orgData.id,
+						},
+					});
+				}
 				break;
 			}
 		}

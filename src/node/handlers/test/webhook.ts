@@ -1,71 +1,48 @@
-import * as crypto from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { Errors } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";
-import { withWebhookSignature } from "../../lib/withCustomHeader";
+import { withPublicCors } from "../../lib/withPublicCors";
 
 const logger = new Logger({ serviceName: "test-webhook" });
 
-/**
- * @swagger
- * /v1/test/webhook:
- *   post:
- *     summary: Test webhook signature validation
- *     description: Tests the withWebhookSignature middleware
- *     tags:
- *       - Test
- *     parameters:
- *       - in: header
- *         name: X-Webhook-Signature
- *         required: true
- *         schema:
- *           type: string
- *         description: HMAC signature of the request body
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               event:
- *                 type: string
- *               data:
- *                 type: object
- *     responses:
- *       200:
- *         description: Webhook signature valid
- *       401:
- *         description: Invalid signature
- */
-const handlerFn = async (event: APIGatewayProxyEventV2, _context: Context) => {
-	logger.addContext(_context);
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+if (!WEBHOOK_SECRET) {
+	throw new Error("WEBHOOK_SECRET environment variable is required");
+}
 
-	const body = JSON.parse(event.body || "{}");
-	logger.info("Webhook received", { event: body.event });
+function verifyHmac(signature: string, body: string, secret: string): boolean {
+	const expected = createHmac("sha256", secret).update(body).digest("hex");
+	const sigBuf = Buffer.from(signature, "hex");
+	const expBuf = Buffer.from(expected, "hex");
+	if (sigBuf.length !== expBuf.length) return false;
+	return timingSafeEqual(sigBuf, expBuf);
+}
+
+const handlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
+	logger.addContext(context);
+
+	const signature =
+		event.headers["x-webhook-signature"] ||
+		event.headers["X-Webhook-Signature"];
+	if (!signature) {
+		throw Errors.BadRequest("Missing required header: X-Webhook-Signature");
+	}
+
+	const body = event.body || "";
+	if (!verifyHmac(signature, body, WEBHOOK_SECRET)) {
+		throw Errors.Unauthorized();
+	}
+
+	const parsed = JSON.parse(body || "{}");
+	logger.info("Webhook received", { event: parsed.event });
 
 	return createSuccessResponse({
 		message: "Webhook processed successfully",
-		received: body,
+		received: parsed,
 		timestamp: new Date().toISOString(),
 	});
 };
 
-// Signature validation function
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "test-webhook-secret";
-
-const _validateSignature = (signature: string, body: string): boolean => {
-	const expectedSignature = crypto
-		.createHmac("sha256", WEBHOOK_SECRET)
-		.update(body)
-		.digest("hex");
-
-	return signature === expectedSignature;
-};
-
-// Use withWebhookSignature middleware
-export const handler = withWebhookSignature((signature: string) => {
-	// In real implementation, we'd need the body to validate
-	// For now, just check if signature exists
-	return signature.length > 0;
-}, handlerFn);
+export const handler = withPublicCors(handlerFn);

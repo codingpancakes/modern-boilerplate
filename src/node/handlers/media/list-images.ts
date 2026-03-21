@@ -27,10 +27,10 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  *       - bearerAuth: []
  *     parameters:
  *       - in: query
- *         name: category
+ *         name: prefix
  *         schema:
  *           type: string
- *         description: Filter images by category
+ *         description: Filter images by category prefix
  *       - in: query
  *         name: limit
  *         schema:
@@ -92,6 +92,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	// Validate environment variables
 	const BUCKET_NAME = process.env.IMAGES_BUCKET;
+	const CDN_URL = process.env.IMAGES_CDN_URL;
 	if (!BUCKET_NAME) {
 		logger.error("Missing required environment variable: IMAGES_BUCKET");
 		throw Errors.InternalServerError();
@@ -99,7 +100,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	// Parse and validate query parameters
 	const query = parseQuery(event, mediaSchemas.listImages);
-	const category = query.prefix; // Using prefix instead of category for flexibility
+	const category = query.prefix;
 	const limit = query.limit;
 	const continuationToken = query.continuationToken;
 
@@ -130,7 +131,9 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 		return {
 			key,
-			url: `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`,
+			url: CDN_URL
+				? `${CDN_URL}/${key}`
+				: `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`,
 			size: obj.Size,
 			lastModified: obj.LastModified?.toISOString(),
 			category: categoryFromPath,

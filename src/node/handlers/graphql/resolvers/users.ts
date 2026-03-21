@@ -37,11 +37,17 @@ export const userResolvers = {
 			{ id }: { id: string },
 			context: GraphQLContext,
 		) => {
-			// Verify user is in same organization
+			if (!context.orgId) {
+				throw new Error(
+					"Organization context required. Ensure your token includes an org_id claim.",
+				);
+			}
+
 			const membership = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, id),
 					eq(organizationMembers.organizationId, context.orgId),
+					eq(organizationMembers.status, "ACTIVE"),
 				),
 			});
 
@@ -49,11 +55,9 @@ export const userResolvers = {
 				throw new Error("User not found or not in your organization");
 			}
 
-			const user = await context.db.query.users.findFirst({
+			return context.db.query.users.findFirst({
 				where: eq(users.id, id),
 			});
-
-			return user;
 		},
 
 		// Get current user's organizations
@@ -63,21 +67,24 @@ export const userResolvers = {
 			context: GraphQLContext,
 		) => {
 			return context.db.query.organizationMembers.findMany({
-				where: eq(organizationMembers.userId, context.userId),
+				where: and(
+					eq(organizationMembers.userId, context.userId),
+					eq(organizationMembers.status, "ACTIVE"),
+				),
 			});
 		},
 
-		// Get organization by ID (must be member)
+		// Get organization by ID (must be active member)
 		organization: async (
 			_parent: unknown,
 			{ id }: { id: string },
 			context: GraphQLContext,
 		) => {
-			// Verify user is member of this organization
 			const membership = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, context.userId),
 					eq(organizationMembers.organizationId, id),
+					eq(organizationMembers.status, "ACTIVE"),
 				),
 			});
 
@@ -85,11 +92,9 @@ export const userResolvers = {
 				throw new Error("Organization not found or you are not a member");
 			}
 
-			const org = await context.db.query.organizations.findFirst({
+			return context.db.query.organizations.findFirst({
 				where: eq(organizations.id, id),
 			});
-
-			return org;
 		},
 	},
 
@@ -135,7 +140,8 @@ export const userResolvers = {
 				{ input }: { input: Record<string, unknown> },
 				context: GraphQLContext,
 			) => {
-				const sanitized = sanitizeObject(input);
+				const validated = userSchemas.updateProfileInput.parse(input);
+				const sanitized = sanitizeObject(validated);
 
 				const [updated] = await context.db
 					.update(profiles)
@@ -190,7 +196,10 @@ export const userResolvers = {
 			// Update profile if provided
 			let updatedProfile = null;
 			if (args.profile && Object.keys(args.profile).length > 0) {
-				const sanitized = sanitizeObject(args.profile);
+				const validatedProfile = userSchemas.updateProfileInput.parse(
+					args.profile,
+				);
+				const sanitized = sanitizeObject(validatedProfile);
 
 				[updatedProfile] = await context.db
 					.update(profiles)

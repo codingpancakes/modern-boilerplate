@@ -212,7 +212,7 @@ async function requireAuth(req: express.Request, res: express.Response, next: an
   }
   
   const token = authHeader.substring(7);
-  console.log('🔑 INTERCEPTED TOKEN:', token);
+  console.log('Auth: token present, length:', token.length);
   
   try {
     const claims = await verifyAccessToken(token);
@@ -300,10 +300,8 @@ function wrapHandler(handlerPath: string) {
 // Define routes
 // Public routes
 app.get('/v1/health', wrapHandler('../src/node/handlers/health'));
-app.post('/v1/webhooks/workos', (req, res, next) => {
-  console.log('🔔 WEBHOOK ROUTE HIT - Request received at /v1/webhooks/workos');
-  console.log('Headers:', req.headers);
-  console.log('Body preview:', JSON.stringify(req.body).substring(0, 200));
+app.post('/v1/webhooks/workos', (req, res) => {
+  console.log('Webhook received at /v1/webhooks/workos');
   const handler = wrapHandler('../src/node/handlers/webhooks/workos');
   handler(req, res);
 });

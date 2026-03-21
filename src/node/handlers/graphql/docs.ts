@@ -169,6 +169,11 @@ query Me {
 		headers: {
 			"Content-Type": "text/html; charset=utf-8",
 			"Cache-Control": "no-cache, no-store, must-revalidate",
+			"X-Content-Type-Options": "nosniff",
+			"X-Frame-Options": "DENY",
+			"Referrer-Policy": "strict-origin-when-cross-origin",
+			"Content-Security-Policy":
+				"default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline' https://unpkg.com; connect-src 'self'; img-src 'self' data:;",
 		},
 		body: html,
 	};

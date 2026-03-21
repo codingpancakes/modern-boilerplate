@@ -84,13 +84,10 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	const updates = buildNestedUpdates(updateRequest);
 
 	// Fetch current snapshots in parallel (for audit "before")
-	const [currentResults] = await Promise.all([
-		Promise.all([
-			db.select().from(users).where(eq(users.id, userId)).limit(1),
-			db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
-		]),
+	const [currentUserRows, currentProfileRows] = await Promise.all([
+		db.select().from(users).where(eq(users.id, userId)).limit(1),
+		db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
 	]);
-	const [currentUserRows, currentProfileRows] = currentResults;
 	const currentUser = currentUserRows[0];
 	const currentProfile = currentProfileRows[0];
 

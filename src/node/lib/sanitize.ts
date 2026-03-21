@@ -315,7 +315,7 @@ export const FILE_SIZE_LIMITS = {
  * Allowed file extensions by category
  */
 export const ALLOWED_FILE_EXTENSIONS = {
-	IMAGE: ["jpg", "jpeg", "png", "gif", "webp", "svg"],
+	IMAGE: ["jpg", "jpeg", "png", "gif", "webp"],
 	DOCUMENT: ["pdf", "doc", "docx", "txt", "csv", "xls", "xlsx"],
 	VIDEO: ["mp4", "webm", "mov", "avi"],
 	AVATAR: ["jpg", "jpeg", "png", "webp"],

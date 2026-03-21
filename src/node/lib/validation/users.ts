@@ -62,10 +62,30 @@ export const updateUserProfile = z
 	});
 
 /**
+ * Update profile schema (standalone, for GraphQL updateProfile mutation)
+ * Must stay in sync with GraphQL UpdateProfileInput
+ */
+export const updateProfileInput = z.object({
+	preferredName: z.string().max(100).optional(),
+	pronouns: z.string().max(50).optional(),
+	location: z.string().max(200).optional(),
+	countryCode: z.string().length(2).optional(),
+	photoUrl: z.string().url().optional(),
+	gender: z.string().max(50).optional(),
+	lgbtq: z.boolean().optional(),
+	ethnicity: z.string().max(100).optional(),
+	languages: z.array(z.string()).optional(),
+	onboardingCompleted: z.boolean().optional(),
+	persona: z.record(z.unknown()).optional(),
+	snapshot: z.record(z.unknown()).optional(),
+});
+
+/**
  * User schemas object
  */
 export const userSchemas = {
 	create: createUser,
 	update: updateUser,
 	updateProfile: updateUserProfile,
+	updateProfileInput: updateProfileInput,
 };

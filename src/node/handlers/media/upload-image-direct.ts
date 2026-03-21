@@ -6,6 +6,7 @@ import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
+import { ALLOWED_FILE_EXTENSIONS } from "../../lib/sanitize";
 import { parseBody } from "../../lib/validation/helpers";
 import { uploadImageDirectRequest } from "../../lib/validation/media";
 
@@ -99,6 +100,18 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	// Validate request body with Zod
 	const input = parseBody(event, uploadImageDirectRequest);
+
+	// Validate file extension
+	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
+	if (
+		!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(
+			fileExtension as (typeof ALLOWED_FILE_EXTENSIONS.IMAGE)[number],
+		)
+	) {
+		throw Errors.BadRequest(
+			`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(", ")}`,
+		);
+	}
 
 	const baseDir = "users";
 	const finalUserId = userId;
