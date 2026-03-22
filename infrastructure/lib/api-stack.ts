@@ -11,6 +11,8 @@ import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as route53 from "aws-cdk-lib/aws-route53";
 import * as route53targets from "aws-cdk-lib/aws-route53-targets";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import { Construct } from "constructs";
 import { Aspects } from "aws-cdk-lib";
 import * as path from "path";
@@ -92,7 +94,7 @@ export class ApiStack extends cdk.Stack {
     // ============================================
     const webAcl = new wafv2.CfnWebACL(this, "ApiWebAcl", {
       name: `${projectName}-${props.stage}-api-waf`,
-      scope: "REGIONAL",
+      scope: "CLOUDFRONT",
       defaultAction: { allow: {} },
       visibilityConfig: {
         cloudWatchMetricsEnabled: true,
@@ -171,11 +173,8 @@ export class ApiStack extends cdk.Stack {
       ],
     });
 
-    // Associate WAF with the API Gateway stage
-    new wafv2.CfnWebACLAssociation(this, "ApiWafAssociation", {
-      resourceArn: `arn:aws:apigateway:${this.region}::/apis/${this.httpApi.apiId}/stages/$default`,
-      webAclArn: webAcl.attrArn,
-    });
+    // WAF will be associated with CloudFront below — CfnWebACLAssociation is not used
+    // because WAFv2 REGIONAL scope does not support HTTP API v2 directly.
 
     // Common Lambda environment variables
     const commonEnv = {
@@ -195,6 +194,9 @@ export class ApiStack extends cdk.Stack {
       CORS_DOMAIN_PATTERNS: process.env.CORS_DOMAIN_PATTERNS || "",
       CORS_EXACT_ORIGINS: process.env.CORS_EXACT_ORIGINS || "",
       CORS_PARENT_DOMAINS: process.env.CORS_PARENT_DOMAINS || "",
+      // Sentry Error Monitoring
+      SENTRY_DSN: process.env.SENTRY_DSN || "",
+      SENTRY_ENVIRONMENT: props.stage,
     };
 
     // Custom Lambda Authorizer for WorkOS (matches local validation)
@@ -439,95 +441,94 @@ export class ApiStack extends cdk.Stack {
       });
     }
 
-    // Custom domain configuration (optional)
-    if (process.env.API_DOMAIN) {
-      const apiDomain = process.env.API_DOMAIN;
-      const zoneName = process.env.HOSTED_ZONE_NAME; 
-      const certArn = process.env.API_CERT_ARN; // optional: existing ACM cert ARN
+    // ============================================
+    // CLOUDFRONT DISTRIBUTION
+    // WAFv2 doesn't support HTTP API v2 directly — CloudFront is required.
+    // WAF (CLOUDFRONT scope) is attached here; stack must be in us-east-1.
+    // ============================================
 
-      let hostedZone: route53.IHostedZone | undefined;
+    // Resolve custom domain config before creating CloudFront so we can pass
+    // certificate + domainNames at construction time (CloudFront requires this).
+    let certificate: acm.ICertificate | undefined;
+    let hostedZone: route53.IHostedZone | undefined;
+    const apiDomain = process.env.API_DOMAIN;
+
+    if (apiDomain) {
+      const zoneName = process.env.HOSTED_ZONE_NAME;
+      const certArn = process.env.API_CERT_ARN;
+
       if (zoneName && process.env.HOSTED_ZONE_ID) {
-        // Use the zone ID directly instead of lookup to avoid cross-account issues
         hostedZone = route53.HostedZone.fromHostedZoneAttributes(this, "ApiHostedZone", {
           hostedZoneId: process.env.HOSTED_ZONE_ID,
-          zoneName: zoneName,
+          zoneName,
         });
       }
 
-      let certificate: acm.ICertificate | undefined;
       if (certArn) {
-        certificate = acm.Certificate.fromCertificateArn(
-          this,
-          "ApiDomainCert",
-          certArn
-        );
+        // CloudFront requires the cert to be in us-east-1 — use an existing cert ARN from us-east-1
+        certificate = acm.Certificate.fromCertificateArn(this, "ApiDomainCert", certArn);
       } else if (hostedZone) {
-        certificate = new acm.Certificate(
-          this,
-          "ApiDomainDnsCert",
-          {
-            domainName: apiDomain!,
-            validation: acm.CertificateValidation.fromDns(hostedZone),
-          }
-        );
-      }
-
-      if (certificate) {
-        const domainName = new apigwv2.DomainName(this, "ApiCustomDomain", {
-          domainName: apiDomain!,
-          certificate,
-        });
-
-        new apigwv2.ApiMapping(this, "ApiDefaultMapping", {
-          api: this.httpApi,
-          domainName,
-          stage: this.httpApi.defaultStage!,
-        });
-
-        // Optional: create Route53 alias record if hosted zone is provided
-        if (hostedZone) {
-          // Derive recordName from full domain and zone name
-          const recordName = apiDomain!.endsWith(`.${hostedZone.zoneName}`)
-            ? apiDomain!.slice(
-                0,
-                apiDomain!.length - hostedZone.zoneName.length - 1
-              )
-            : apiDomain!; // fallback
-
-          new route53.ARecord(this, "ApiDomainAliasRecord", {
-            zone: hostedZone,
-            recordName,
-            target: route53.RecordTarget.fromAlias(
-              new route53targets.ApiGatewayv2DomainProperties(
-                domainName.regionalDomainName,
-                domainName.regionalHostedZoneId
-              )
-            ),
-          });
-        }
-
-        new cdk.CfnOutput(this, "CustomDomain", {
-          value: `https://${apiDomain}`,
-          description: "Custom API domain",
-        });
-
-        // Helpful outputs when DNS is managed outside Route53
-        new cdk.CfnOutput(this, "ApiCustomDomainRegionalDomainName", {
-          value: domainName.regionalDomainName,
-          description:
-            "Target domain name for DNS (use CNAME if not using Route53)",
-        });
-        new cdk.CfnOutput(this, "ApiCustomDomainRegionalHostedZoneId", {
-          value: domainName.regionalHostedZoneId,
-          description: "Hosted Zone ID for alias targeting",
-        });
-      } else {
-        new cdk.CfnOutput(this, "CustomDomainNotConfigured", {
-          value: `Set API_CERT_ARN or HOSTED_ZONE_NAME to configure custom domain for ${apiDomain}`,
-          description: "Custom domain prerequisites are missing",
+        certificate = new acm.Certificate(this, "ApiDomainDnsCert", {
+          domainName: apiDomain,
+          validation: acm.CertificateValidation.fromDns(hostedZone),
         });
       }
     }
+
+    // Origin: HTTP API execute-api URL (not the custom domain)
+    const apiOriginDomain = `${this.httpApi.apiId}.execute-api.${this.region}.amazonaws.com`;
+
+    const distribution = new cloudfront.Distribution(this, "ApiDistribution", {
+      comment: `${projectName}-${props.stage} API`,
+      defaultBehavior: {
+        origin: new origins.HttpOrigin(apiOriginDomain, {
+          protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        }),
+        // Forward all methods (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        // No caching — this is an API, all responses must be fresh
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        // Forward all viewer headers except Host (use origin host for TLS)
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      // Attach WAF (CLOUDFRONT scope) to this distribution
+      webAclId: webAcl.attrArn,
+      // Only serve from US/Canada/Europe edge nodes (cheapest tier)
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      // Custom domain + cert (only set when API_DOMAIN is configured)
+      ...(certificate && apiDomain ? { certificate, domainNames: [apiDomain] } : {}),
+    });
+
+    // Route53 alias record pointing to CloudFront (replaces previous API Gateway alias)
+    if (hostedZone && apiDomain) {
+      const recordName = apiDomain.endsWith(`.${hostedZone.zoneName}`)
+        ? apiDomain.slice(0, apiDomain.length - hostedZone.zoneName.length - 1)
+        : apiDomain;
+
+      new route53.ARecord(this, "ApiDomainAliasRecord", {
+        zone: hostedZone,
+        recordName,
+        target: route53.RecordTarget.fromAlias(
+          new route53targets.CloudFrontTarget(distribution)
+        ),
+      });
+
+      new cdk.CfnOutput(this, "CustomDomain", {
+        value: `https://${apiDomain}`,
+        description: "Custom API domain (via CloudFront)",
+      });
+    }
+
+    new cdk.CfnOutput(this, "CloudFrontDomain", {
+      value: `https://${distribution.distributionDomainName}`,
+      description: "CloudFront distribution domain",
+    });
+
+    new cdk.CfnOutput(this, "CloudFrontDistributionId", {
+      value: distribution.distributionId,
+      description: "CloudFront distribution ID",
+    });
 
     // Output API endpoint
     new cdk.CfnOutput(this, "ApiEndpoint", {

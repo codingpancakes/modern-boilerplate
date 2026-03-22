@@ -6,12 +6,23 @@
 
 set -e
 
-# Load environment helper
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/env-helper.sh"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 STAGE=${1:-dev}
-PROJECT_NAME=$(get_project_name "$STAGE")
+
+# Resolve project name from .env.local or environment
+if [ -n "$PROJECT_NAME" ]; then
+  : # already set
+elif [ -f "${PROJECT_DIR}/.env.local" ]; then
+  PROJECT_NAME=$(grep -E "^PROJECT_NAME=" "${PROJECT_DIR}/.env.local" | cut -d= -f2 | tr -d '"' | tr -d "'")
+fi
+
+if [ -z "$PROJECT_NAME" ]; then
+  echo "Error: PROJECT_NAME not set. Set it in .env.local or as an environment variable."
+  exit 1
+fi
+
 STACK_PREFIX="${PROJECT_NAME}-${STAGE}"
 REGION=${AWS_REGION:-us-east-1}
 
@@ -82,8 +93,9 @@ fi
 echo ""
 echo "🔐 Step 3: Force deleting Secrets Manager secrets..."
 
-# Find and force delete all secrets
-SECRETS=$(aws secretsmanager list-secrets --query "SecretList[?contains(Name, '${STACK_PREFIX}')].Name" --output text 2>/dev/null || echo "")
+# Find and force delete all secrets (secrets use path format /{PROJECT_NAME}/{STAGE}/...)
+SECRET_PATH_PREFIX="/${PROJECT_NAME}/${STAGE}/"
+SECRETS=$(aws secretsmanager list-secrets --query "SecretList[?contains(Name, '${SECRET_PATH_PREFIX}')].Name" --output text 2>/dev/null || echo "")
 
 if [ -n "$SECRETS" ]; then
   for secret in $SECRETS; do
@@ -171,7 +183,7 @@ echo "🔍 Step 7: Verifying cleanup..."
 
 # Check for any remaining resources
 REMAINING_BUCKETS=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${STACK_PREFIX}')].Name" --output text 2>/dev/null || echo "")
-REMAINING_SECRETS=$(aws secretsmanager list-secrets --query "SecretList[?contains(Name, '${STACK_PREFIX}')].Name" --output text 2>/dev/null || echo "")
+REMAINING_SECRETS=$(aws secretsmanager list-secrets --query "SecretList[?contains(Name, '${SECRET_PATH_PREFIX}')].Name" --output text 2>/dev/null || echo "")
 REMAINING_STACKS=$(aws cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE --query "StackSummaries[?contains(StackName, '${STACK_PREFIX}')].StackName" --output text 2>/dev/null || echo "")
 
 if [ -n "$REMAINING_BUCKETS" ] || [ -n "$REMAINING_SECRETS" ] || [ -n "$REMAINING_STACKS" ]; then

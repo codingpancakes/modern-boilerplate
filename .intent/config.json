@@ -1,0 +1,154 @@
+{
+  "scripts": [
+    {
+      "name": "build",
+      "command": "pnpm build",
+      "mode": "command",
+      "category": "build"
+    },
+    {
+      "name": "watch",
+      "command": "pnpm watch",
+      "mode": "service",
+      "category": "dev"
+    },
+    {
+      "name": "cdk",
+      "command": "pnpm cdk",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "migrate",
+      "command": "pnpm migrate",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "sync-secrets",
+      "command": "pnpm sync-secrets",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "db:drop",
+      "command": "pnpm db:drop",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "db:reset",
+      "command": "pnpm db:reset",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "deploy:staging",
+      "command": "pnpm deploy:staging",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "deploy:production",
+      "command": "pnpm deploy:production",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "db:generate",
+      "command": "pnpm db:generate",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "db:introspect",
+      "command": "pnpm db:introspect",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "dev",
+      "command": "pnpm dev",
+      "mode": "service",
+      "category": "dev"
+    },
+    {
+      "name": "docs:generate",
+      "command": "pnpm docs:generate",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "docs:serve",
+      "command": "pnpm docs:serve",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "docs:build",
+      "command": "pnpm docs:build",
+      "mode": "command",
+      "category": "build"
+    },
+    {
+      "name": "docs:dev",
+      "command": "pnpm docs:dev",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "docs:graphql",
+      "command": "pnpm docs:graphql",
+      "mode": "command",
+      "category": "other"
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint",
+      "mode": "command",
+      "category": "lint"
+    },
+    {
+      "name": "lint:fix",
+      "command": "pnpm lint:fix",
+      "mode": "command",
+      "category": "lint"
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "mode": "command",
+      "category": "typecheck"
+    },
+    {
+      "name": "test",
+      "command": "pnpm test",
+      "mode": "command",
+      "category": "test"
+    },
+    {
+      "name": "test:ui",
+      "command": "pnpm test:ui",
+      "mode": "command",
+      "category": "test"
+    },
+    {
+      "name": "test:run",
+      "command": "pnpm test:run",
+      "mode": "command",
+      "category": "test"
+    },
+    {
+      "name": "check",
+      "command": "pnpm check",
+      "mode": "command",
+      "category": "typecheck"
+    },
+    {
+      "name": "prepare",
+      "command": "pnpm prepare",
+      "mode": "command",
+      "category": "other"
+    }
+  ]
+}

@@ -35,7 +35,7 @@ export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
  * Namespace is derived from PROJECT_NAME env var (e.g. "urn:myapp:email").
  * Configure matching claim names in your WorkOS dashboard.
  */
-export function customClaim(name: string): string {
+function _customClaim(name: string): string {
 	return `urn:${process.env.PROJECT_NAME || "app"}:${name}`;
 }
 
@@ -150,9 +150,5 @@ export const withAuth = (
 };
 
 function corsHeaders(origin?: string) {
-	return {
-		...getCorsHeaders(origin),
-		Vary: "Origin",
-		"Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-	};
+	return getCorsHeaders(origin);
 }

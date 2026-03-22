@@ -106,7 +106,7 @@ This document defines the data retention and deletion policies for the RailBranc
 - User profile
 - Auth identities
 - Organization memberships (if sole owner, organization is also deleted)
-- User-created content (contacts, journeys, campaigns)
+- User-created content (profiles, media, organization data)
 - Uploaded media files
 
 **Exceptions:**
@@ -208,7 +208,7 @@ This document defines the data retention and deletion policies for the RailBranc
 2. **Data Export API** (4 hours)
    - `GET /v1/users/me/export`
    - Returns all user data as JSON
-   - Includes: profile, contacts, media, audit logs
+   - Includes: profile, media, audit logs
 
 3. **Right to be Forgotten**
    - Already implemented (hard delete)

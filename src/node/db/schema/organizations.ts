@@ -40,7 +40,6 @@ export const organizations = pgTable(
 	},
 	(table) => {
 		return {
-			ixOrgSlug: index("ix_org_slug").on(table.slug),
 			uxOrgSlug: uniqueIndex("ux_org_slug").on(table.slug),
 			uxWorkosOrgId: uniqueIndex("ux_workos_org_id").on(table.workosOrgId),
 			ixOrgType: index("ix_org_type").on(table.orgType),
@@ -138,11 +137,9 @@ export const organizationMembers = pgTable(
 				onDelete: "cascade",
 			})
 			.notNull(),
-		orgUnitId: uuid("org_unit_id")
-			.references(() => orgUnits.id, {
-				onDelete: "cascade",
-			})
-			.notNull(),
+		orgUnitId: uuid("org_unit_id").references(() => orgUnits.id, {
+			onDelete: "set null",
+		}),
 		userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
 		role: orgRole("role").default("MEMBER"),
 		status: assignmentStatus("status").default("ACTIVE"),

@@ -21,8 +21,10 @@ import { createLoaders } from '../src/node/handlers/graphql/context';
 // GraphQL handler needs special treatment - don't import the Lambda handler
 import { handler as graphqlDocsHandler } from '../src/node/handlers/graphql/docs';
 import { ApolloServer } from '@apollo/server';
+import depthLimit from 'graphql-depth-limit';
 import { userResolvers } from '../src/node/handlers/graphql/resolvers/users';
 import { mediaResolvers } from '../src/node/handlers/graphql/resolvers/media';
+import { organizationResolvers } from '../src/node/handlers/graphql/resolvers/organizations';
 import { typeDefs } from '../src/node/handlers/graphql/schema';
 import { getDb } from '../src/node/lib/db';
 
@@ -47,10 +49,12 @@ const resolvers = {
   Query: {
     ...userResolvers.Query,
     ...mediaResolvers.Query,
+    ...organizationResolvers.Query,
   },
   Mutation: {
     ...userResolvers.Mutation,
     ...mediaResolvers.Mutation,
+    ...organizationResolvers.Mutation,
   },
   User: userResolvers.User,
   Profile: userResolvers.Profile,
@@ -62,6 +66,7 @@ const apolloServer = new ApolloServer({
   typeDefs,
   resolvers,
   introspection: true,
+  validationRules: [depthLimit(10)],
   formatError: (error) => {
     console.error('GraphQL Error:', error);
     return {
@@ -127,15 +132,11 @@ async function verifyAccessToken(accessToken: string): Promise<any> {
   
   // Import key and verify token
   const key = await importJWK(jwk, jwk.alg);
-  console.log('Local JWT verification - token:', accessToken ? `${accessToken.slice(0, 20)}...${accessToken.slice(-20)}` : 'missing');
-  console.log('Local JWT verification - CLIENT_ID:', CLIENT_ID);
-  
   const { payload } = await jwtVerify(accessToken, key, {
     issuer: ['https://api.workos.com/', `https://api.workos.com/user_management/${CLIENT_ID}`],
-    // Skip audience validation - WorkOS tokens may not include aud claim
   });
   
-  console.log('Local JWT payload:', JSON.stringify(payload, null, 2));
+  console.log('JWT verified, sub:', payload.sub);
   
   return payload;
 }

@@ -24,7 +24,6 @@ type OrganizationMembership {
 	organizationId: ID!
 	role: OrgRole!
 	joinedAt: DateTime!
-	leftAt: DateTime
 
 	# Relations
 	user: User!
@@ -43,4 +42,55 @@ enum OrgRole {
 extend type Query {
 	myOrganizations: [OrganizationMembership!]!
 	organization(id: ID!): Organization
+	organizationMembers(organizationId: ID!): [OrganizationMembership!]!
+}
+
+# Mutations
+extend type Mutation {
+	createOrganization(input: CreateOrganizationInput!): Organization!
+	updateOrganization(id: ID!, input: UpdateOrganizationInput!): Organization!
+	deleteOrganization(id: ID!): Boolean!
+	inviteMember(
+		organizationId: ID!
+		input: InviteMemberInput!
+	): OrganizationMembership!
+	updateMemberRole(
+		organizationId: ID!
+		input: UpdateMemberRoleInput!
+	): OrganizationMembership!
+	removeMember(organizationId: ID!, memberId: ID!): Boolean!
+	leaveOrganization(organizationId: ID!): Boolean!
+}
+
+# Input types
+input CreateOrganizationInput {
+	name: String!
+	slug: String!
+	orgType: String
+	visibility: String
+	defaultTimezone: String
+	countryCode: String
+	branding: JSON
+	metadata: JSON
+}
+
+input UpdateOrganizationInput {
+	name: String
+	slug: String
+	orgType: String
+	visibility: String
+	defaultTimezone: String
+	countryCode: String
+	branding: JSON
+	metadata: JSON
+}
+
+input InviteMemberInput {
+	userId: ID!
+	role: OrgRole
+}
+
+input UpdateMemberRoleInput {
+	memberId: ID!
+	role: OrgRole!
 }

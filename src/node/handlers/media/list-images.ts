@@ -35,8 +35,8 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
  *         name: limit
  *         schema:
  *           type: integer
- *           default: 100
- *           maximum: 1000
+ *           default: 20
+ *           maximum: 100
  *         description: Maximum number of images to return
  *       - in: query
  *         name: continuationToken

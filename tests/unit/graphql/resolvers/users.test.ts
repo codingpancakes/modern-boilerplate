@@ -165,6 +165,9 @@ describe("User Resolvers", () => {
 
 	describe("Mutation.updateMyAccount", () => {
 		it("should update both user and profile", async () => {
+			const existingUser = { id: "test-user-id", firstName: "OldFirst" };
+			const existingProfile = { userId: "test-user-id", preferredName: "OldNick" };
+
 			const updatedUser = {
 				id: "test-user-id",
 				firstName: "UpdatedFirst",
@@ -176,6 +179,18 @@ describe("User Resolvers", () => {
 			};
 
 			const context = createMockContext();
+
+			// Mock before-state selects (audit trail)
+			const selectChain = {
+				from: vi.fn().mockReturnThis(),
+				where: vi.fn().mockReturnThis(),
+				limit: vi.fn().mockReturnThis(),
+				then: vi.fn(),
+			};
+			selectChain.then
+				.mockResolvedValueOnce(existingUser)   // beforeUser
+				.mockResolvedValueOnce(existingProfile); // beforeProfile
+			(context.db.select as any).mockReturnValue(selectChain);
 
 			// Mock user update
 			(context.db.update as any).mockReturnValueOnce({

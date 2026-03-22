@@ -16,25 +16,21 @@ export type Claims = {
 };
 
 export function getClaims(evt: APIGatewayProxyEventV2): Claims {
+	// const authHeader = evt.headers?.authorization || evt.headers?.Authorization;
+	// console.log("🔐 RAW TOKEN:", authHeader);
+
 	const rc = (evt.requestContext as any) || {};
 	const authz = rc.authorizer || {};
 	const jwtClaims = authz.jwt?.claims;
 	const lambdaCtx = authz.lambda; // HTTP API SIMPLE Lambda authorizer context
 	const claims = jwtClaims || lambdaCtx;
+
+	// console.log("PARSED CLAIMS:", JSON.stringify(claims, null, 2));
+
 	if (!claims?.sub) {
 		throw Errors.Unauthorized();
 	}
 	return claims as Claims;
-}
-
-export function getUserId(evt: APIGatewayProxyEventV2): string {
-	const claims = getClaims(evt);
-	return claims.sub;
-}
-
-export function getOrgId(evt: APIGatewayProxyEventV2): string | undefined {
-	const claims = getClaims(evt);
-	return claims.org_id;
 }
 
 /**

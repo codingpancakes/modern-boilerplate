@@ -242,19 +242,19 @@
         "parameters": [
           {
             "in": "query",
-            "name": "category",
+            "name": "prefix",
             "schema": {
               "type": "string"
             },
-            "description": "Filter images by category"
+            "description": "Filter images by category prefix"
           },
           {
             "in": "query",
             "name": "limit",
             "schema": {
               "type": "integer",
-              "default": 100,
-              "maximum": 1000
+              "default": 20,
+              "maximum": 100
             },
             "description": "Maximum number of images to return"
           },
@@ -539,52 +539,6 @@
           },
           "401": {
             "description": "Invalid or missing API key"
-          }
-        }
-      }
-    },
-    "/v1/test/webhook": {
-      "post": {
-        "summary": "Test webhook signature validation",
-        "description": "Tests the withWebhookSignature middleware",
-        "tags": [
-          "Test"
-        ],
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-Webhook-Signature",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "HMAC signature of the request body"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "event": {
-                    "type": "string"
-                  },
-                  "data": {
-                    "type": "object"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Webhook signature valid"
-          },
-          "401": {
-            "description": "Invalid signature"
           }
         }
       }

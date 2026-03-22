@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import DataLoader from "dataloader";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
 	organizationMembers,
 	organizations,
@@ -66,7 +66,12 @@ export function createLoaders(db: Awaited<ReturnType<typeof getDb>>) {
 			const rows = await db
 				.select()
 				.from(organizationMembers)
-				.where(inArray(organizationMembers.userId, [...userIds]));
+				.where(
+					and(
+						inArray(organizationMembers.userId, [...userIds]),
+						eq(organizationMembers.status, "ACTIVE"),
+					),
+				);
 			const grouped = new Map<
 				string,
 				(typeof organizationMembers.$inferSelect)[]
@@ -87,7 +92,12 @@ export function createLoaders(db: Awaited<ReturnType<typeof getDb>>) {
 			const rows = await db
 				.select()
 				.from(organizationMembers)
-				.where(inArray(organizationMembers.organizationId, [...orgIds]));
+				.where(
+					and(
+						inArray(organizationMembers.organizationId, [...orgIds]),
+						eq(organizationMembers.status, "ACTIVE"),
+					),
+				);
 			const grouped = new Map<
 				string,
 				(typeof organizationMembers.$inferSelect)[]

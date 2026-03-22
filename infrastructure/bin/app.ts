@@ -144,3 +144,8 @@ if (stage === 'staging' || stage === 'production') {
 
   pipelineStack.addDependency(securityStack);
 }
+
+// Apply global tags to all resources
+cdk.Tags.of(app).add('Project', projectName);
+cdk.Tags.of(app).add('Stage', stage);
+cdk.Tags.of(app).add('ManagedBy', 'CDK');

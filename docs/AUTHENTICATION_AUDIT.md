@@ -587,7 +587,7 @@ curl -X POST http://localhost:3000/v1/webhooks/workos \
 - `infrastructure/lib/api-stack.ts` - API Gateway and authorizer setup
 - `infrastructure/lib/routes/public-routes.ts` - Public routes (health, webhooks)
 - `infrastructure/lib/routes/protected-routes.ts` - Protected routes (media, users)
-- `infrastructure/lib/routes/internal-routes.ts` - Internal routes (messaging)
+- `infrastructure/lib/api-stack.ts` - API routes and Lambda configuration
 
 ### Handler Files
 - `src/node/handlers/graphql/handler.ts` - GraphQL Lambda handler

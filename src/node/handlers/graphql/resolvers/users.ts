@@ -1,10 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import {
-	organizationMembers,
-	organizations,
-	profiles,
-	users,
-} from "../../../db/schema/index";
+import { organizationMembers, profiles, users } from "../../../db/schema/index";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -57,43 +52,6 @@ export const userResolvers = {
 
 			return context.db.query.users.findFirst({
 				where: eq(users.id, id),
-			});
-		},
-
-		// Get current user's organizations
-		myOrganizations: async (
-			_parent: unknown,
-			_args: unknown,
-			context: GraphQLContext,
-		) => {
-			return context.db.query.organizationMembers.findMany({
-				where: and(
-					eq(organizationMembers.userId, context.userId),
-					eq(organizationMembers.status, "ACTIVE"),
-				),
-			});
-		},
-
-		// Get organization by ID (must be active member)
-		organization: async (
-			_parent: unknown,
-			{ id }: { id: string },
-			context: GraphQLContext,
-		) => {
-			const membership = await context.db.query.organizationMembers.findFirst({
-				where: and(
-					eq(organizationMembers.userId, context.userId),
-					eq(organizationMembers.organizationId, id),
-					eq(organizationMembers.status, "ACTIVE"),
-				),
-			});
-
-			if (!membership) {
-				throw new Error("Organization not found or you are not a member");
-			}
-
-			return context.db.query.organizations.findFirst({
-				where: eq(organizations.id, id),
 			});
 		},
 	},
@@ -177,6 +135,22 @@ export const userResolvers = {
 			},
 			context: GraphQLContext,
 		) => {
+			// Capture "before" state for audit trail
+			const [beforeUser, beforeProfile] = await Promise.all([
+				context.db
+					.select()
+					.from(users)
+					.where(eq(users.id, context.userId))
+					.limit(1)
+					.then((r) => r[0]),
+				context.db
+					.select()
+					.from(profiles)
+					.where(eq(profiles.userId, context.userId))
+					.limit(1)
+					.then((r) => r[0]),
+			]);
+
 			// Update user if provided
 			let updatedUser = null;
 			if (args.user && Object.keys(args.user).length > 0) {
@@ -237,7 +211,10 @@ export const userResolvers = {
 				action: AUDIT_ACTIONS.UPDATE,
 				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
 				resourceId: context.userId,
-				changes: { after: { user: updatedUser, profile: updatedProfile } },
+				changes: {
+					before: { user: beforeUser, profile: beforeProfile },
+					after: { user: updatedUser, profile: updatedProfile },
+				},
 				status: AUDIT_STATUS.SUCCESS,
 				metadata: {
 					source: "graphql",
@@ -288,10 +265,7 @@ export const userResolvers = {
 			context: GraphQLContext,
 		) => context.loaders.orgById.load(membership.organizationId),
 
-		// DB column is createdAt, GraphQL field is joinedAt
 		joinedAt: (membership: { createdAt: string }) => membership.createdAt,
-		// No leftAt column on organizationMembers; always null
-		leftAt: () => null,
 	},
 
 	Organization: {

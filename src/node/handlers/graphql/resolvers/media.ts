@@ -28,11 +28,13 @@ export const mediaResolvers = {
 			_parent: unknown,
 			{
 				category,
-				limit = 50,
+				limit = 20,
 				continuationToken,
 			}: { category?: string; limit?: number; continuationToken?: string },
 			context: GraphQLContext,
 		) => {
+			const safeLimit = Math.min(Math.max(limit ?? 20, 1), 100);
+
 			const prefix = category
 				? `users/${context.userId}/${category}/`
 				: `users/${context.userId}/`;
@@ -40,7 +42,7 @@ export const mediaResolvers = {
 			const command = new ListObjectsV2Command({
 				Bucket: IMAGES_BUCKET,
 				Prefix: prefix,
-				MaxKeys: limit,
+				MaxKeys: safeLimit,
 				ContinuationToken: continuationToken,
 			});
 
@@ -75,6 +77,13 @@ export const mediaResolvers = {
 			}: { filename: string; contentType: string; category?: string },
 			context: GraphQLContext,
 		) => {
+			if (!filename || filename.length > 255) {
+				throw new Error("Filename must be 1-255 characters");
+			}
+			if (category && category.length > 50) {
+				throw new Error("Category must be 50 characters or less");
+			}
+
 			const safeFilename = sanitizeFilename(filename);
 
 			if (!validateFileExtension(safeFilename, "IMAGE")) {

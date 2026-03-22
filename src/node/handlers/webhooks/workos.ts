@@ -137,6 +137,9 @@ async function getWebhookSecret(): Promise<string> {
 	throw new Error("Failed to retrieve webhook secret");
 }
 
+// Reject webhook payloads older than 5 minutes to prevent replay attacks
+const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
+
 function verifySignature(
 	payload: string,
 	signatureHeader: string,
@@ -149,6 +152,21 @@ function verifySignature(
 
 	if (!timestamp || !signature) {
 		logger.error("Invalid signature format", { signatureHeader });
+		return false;
+	}
+
+	const timestampMs = Number(timestamp);
+	const now = Date.now();
+	if (
+		Number.isNaN(timestampMs) ||
+		Math.abs(now - timestampMs) > WEBHOOK_TIMESTAMP_TOLERANCE_MS
+	) {
+		logger.error("Webhook timestamp outside tolerance window", {
+			timestampMs,
+			now,
+			differenceMs: Math.abs(now - timestampMs),
+			toleranceMs: WEBHOOK_TIMESTAMP_TOLERANCE_MS,
+		});
 		return false;
 	}
 
@@ -212,37 +230,48 @@ const webhookHandler = async (
 
 		const db = await getDb();
 
-		// Check for duplicate event (idempotency) using WorkOS event ID
+		// Atomic idempotency check using INSERT ON CONFLICT DO NOTHING
 		const idempotencyKey = `workos-webhook-${webhookEvent.id}`;
-		const [existing] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, idempotencyKey))
-			.limit(1);
+		const insertResult = await db
+			.insert(idempotencyKeys)
+			.values({
+				key: idempotencyKey,
+				requestHash: webhookEvent.id,
+				status: "processing",
+				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+			})
+			.onConflictDoNothing({ target: idempotencyKeys.key });
 
-		if (existing && existing.status === "completed") {
-			logger.warn("Duplicate event detected, skipping", { idempotencyKey });
-			return createSuccessResponse({ message: "Event already processed" });
-		}
+		if ((insertResult as { rowCount?: number }).rowCount === 0) {
+			// Key already exists -- check if completed or stale processing
+			const [existing] = await db
+				.select()
+				.from(idempotencyKeys)
+				.where(eq(idempotencyKeys.key, idempotencyKey))
+				.limit(1);
 
-		if (existing && existing.status === "processing") {
-			// Previous attempt failed mid-processing -- delete stale key and retry
+			if (existing?.status === "completed") {
+				logger.warn("Duplicate event detected, skipping", {
+					idempotencyKey,
+				});
+				return createSuccessResponse({ message: "Event already processed" });
+			}
+
+			// Stale processing key -- delete and re-insert to retry
 			logger.warn("Found stale processing key, retrying", {
 				idempotencyKey,
 			});
 			await db
 				.delete(idempotencyKeys)
 				.where(eq(idempotencyKeys.key, idempotencyKey));
+			await db.insert(idempotencyKeys).values({
+				key: idempotencyKey,
+				requestHash: webhookEvent.id,
+				status: "processing",
+				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+			});
 		}
-		logger.info("New event, processing");
-
-		// Store idempotency key
-		await db.insert(idempotencyKeys).values({
-			key: idempotencyKey,
-			requestHash: webhookEvent.id,
-			status: "processing",
-			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
-		});
+		logger.info("Processing event", { idempotencyKey });
 
 		// Process based on event type
 		switch (webhookEvent.event) {
@@ -292,7 +321,9 @@ const webhookHandler = async (
 					});
 				} else {
 					logger.info("Creating new user", { providerSubject: userData.id });
-					// Create new user and auth identity
+
+					// neon-http driver doesn't support multi-statement transactions.
+					// Use compensating delete if downstream inserts fail to prevent orphaned rows.
 					const [newUser] = await db
 						.insert(users)
 						.values({
@@ -303,26 +334,32 @@ const webhookHandler = async (
 						})
 						.returning({ id: users.id });
 
-					logger.info("Creating profile", { userId: newUser.id });
-					// Create profile record
-					await db.insert(profiles).values({
-						userId: newUser.id,
-					});
+					try {
+						await db.insert(profiles).values({
+							userId: newUser.id,
+						});
 
-					logger.info("Creating auth identity", {
-						userId: newUser.id,
-						providerSubject: userData.id,
-					});
-					// Create auth identity
-					await db.insert(authIdentities).values({
-						userId: newUser.id,
-						providerType: "workos",
-						providerSubject: userData.id,
-						emailAtProvider: userData.email,
-					});
+						await db.insert(authIdentities).values({
+							userId: newUser.id,
+							providerType: "workos",
+							providerSubject: userData.id,
+							emailAtProvider: userData.email,
+						});
+					} catch (insertError) {
+						logger.error(
+							"Failed to create profile/authIdentity, rolling back user",
+							{
+								userId: newUser.id,
+								error:
+									insertError instanceof Error
+										? insertError.message
+										: String(insertError),
+							},
+						);
+						await db.delete(users).where(eq(users.id, newUser.id));
+						throw insertError;
+					}
 
-					logger.info("Creating audit log", { userId: newUser.id });
-					// Audit log: Track user creation from WorkOS
 					await logAudit({
 						userId: newUser.id,
 						action: AUDIT_ACTIONS.CREATE,

@@ -333,9 +333,8 @@ Check in the AWS console:
 
 ```bash
 # Example: strip the CRM-specific schema if building something else
-rm src/node/db/schema/contacts.ts
-rm src/node/db/schema/journeys.ts
-rm src/node/db/schema/messaging.ts
+# Schema is already clean -- 8 tables: users, profiles, authIdentities,
+# organizations, orgUnits, organizationMembers, idempotencyKeys, auditLogs
 
 # Update the schema barrel export
 # Edit: src/node/db/schema/index.ts

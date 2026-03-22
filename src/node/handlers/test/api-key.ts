@@ -36,8 +36,6 @@ const handlerFn = async (_event: APIGatewayProxyEventV2, _context: Context) => {
 	});
 };
 
-// Use withApiKey middleware - validates X-API-Key header
-// In production, this should come from environment variable
 const EXPECTED_API_KEY = process.env.TEST_API_KEY;
 if (!EXPECTED_API_KEY) {
 	throw new Error("TEST_API_KEY environment variable is required");

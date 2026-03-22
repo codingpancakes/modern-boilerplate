@@ -24,6 +24,7 @@ export interface AuditContext {
 export interface AuditLogEntry {
 	userId?: string;
 	organizationId?: string;
+	orgUnitId?: string;
 	action: AuditAction;
 	resourceType: AuditResourceType;
 	resourceId?: string;
@@ -62,6 +63,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 		await db.insert(auditLogs).values({
 			userId: entry.userId,
 			organizationId: entry.organizationId,
+			orgUnitId: entry.orgUnitId,
 			action: entry.action,
 			resourceType: entry.resourceType,
 			resourceId: entry.resourceId,
@@ -114,7 +116,7 @@ export function extractRequestContext(event: APIGatewayProxyEventV2) {
  * );
  * ```
  */
-export function withAudit<T = unknown>(
+function _withAudit<T = unknown>(
 	handler: (
 		event: APIGatewayProxyEventV2,
 		context: AuditContext,

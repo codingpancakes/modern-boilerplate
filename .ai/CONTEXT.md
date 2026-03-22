@@ -1,339 +1,96 @@
-# Project Context for AI Assistants
+# RailBranch Backend — AI Context
 
-This document provides essential context about the project for AI coding assistants.
+## Stack
 
-## Project Overview
+- **Runtime:** Node.js 20 / TypeScript 5 / pnpm
+- **Cloud:** AWS Lambda + API Gateway (HTTP v2) + S3 + CloudFront + CDK
+- **Database:** PostgreSQL on Neon (via `drizzle-orm/neon-http`)
+- **Auth:** WorkOS JWT (custom Lambda authorizer)
+- **Validation:** Zod
+- **Logging:** @aws-lambda-powertools/logger
+- **Linter:** Biome
 
-**Name:** RailBranch Backend  
-**Type:** AWS Lambda-based REST API  
-**Framework:** Node.js + TypeScript + AWS CDK  
-**Database:** PostgreSQL (via Drizzle ORM)  
-**Auth:** WorkOS (JWT-based)  
-**Storage:** AWS S3  
-**Deployment:** AWS Lambda + API Gateway
-
----
-
-## Tech Stack
-
-### Core
-- **Runtime:** Node.js 20.x
-- **Language:** TypeScript 5.x
-- **Package Manager:** pnpm
-
-### AWS Services
-- **Lambda:** Serverless functions
-- **API Gateway:** HTTP API (v2)
-- **S3:** File storage
-- **RDS:** PostgreSQL database
-- **CloudFront:** CDN for images
-- **CDK:** Infrastructure as Code
-
-### Key Libraries
-- **@aws-lambda-powertools/logger:** Structured logging
-- **drizzle-orm:** Type-safe database queries
-- **zod:** Runtime validation
-- **jose:** JWT verification
-- **@workos-inc/node:** Authentication provider
-
----
-
-## Project Structure
+## Directory Structure
 
 ```
-RailBranchBackend/
-├── .ai/                      # AI assistant guides (YOU ARE HERE)
-│   ├── PATTERNS.md          # Code patterns to follow
-│   ├── TEMPLATES.md         # How to use templates
-│   └── CONTEXT.md           # This file
-│
-├── templates/               # Handler templates
-│   ├── user-scoped.ts      # For user-owned resources
-│   ├── org-scoped.ts       # For organization resources
-│   └── public.ts           # For public endpoints
-│
-├── src/node/
-│   ├── handlers/           # API endpoint handlers
-│   │   ├── users/         # User management
-│   │   ├── media/         # File uploads
-│   │   ├── webhooks/      # Webhook handlers
-│   │   ├── test/          # Test endpoints
-│   │   └── utils/         # Utility handlers
-│   ├── lib/               # Shared libraries
-│   │   ├── validation/    # Domain-organized Zod schemas
-│   │   │   ├── users.ts
-│   │   │   ├── media.ts
-│   │   │   ├── organizations.ts
-│   │   │   ├── webhooks.ts
-│   │   │   ├── common.ts
-│   │   │   ├── helpers.ts
-│   │   │   └── index.ts
-│   │   ├── response.ts    # Response helpers
-│   │   ├── update-helper.ts # Update helpers
-│   │   ├── middleware.ts  # Auth & error handling
-│   │   ├── invokePythonLambda.ts # Python Lambda invocation
-│   │   ├── cors.ts        # CORS handling
-│   │   ├── db.ts          # Database connection
-│   │   ├── errors.ts      # Error helpers
-│   │   └── permissions.ts # Authorization
-│   └── db/
-│       └── schema.ts      # Drizzle schema definitions
-│
-├── src/python/            # Python Lambda handlers
-│   ├── handlers/          # Python handlers
-│   │   ├── users/        # User-related Python handlers
-│   │   └── test/         # Test Python handlers
-│   ├── lib/              # Python shared libraries
-│   ├── requirements.txt  # Python dependencies
-│   └── README.md         # Python handler guide
-│
-├── tests/                  # Test scripts
-│   └── integration/       # Integration tests
-│
-├── docs/                   # Documentation
-│   ├── api/               # API docs (OpenAPI)
-│   ├── architecture/      # Architecture docs
-│   └── guides/            # How-to guides
-│
-├── infrastructure/         # AWS CDK stacks
-├── local-dev/             # Local development server
-└── scripts/               # Build & deploy scripts
+src/node/
+├── handlers/           # Lambda handlers (one per file)
+│   ├── users/          # me.ts, update.ts
+│   ├── media/          # upload-image.ts, upload-image-direct.ts, list-images.ts
+│   ├── webhooks/       # workos.ts
+│   ├── graphql/        # handler.ts, context.ts, docs.ts, resolvers/, schema/
+│   ├── test/           # api-key.ts, webhook.ts
+│   └── utils/          # health.ts, health-detailed.ts, janitor.ts, options.ts
+├── lib/                # Shared libraries
+│   ├── validation/     # Zod schemas by domain (users.ts, media.ts, organizations.ts, webhooks.ts, common.ts)
+│   ├── middleware.ts   # withAuth wrapper
+│   ├── cors.ts         # CORS handling
+│   ├── audit.ts        # Audit logging
+│   ├── sanitize.ts     # Input sanitization, file validation
+│   ├── response.ts     # createSuccessResponse, createNoContentResponse
+│   ├── errors.ts       # Errors.BadRequest, .Unauthorized, .NotFound, etc.
+│   ├── db.ts           # Neon DB connection with retry
+│   ├── auth.ts         # getClaims, getUserIdFromClaims (JIT user provisioning)
+│   ├── idempotency.ts  # Atomic idempotency via INSERT ON CONFLICT
+│   └── withCustomHeader.ts, withPublicCors.ts
+├── authorizers/        # workos-jwt.ts (Lambda authorizer)
+└── db/
+    └── schema/         # Drizzle schema (8 tables, 3 enums)
+
+infrastructure/         # CDK stacks
+local-dev/server.ts     # Express dev server mimicking Lambda
+scripts/                # migrate.ts, sync-secrets.ts, destroy-all.sh
+templates/              # Handler templates (.ts.template)
 ```
 
----
+## Database Schema (8 tables)
 
-## Key Concepts
+| Table | Purpose |
+|-------|---------|
+| `users` | Core user accounts (email, name, type) |
+| `profiles` | Extended profile (preferredName, photoUrl, persona, snapshot) |
+| `auth_identities` | Maps WorkOS subject to userId (provider, providerSubject) |
+| `organizations` | Orgs synced from WorkOS (workosOrgId, name, slug) |
+| `org_units` | Hierarchical units within orgs (code, parentId) |
+| `organization_members` | User-org membership (role, status, orgUnitId) |
+| `idempotency_keys` | Webhook dedup (key, status, requestHash, expiresAt) |
+| `audit_logs` | Full audit trail (userId, orgId, action, resourceType, changes) |
 
-### 1. Middleware Pattern
-All handlers use middleware for cross-cutting concerns:
-- `withAuth` - JWT authentication
-- `withApiKey` - API key validation
-- `withWebhookSignature` - Webhook signature verification
-- `withCustomHeader` - Custom header validation
+**Enums:** `userType` (OPERATOR, MEMBER), `orgRole` (OWNER..VIEWER), `assignmentStatus` (ACTIVE, INACTIVE, etc.)
 
-Middleware handles errors automatically - **never use try-catch in handlers**.
+## Auth Flow
 
-### 2. Validation Pattern
-All input validation uses domain-organized Zod schemas:
-- Schemas organized by domain in `src/node/lib/validation/`
-- Import from domain: `import { parseBody, userSchemas } from '../../lib/validation'`
-- Use `parseBody()` for request body validation
-- Use `parseQuery()` for query parameter validation
-- Use `validate()` for general validation
-- Types automatically inferred from schemas
+1. Client sends `Authorization: Bearer <JWT>` header
+2. Lambda authorizer (`workos-jwt.ts`) verifies JWT via WorkOS JWKS
+3. Claims forwarded to handler in `event.requestContext.authorizer.lambda`
+4. `getUserIdFromClaims(event)` resolves authIdentity → userId (JIT creates user on first login)
+5. `withAuth` middleware wraps handlers and returns 401 if no valid claims
 
-### 3. Database Pattern
-All database access uses Drizzle ORM:
-- Schema defined in `src/node/db/schema.ts`
-- Type-safe queries
-- **Never use raw SQL**
-- Connection pooling handled automatically
+## Key Patterns Summary
 
-### 4. Logging Pattern
-Structured logging with AWS Lambda Powertools:
-- Add context: `logger.addContext(context)`
-- Persistent keys: `logger.appendKeys({ userId, orgId })`
-- Log levels: `info`, `warn`, `error`
+See `PATTERNS.md` for full details. Critical rules:
 
-### 5. Response Helpers
-Standardized response functions:
-- Use `createSuccessResponse()` for 200 responses
-- Use `createErrorResponse()` for error responses
-- Use `createPaginatedResponse()` for paginated lists
-- Use `createNoContentResponse()` for 204 responses
-- CORS headers added automatically by middleware
+- **No try-catch in handlers** — middleware catches errors
+- **Zod for all validation** — `parseBody(event, schema)` / `parseQuery(event, schema)`
+- **Drizzle ORM only** — never raw SQL
+- **Response helpers** — `createSuccessResponse(data)`, never raw `{ statusCode, body }`
+- **sanitizeObject()** on all user input before DB write (skips URL fields automatically)
+- **logAudit()** on all mutations for audit trail
+- **ACTIVE filter** on all membership queries
+- **ServerSideEncryption: "AES256"** on all S3 uploads
+- **CDN_URL** for all image URLs returned to clients (never raw S3)
 
-### 6. Error Handling
-Standardized error handling:
-- Use `Errors.*` helpers (BadRequest, Unauthorized, NotFound, etc.)
-- Middleware converts to proper HTTP responses
+## Environment Variables (Runtime)
 
-### 7. Monitoring & Observability
-Production-grade monitoring with CloudWatch and X-Ray:
-- **CloudWatch Alarms**: Lambda errors, duration, throttles, API Gateway errors
-- **X-Ray Tracing**: Distributed tracing with user/org annotations
-- **Rate Limiting**: API Gateway throttling (1000 req/s production, 500 req/s staging)
-- **Dashboard**: CloudWatch dashboard with key metrics
-- **Tracer Helpers**: `traceQuery()`, `traceExternalCall()`, `traceLambdaInvoke()`
-- See `infrastructure/lib/monitoring.ts` and `src/node/lib/tracer.ts`
-
-### 7. Python Lambda Proxy Pattern
-For Python-specific workloads (ML, data processing):
-- **TypeScript handles authentication** using `withAuth` middleware
-- **TypeScript invokes Python Lambda** using `invokePythonLambda()`
-- **Python receives pre-validated claims** (no auth code needed)
-- **Python Lambda is NOT publicly accessible** (security best practice)
-- Example: `src/node/handlers/users/python-profile.ts` → `src/python/handlers/users/profile.py`
-- Never return error responses directly
-
----
-
-## Environment Variables
-
-### Required
-- `DATABASE_URL` - PostgreSQL connection string
-- `WORKOS_CLIENT_ID` - WorkOS client ID
-- `WORKOS_JWKS_URL` - WorkOS JWKS endpoint
-- `AWS_REGION` - AWS region (default: us-east-1)
-
-### Optional
-- `IMAGES_BUCKET` - S3 bucket for images
-- `IMAGES_CDN_URL` - CloudFront URL for images
-- `AWS_PROFILE` - AWS profile for local development
-
----
-
-## Authentication Flow
-
-1. User authenticates with WorkOS
-2. WorkOS returns JWT access token
-3. Client sends JWT in `Authorization: Bearer <token>` header
-4. `withAuth` middleware verifies JWT signature
-5. JWT claims available in `event.claims`
-6. User ID from `event.claims.sub`
-
----
-
-## Database Schema Overview
-
-### Core Tables
-- `users` - User accounts
-- `profiles` - Extended user profiles
-- `auth_identities` - Maps WorkOS IDs to user IDs
-- `organizations` - Organizations
-- `org_units` - Organization units (teams, departments)
-- `org_memberships` - User-organization relationships
-
-### Feature Tables
-- `journeys` - Customer journeys
-- `journey_steps` - Steps within journeys
-- `campaigns` - Marketing campaigns
-- `contacts` - Contact list
-
----
-
-## Common Tasks
-
-### Creating a New Handler
-1. Choose template from `/templates/`
-2. Copy to `src/node/handlers/{resource}/{action}.ts`
-3. Add Zod schema to appropriate domain file in `lib/validation/`
-4. Export schema in `lib/validation/index.ts`
-5. Implement handler logic using response helpers
-6. Register route in `local-dev/server.ts`
-7. Add test to `tests/integration/test-handlers.sh`
-8. Test locally with `pnpm dev`
-
-See `.ai/TEMPLATES.md` for detailed guide.
-
-### Adding a New Database Table
-1. Add table definition to `src/node/db/schema.ts`
-2. Generate migration: `pnpm drizzle-kit generate`
-3. Run migration: `pnpm migrate`
-4. Update types if needed
-
-### Deploying
-```bash
-# Deploy to staging
-pnpm deploy:staging
-
-# Deploy to production
-pnpm deploy:production
-```
-
----
-
-## Testing
-
-### Local Development
-```bash
-# Start local server
-pnpm dev
-
-# Run integration tests
-./tests/integration/test-handlers.sh "JWT_TOKEN"
-
-# Test middleware
-./tests/integration/test-middleware.sh
-```
-
-### Staging/Production
-```bash
-# Test staging API
-./tests/integration/test-api.sh staging
-
-# Test production API
-./tests/integration/test-api.sh production
-```
-
----
-
-## Important Rules
-
-### DO
-✅ Use templates for new handlers  
-✅ Use domain-organized Zod schemas  
-✅ Use response helpers (`createSuccessResponse`, etc.)  
-✅ Use Drizzle ORM for database  
-✅ Let middleware handle errors  
-✅ Add persistent logging context  
-✅ Add Swagger documentation  
-✅ Write tests for new endpoints  
-
-### DON'T
-❌ Use raw SQL queries  
-❌ Use try-catch in handlers  
-❌ Parse JSON manually  
-❌ Return raw JSON responses (use helpers)  
-❌ Add CORS headers manually  
-❌ Skip input validation  
-❌ Hardcode values  
-❌ Use `any` types  
-❌ Skip documentation  
-
----
-
-## Getting Help
-
-- **Code Patterns:** `.ai/PATTERNS.md`
-- **Template Usage:** `.ai/TEMPLATES.md`
-- **Contributing:** `CONTRIBUTING.md`
-- **API Docs:** `docs/api/`
-- **Architecture:** `docs/architecture/`
-
----
-
-## Current State
-
-### Implemented Features
-- ✅ User authentication (WorkOS)
-- ✅ User profile management
-- ✅ Image upload (S3)
-- ✅ Health check endpoint
-- ✅ Middleware variants (auth, API key, webhook)
-- ✅ Comprehensive validation
-- ✅ Structured logging
-- ✅ Error handling
-
-### Ready to Build
-The boilerplate is production-ready. Add your features using the established patterns!
-
----
-
-## Notes for AI Assistants
-
-When generating code:
-1. **Always check** `.ai/PATTERNS.md` first
-2. **Use templates** from `/templates/` directory
-3. **Follow existing patterns** in similar handlers
-4. **Validate all inputs** with Zod
-5. **Use Drizzle ORM** for database queries
-6. **Add comprehensive logging**
-7. **Include Swagger docs**
-8. **Write tests**
-
-When answering questions:
-- Reference specific files and line numbers
-- Show code examples from the project
-- Explain the "why" behind patterns
-- Suggest improvements when appropriate
+| Var | Source | Purpose |
+|-----|--------|---------|
+| `WORKOS_CLIENT_ID` | commonEnv | JWT verification |
+| `WORKOS_SECRET_ARN` | Secrets Manager ARN | WorkOS API key |
+| `DB_SECRET_ARN` | Secrets Manager ARN | Database credentials |
+| `IMAGES_BUCKET` | commonEnv | S3 bucket name |
+| `IMAGES_CDN_URL` | commonEnv | CloudFront URL |
+| `CORS_EXACT_ORIGINS` | commonEnv | Exact allowed origins |
+| `CORS_PARENT_DOMAINS` | commonEnv | Allowed parent domains (subdomain matching) |
+| `CORS_DOMAIN_PATTERNS` | commonEnv | Wildcard domain patterns (merged into parent domains) |
+| `SENTRY_DSN` | commonEnv | Error monitoring |
+| `SENTRY_ENVIRONMENT` | commonEnv | Environment label |

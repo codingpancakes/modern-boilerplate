@@ -12,7 +12,14 @@ const EXACT_ORIGINS = new Set(
 );
 
 const PARENT_DOMAINS = new Set(
-	(process.env.CORS_PARENT_DOMAINS || "")
+	[
+		process.env.CORS_PARENT_DOMAINS || "",
+		// CORS_DOMAIN_PATTERNS uses wildcard format (*.example.com) -- strip leading *. for subdomain matching
+		...(process.env.CORS_DOMAIN_PATTERNS || "")
+			.split(",")
+			.map((s) => s.trim().replace(/^\*\./, "")),
+	]
+		.join(",")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean)

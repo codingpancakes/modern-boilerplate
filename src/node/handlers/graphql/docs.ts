@@ -15,8 +15,15 @@ export const handler = async (
 	event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyResultV2> => {
 	// Get the GraphQL endpoint from the request
-	const protocol = event.headers["x-forwarded-proto"] || "http";
-	const host = event.headers.host || event.requestContext.domainName;
+	// Sanitize to prevent XSS via crafted Host header
+	const protocol = (event.headers["x-forwarded-proto"] || "http").replace(
+		/[^a-z]/gi,
+		"",
+	);
+	const host = (event.headers.host || event.requestContext.domainName).replace(
+		/[^a-zA-Z0-9.:_-]/g,
+		"",
+	);
 	const graphqlEndpoint = `${protocol}://${host}/v1/graphql`;
 
 	// Return GraphiQL HTML
@@ -61,7 +68,7 @@ export const handler = async (
   <script>
     const root = ReactDOM.createRoot(document.getElementById('graphiql'));
     const fetcher = GraphiQL.createFetcher({
-      url: '${graphqlEndpoint}',
+      url: ${JSON.stringify(graphqlEndpoint)},
       headers: {
         // Add authorization header from localStorage if available
         get Authorization() {

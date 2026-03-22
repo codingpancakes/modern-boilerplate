@@ -36,7 +36,7 @@ export class LogRetentionAspect implements IAspect {
       // LogRetention custom resource automatically. Setting it in visit()
       // guarantees it applies to every Lambda found during the prepare phase.
       (node as lambda.Function).addEnvironment(
-        '_LOG_RETENTION_APPLIED', 'true'
+        'LOG_RETENTION_APPLIED', 'true'
       );
       new logs.LogRetention(node, 'LogRetention', {
         logGroupName: `/aws/lambda/${node.functionName}`,

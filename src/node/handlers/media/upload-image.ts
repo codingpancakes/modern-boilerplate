@@ -153,6 +153,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		Bucket: BUCKET_NAME,
 		Key: key,
 		ContentType: input.contentType,
+		ServerSideEncryption: "AES256",
 		Metadata: {
 			userId: finalUserId,
 			baseDir,
@@ -172,7 +173,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		uploadUrl,
 		imageUrl: `${CDN_URL}/${key}`,
 		key,
-		bucket: BUCKET_NAME,
 	});
 };
 

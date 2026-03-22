@@ -19,7 +19,9 @@ async function getDbUrl(): Promise<string> {
     const response = await client.send(command);
     if (response.SecretString) {
       const secret = JSON.parse(response.SecretString);
-      return `postgresql://${secret.username}:${secret.password}@${secret.host}:${secret.port}/${secret.dbname}?sslmode=require`;
+      // sync-secrets.ts stores { url } format; support both url and RDS-style fields
+      if (secret.url) return secret.url;
+      return `postgresql://${secret.username}:${secret.password}@${secret.host}:${secret.port}/${secret.database || secret.dbname}?sslmode=require`;
     }
   }
 

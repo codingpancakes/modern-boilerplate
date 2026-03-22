@@ -37,17 +37,6 @@ if (SENTRY_ENABLED) {
 	});
 }
 
-/**
- * Set anonymous user context for error tracking.
- * Only pass the internal DB user ID — never WorkOS sub, email, or name.
- * Call this from handlers after resolving the internal user ID, not from middleware.
- */
-export function setUser(internalUserId: string) {
-	if (!SENTRY_ENABLED) return;
-
-	Sentry.setUser({ id: internalUserId });
-}
-
 const SENSITIVE_QUERY_KEYS = new Set([
 	"token",
 	"key",
@@ -104,40 +93,6 @@ export function captureException(
 	}
 
 	Sentry.captureException(error);
-}
-
-/**
- * Capture message manually
- */
-export function captureMessage(
-	message: string,
-	level: "info" | "warning" | "error" = "info",
-) {
-	if (!SENTRY_ENABLED) {
-		console.log(`Sentry not enabled, message (${level}):`, message);
-		return;
-	}
-
-	Sentry.captureMessage(message, level);
-}
-
-/**
- * Add breadcrumb for debugging
- */
-export function addBreadcrumb(
-	message: string,
-	category: string,
-	data?: Record<string, unknown>,
-) {
-	if (!SENTRY_ENABLED) return;
-
-	Sentry.addBreadcrumb({
-		message,
-		category,
-		data,
-		level: "info",
-		timestamp: Date.now() / 1000,
-	});
 }
 
 /**

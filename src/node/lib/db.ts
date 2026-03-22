@@ -123,7 +123,7 @@ async function createDbConnection(
 /**
  * Reset database connection (useful for testing or connection issues)
  */
-export function resetDbConnection(): void {
+function _resetDbConnection(): void {
 	dbInstance = null;
 	dbUrl = null;
 	connectionAttempts = 0;

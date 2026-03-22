@@ -177,7 +177,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	return createSuccessResponse({
 		imageUrl,
 		key,
-		bucket: BUCKET_NAME,
 	});
 };
 

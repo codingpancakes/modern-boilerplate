@@ -13,7 +13,7 @@
  * @param options - Sanitization options
  * @returns Sanitized string
  */
-export function sanitizeString(
+function sanitizeString(
 	input: string,
 	options: {
 		allowHtml?: boolean;
@@ -54,7 +54,7 @@ export function sanitizeString(
  * @param input - The string to escape
  * @returns HTML-escaped string
  */
-export function escapeHtml(input: string): string {
+function escapeHtml(input: string): string {
 	const htmlEscapeMap: Record<string, string> = {
 		"&": "&amp;",
 		"<": "&lt;",
@@ -152,7 +152,7 @@ function isPrivateHost(hostname: string): boolean {
  * @param options - Sanitization options
  * @returns Sanitized URL or null if invalid
  */
-export function sanitizeUrl(
+function _sanitizeUrl(
 	url: string,
 	options: {
 		allowedProtocols?: string[];
@@ -279,7 +279,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(
  * @param email - The email to validate
  * @returns Sanitized email or null if invalid
  */
-export function sanitizeEmail(email: string): string | null {
+function _sanitizeEmail(email: string): string | null {
 	if (typeof email !== "string") {
 		return null;
 	}
@@ -328,7 +328,7 @@ export const ALLOWED_FILE_EXTENSIONS = {
  * @param category - File category
  * @returns true if valid, false otherwise
  */
-export function validateFileSize(
+function _validateFileSize(
 	sizeInBytes: number,
 	category: keyof typeof FILE_SIZE_LIMITS,
 ): boolean {
@@ -358,7 +358,7 @@ export function validateFileExtension(
  * @param bytes - Size in bytes
  * @returns Human-readable string (e.g., "10 MB")
  */
-export function formatFileSize(bytes: number): string {
+function _formatFileSize(bytes: number): string {
 	if (bytes === 0) return "0 Bytes";
 
 	const k = 1024;

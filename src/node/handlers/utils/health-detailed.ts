@@ -1,7 +1,10 @@
+import { Logger } from "@aws-lambda-powertools/logger";
 import { sql } from "drizzle-orm";
 import { getDb } from "../../lib/db";
 import { createSuccessResponse } from "../../lib/response";
 import { withPublicCors } from "../../lib/withPublicCors";
+
+const logger = new Logger({ serviceName: "health-detailed" });
 
 /**
  * @swagger
@@ -104,11 +107,13 @@ async function checkDatabase(): Promise<HealthCheck> {
 		};
 	} catch (error) {
 		const responseTime = Date.now() - start;
+		logger.error("Database health check failed", {
+			error: error instanceof Error ? error.message : String(error),
+		});
 		return {
 			status: "error",
 			responseTime,
-			message:
-				error instanceof Error ? error.message : "Database connection failed",
+			message: "Database check failed",
 		};
 	}
 }

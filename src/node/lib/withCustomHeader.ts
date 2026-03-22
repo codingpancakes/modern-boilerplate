@@ -4,15 +4,7 @@ import type {
 	APIGatewayProxyHandlerV2,
 	Context,
 } from "aws-lambda";
-import {
-	getCorsHeaders,
-	getExternalCorsHeaders,
-	getOpenCorsHeaders,
-	handleExternalOptionsRequest,
-	handleOpenOptionsRequest,
-	handleOptionsRequest,
-	securityHeaders,
-} from "./cors";
+import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { Errors, formatError } from "./errors";
 
 export interface CustomHeaderConfig {
@@ -136,125 +128,6 @@ export const withApiKey = (
 	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
 ): APIGatewayProxyHandlerV2 => {
 	return withCustomHeader(
-		{
-			headerName: "X-API-Key",
-			expectedValue: expectedApiKey,
-		},
-		handlerFn,
-	);
-};
-
-/**
- * Convenience function for secret token validation
- */
-export const withSecretToken = (
-	expectedToken: string,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return withCustomHeader(
-		{
-			headerName: "X-Secret-Token",
-			expectedValue: expectedToken,
-		},
-		handlerFn,
-	);
-};
-
-/**
- * Convenience function for webhook signature validation
- */
-export const withWebhookSignature = (
-	validateSignature: (signature: string) => boolean,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return withCustomHeader(
-		{
-			headerName: "X-Webhook-Signature",
-			validateFn: validateSignature,
-		},
-		handlerFn,
-	);
-};
-
-/**
- * Middleware for external service webhooks with relaxed CORS
- * Allows calls from known external services (Stripe, Twilio, etc.)
- */
-export const withExternalHeader = (
-	config: CustomHeaderConfig,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return async (event: APIGatewayProxyEventV2, context: Context) => {
-		const origin = event.headers.origin || event.headers.Origin;
-
-		// Handle preflight OPTIONS requests with external CORS
-		if (event.requestContext.http.method === "OPTIONS") {
-			return handleExternalOptionsRequest(origin);
-		}
-
-		try {
-			validateHeader(event, config);
-			const response = await handlerFn(event, context);
-			return wrapResponse(
-				response,
-				securityHeaders(getExternalCorsHeaders(origin)),
-			);
-		} catch (error: unknown) {
-			const errorResponse = formatError(error, context.awsRequestId);
-			return wrapResponse(
-				errorResponse,
-				securityHeaders(getExternalCorsHeaders(origin)),
-			);
-		}
-	};
-};
-
-/**
- * Middleware for completely open webhooks (allows any origin)
- * Use only for public webhooks that don't expose sensitive data
- */
-export const withOpenHeader = (
-	config: CustomHeaderConfig,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return async (event: APIGatewayProxyEventV2, context: Context) => {
-		// Handle preflight OPTIONS requests with open CORS
-		if (event.requestContext.http.method === "OPTIONS") {
-			return handleOpenOptionsRequest();
-		}
-
-		try {
-			validateHeader(event, config);
-			const response = await handlerFn(event, context);
-			return wrapResponse(response, securityHeaders(getOpenCorsHeaders()));
-		} catch (error: unknown) {
-			const errorResponse = formatError(error, context.awsRequestId);
-			return wrapResponse(errorResponse, securityHeaders(getOpenCorsHeaders()));
-		}
-	};
-};
-
-/**
- * Convenience functions for external webhooks
- */
-export const withExternalApiKey = (
-	expectedApiKey: string,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return withExternalHeader(
-		{
-			headerName: "X-API-Key",
-			expectedValue: expectedApiKey,
-		},
-		handlerFn,
-	);
-};
-
-export const withOpenApiKey = (
-	expectedApiKey: string,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
-): APIGatewayProxyHandlerV2 => {
-	return withOpenHeader(
 		{
 			headerName: "X-API-Key",
 			expectedValue: expectedApiKey,
