@@ -77,15 +77,13 @@ Tests deployed API (staging or production).
 
 ## Getting a JWT Token
 
-### Option 1: From Local Dev Server
+### Option 1: From Your Frontend
 ```bash
 # Start server
 pnpm dev
 
-# Login through your frontend app
-# Server will log: 🔑 INTERCEPTED TOKEN: eyJ...
-
-# Copy the token from logs
+# Log in to your app, then copy the JWT from
+# browser DevTools → Network tab → Authorization header
 ```
 
 ### Option 2: From WorkOS Dashboard
@@ -144,20 +142,20 @@ When adding a new handler, ensure:
 
 ### Local Testing Workflow
 ```bash
-# 1. Start dev server
+# 1. Run unit tests
+pnpm test:run
+
+# 2. Run lint + typecheck + tests
+pnpm check
+
+# 3. Start dev server for integration tests
 pnpm dev
 
-# 2. Run handler tests
+# 4. Run handler tests
 ./tests/integration/test-handlers.sh "JWT_TOKEN"
 
-# 3. Run middleware tests
+# 5. Run middleware tests
 ./tests/integration/test-middleware.sh
-
-# 4. Check for TypeScript errors
-pnpm build
-
-# 5. Check for lint errors
-pnpm lint
 ```
 
 ### Pre-Deployment Testing
@@ -245,10 +243,8 @@ curl -v -X GET \
 
 ## Future Improvements
 
-- [ ] Add unit tests for individual functions
 - [ ] Add E2E tests with Playwright
 - [ ] Add load testing scripts
-- [ ] Add automated CI/CD pipeline
 - [ ] Add test coverage reporting
 - [ ] Add performance benchmarks
 

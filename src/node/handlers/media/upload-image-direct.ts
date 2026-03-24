@@ -1,18 +1,21 @@
-import { randomUUID } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
+import {
+	buildImageKey,
+	buildImageUrl,
+	getMediaConfig,
+	getS3Client,
+	validateContentTypeExtension,
+} from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
-import { ALLOWED_FILE_EXTENSIONS } from "../../lib/sanitize";
 import { parseBody } from "../../lib/validation/helpers";
 import { uploadImageDirectRequest } from "../../lib/validation/media";
 
 const logger = new Logger({ serviceName: "media-upload-direct" });
-
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
 /**
  * @swagger
@@ -86,36 +89,16 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
 
-	// Get bucket name and CDN URL from environment variables
-	const BUCKET_NAME = process.env.IMAGES_BUCKET;
-	const CDN_URL = process.env.IMAGES_CDN_URL;
+	const config = getMediaConfig();
 
-	if (!BUCKET_NAME || !CDN_URL) {
-		logger.error("Missing required environment variables", {
-			bucket: !!BUCKET_NAME,
-			cdn: !!CDN_URL,
-		});
-		throw Errors.InternalServerError();
-	}
-
-	// Validate request body with Zod
 	const input = parseBody(event, uploadImageDirectRequest);
 
-	// Validate file extension
 	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
-	if (
-		!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(
-			fileExtension as (typeof ALLOWED_FILE_EXTENSIONS.IMAGE)[number],
-		)
-	) {
+	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
 		throw Errors.BadRequest(
-			`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(", ")}`,
+			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
 		);
 	}
-
-	const baseDir = "users";
-	const finalUserId = userId;
-	const nameRoute = input.category || "general";
 
 	// Decode base64 image data
 	let imageBuffer: Buffer;
@@ -136,41 +119,31 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		);
 	}
 
-	// Generate unique S3 key
-	const timestamp = Date.now();
-	const uniqueId = randomUUID();
-	const sanitizedFilename = input.filename.replace(/[^a-zA-Z0-9.-]/g, "_");
-	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${sanitizedFilename}`;
+	const key = buildImageKey(userId, input.category, input.filename);
 
 	logger.info("Uploading image to S3", {
-		finalUserId,
-		baseDir,
-		nameRoute,
+		userId,
 		key,
 		size: imageBuffer.length,
 		contentType: input.contentType,
 	});
 
-	// Upload to S3
 	const uploadCommand = new PutObjectCommand({
-		Bucket: BUCKET_NAME,
+		Bucket: config.bucketName,
 		Key: key,
 		Body: imageBuffer,
 		ContentType: input.contentType,
 		ServerSideEncryption: "AES256",
 		Metadata: {
-			userId: finalUserId,
-			baseDir,
-			nameRoute,
+			userId,
 			originalFilename: input.filename,
 			uploadedAt: new Date().toISOString(),
 		},
 	});
 
-	await s3Client.send(uploadCommand);
+	await getS3Client().send(uploadCommand);
 
-	// Generate the image URL using CloudFront CDN
-	const imageUrl = `${CDN_URL}/${key}`;
+	const imageUrl = buildImageUrl(key, config);
 
 	logger.info("Image uploaded successfully", { key, imageUrl });
 
@@ -180,5 +153,4 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	});
 };
 
-// 5. ARCHITECTURE - Consistent pattern with withAuth
 export const handler = withAuth(handlerFn);

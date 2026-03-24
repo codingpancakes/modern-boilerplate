@@ -50,11 +50,11 @@ async function deploy() {
   try {
     // Build TypeScript
     console.log('📦 Building TypeScript...');
-    execSync('npm run build', { stdio: 'inherit' });
+    execSync('pnpm build', { stdio: 'inherit' });
     
     // Run database migrations
     console.log(`🗄️ Running ${stage} database migrations...`);
-    execSync('npm run migrate', { stdio: 'inherit' });
+    execSync('pnpm migrate', { stdio: 'inherit' });
     
     // Get AWS profile from environment or use stage-specific default
     const awsProfile = process.env.AWS_PROFILE || 'default';

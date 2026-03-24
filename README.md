@@ -3,7 +3,7 @@
 > Production-grade serverless REST API built with AWS Lambda, TypeScript, and WorkOS authentication.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20.x-green)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-24.x-green)](https://nodejs.org/)
 [![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-orange)](https://aws.amazon.com/lambda/)
 [![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](./tests/)
 
@@ -12,7 +12,7 @@
 ## Architecture
 
 - **API Gateway v2** with custom Lambda authorizer validating WorkOS JWTs
-- **Lambdas**: Node.js 20.x, bundled as CommonJS (esbuild) to avoid dynamic require issues
+- **Lambdas**: Node.js 24.x, bundled as CommonJS (esbuild) to avoid dynamic require issues
 - **DB**: Neon serverless Postgres using `@neondatabase/serverless` + `drizzle-orm`
 - **Secrets**: AWS Secrets Manager (WorkOS + DB)
 - **Observability**: CloudWatch + AWS X-Ray + Lambda Powertools
@@ -24,13 +24,13 @@
 - **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Essential daily commands
 - **[Testing Guide](./docs/guides/TESTING.md)** - How to test (local, staging, production)
 - **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
-- **[Creating Handlers](./.ai/TEMPLATES.md)** - Step-by-step guide
+- **[Creating Handlers](./templates/README.md)** - Step-by-step guide
 - **[Code Patterns](./.ai/PATTERNS.md)** - Standards and best practices
 
 ### For AI Assistants
 - **[AI Context](./.ai/CONTEXT.md)** - Project overview for AI
 - **[AI Patterns](./.ai/PATTERNS.md)** - Code patterns to follow
-- **[AI Templates](./.ai/TEMPLATES.md)** - How to use templates
+- **[Handler Templates](./templates/README.md)** - How to use templates
 
 ### Architecture
 - **[Architecture Guide](./docs/architecture/README.md)** - Complete architecture overview
@@ -44,7 +44,6 @@
 RailBranchBackend/
 ├── .ai/                      # 🤖 AI assistant guides
 │   ├── PATTERNS.md          # Code patterns
-│   ├── TEMPLATES.md         # Template usage
 │   └── CONTEXT.md           # Project context
 │
 ├── templates/               # 📝 Handler templates
@@ -75,7 +74,7 @@ RailBranchBackend/
 │   │   ├── db.ts          # Database connection
 │   │   └── errors.ts      # Error helpers
 │   └── db/
-│       └── schema.ts      # Drizzle schema
+│       └── schema/         # Drizzle schema (8 tables, 3 enums)
 │
 ├── tests/                  # ✅ Test scripts
 │   ├── integration/       # Integration tests
@@ -94,7 +93,7 @@ RailBranchBackend/
 
 ## Environment
 
-### Staging: `backend/.env.staging`
+### Staging: `.env.staging`
 
 Required:
 - `AWS_REGION=us-east-1`
@@ -112,7 +111,7 @@ Notes:
 - If DB TLS fails, try removing `channel_binding=require` from `DATABASE_URL`.
 - `SKIP_DB=true` can bypass DB in handlers for auth-only checks.
 
-### Local: `backend/.env.local`
+### Local: `.env.local`
 
 - `STAGE=local`
 - `AWS_REGION=us-east-1`
@@ -124,7 +123,7 @@ Notes:
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 20.x or higher
+- Node.js 24.x or higher
 - pnpm 8.x or higher
 - PostgreSQL 14.x or higher
 - AWS CLI configured
@@ -153,9 +152,10 @@ pnpm dev
 ### Testing
 
 ```bash
-# Get JWT token from WorkOS (see docs/guides/AUTHENTICATION.md)
+pnpm test:run             # Unit tests (Vitest)
+pnpm check                # Lint + typecheck + unit tests
 
-# Run integration tests
+# Integration tests (requires local server running)
 ./tests/integration/test-handlers.sh "YOUR_JWT_TOKEN"
 
 # Test specific endpoint
@@ -169,7 +169,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/v1/users/me
 cp templates/user-scoped.ts.template src/node/handlers/resource/action.ts
 
 # 2. Follow the guide
-# See .ai/TEMPLATES.md for detailed instructions
+# See templates/README.md for detailed instructions
 ```
 
 ## Deployment (staging)
@@ -250,7 +250,7 @@ All API endpoints follow a consistent response structure:
 ### Headers
 All responses include:
 - `Content-Type: application/json`
-- `Access-Control-Allow-Origin: *`
+- `Access-Control-Allow-Origin: <matched origin>` (dynamic, per-request)
 
 ### Examples
 
@@ -304,26 +304,24 @@ All responses include:
 ## Performance Notes
 
 - ARM64 Lambdas (better price/perform.)
-- CommonJS bundles for stability with Node.js 20
+- CommonJS bundles for stability with Node.js 24
 - 256–512MB memory, 5–15s timeouts depending on handler
-
-## Cleanup
-
-- Unused local shim (`test/local-handlers.ts`) has been replaced by real handlers. You can remove it.
-- Local docs are consolidated here to avoid drift.
 
 ## 📊 Current Status
 
 ### Implemented
-- ✅ User authentication (WorkOS)
+- ✅ User authentication (WorkOS JWT)
 - ✅ User profile management
+- ✅ Organization management (GraphQL)
 - ✅ Image upload (S3 + CloudFront)
 - ✅ Health check endpoint
-- ✅ Middleware variants (auth, API key, webhook)
+- ✅ Webhook handling (WorkOS events)
+- ✅ Middleware variants (auth, API key, webhook, public CORS)
 - ✅ Comprehensive validation (Zod)
-- ✅ Structured logging (Lambda Powertools)
-- ✅ Error handling
-- ✅ Integration tests
+- ✅ Structured logging (Lambda Powertools + Sentry)
+- ✅ Error handling (structured GraphQL errors, REST error factory)
+- ✅ Unit tests (Vitest) + integration tests
+- ✅ CI/CD pipeline (CodePipeline/CodeBuild)
 
 ### In Progress
 - 🚧 Journey management
@@ -332,7 +330,6 @@ All responses include:
 
 ### Planned
 - 📋 Analytics
-- 📋 Webhooks
 - 📋 Email integration
 - 📋 SMS integration
 
@@ -344,7 +341,7 @@ We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md)
 
 ### Quick Links
 - [Code Patterns](./.ai/PATTERNS.md)
-- [Template Usage](./.ai/TEMPLATES.md)
+- [Template Usage](./templates/README.md)
 - [Testing Guide](./tests/README.md)
 
 ---

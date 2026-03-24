@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { GraphQLError } from "graphql";
 import { organizationMembers, organizations } from "../../../db/schema/index";
 import {
 	AUDIT_ACTIONS,
@@ -40,11 +41,15 @@ async function requireMembership(
 	});
 
 	if (!membership) {
-		throw new Error("Organization not found or you are not a member");
+		throw new GraphQLError("Organization not found or you are not a member", {
+			extensions: { code: "FORBIDDEN" },
+		});
 	}
 
 	if (minRole && !hasMinRole(membership.role ?? "MEMBER", minRole)) {
-		throw new Error(`Requires ${minRole} role or higher`);
+		throw new GraphQLError(`Requires ${minRole} role or higher`, {
+			extensions: { code: "FORBIDDEN" },
+		});
 	}
 
 	return membership;
@@ -141,7 +146,9 @@ export const organizationResolvers = {
 			const sanitized = sanitizeObject(validated);
 
 			if (Object.keys(sanitized).length === 0) {
-				throw new Error("No fields to update");
+				throw new GraphQLError("No fields to update", {
+					extensions: { code: "BAD_USER_INPUT" },
+				});
 			}
 
 			const [before] = await context.db
@@ -160,7 +167,9 @@ export const organizationResolvers = {
 				.returning();
 
 			if (!updated) {
-				throw new Error("Organization not found");
+				throw new GraphQLError("Organization not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
 			void logAudit({
@@ -227,12 +236,12 @@ export const organizationResolvers = {
 
 			const validated = organizationSchemas.inviteMember.parse(input);
 
-			// Cannot invite at a role higher than your own
 			if (!hasMinRole(callerMembership.role ?? "MEMBER", validated.role)) {
-				throw new Error("Cannot assign a role higher than your own");
+				throw new GraphQLError("Cannot assign a role higher than your own", {
+					extensions: { code: "FORBIDDEN" },
+				});
 			}
 
-			// Check if user is already a member
 			const existing = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, validated.userId),
@@ -242,7 +251,10 @@ export const organizationResolvers = {
 			});
 
 			if (existing) {
-				throw new Error("User is already a member of this organization");
+				throw new GraphQLError(
+					"User is already a member of this organization",
+					{ extensions: { code: "BAD_USER_INPUT" } },
+				);
 			}
 
 			const [membership] = await context.db
@@ -303,22 +315,27 @@ export const organizationResolvers = {
 				.limit(1);
 
 			if (!target) {
-				throw new Error("Membership not found");
+				throw new GraphQLError("Membership not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
-			// Cannot change role of someone with equal or higher rank (strictly higher required)
 			if (
 				!hasHigherRole(
 					callerMembership.role ?? "MEMBER",
 					target.role ?? "MEMBER",
 				)
 			) {
-				throw new Error("Cannot modify a member with equal or higher role");
+				throw new GraphQLError(
+					"Cannot modify a member with equal or higher role",
+					{ extensions: { code: "FORBIDDEN" } },
+				);
 			}
 
-			// Cannot promote above own role
 			if (!hasMinRole(callerMembership.role ?? "MEMBER", validated.role)) {
-				throw new Error("Cannot assign a role higher than your own");
+				throw new GraphQLError("Cannot assign a role higher than your own", {
+					extensions: { code: "FORBIDDEN" },
+				});
 			}
 
 			const [updated] = await context.db
@@ -378,23 +395,27 @@ export const organizationResolvers = {
 				.limit(1);
 
 			if (!target) {
-				throw new Error("Membership not found");
+				throw new GraphQLError("Membership not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
-			// Cannot remove someone with equal or higher rank (strictly higher required)
 			if (
 				!hasHigherRole(
 					callerMembership.role ?? "MEMBER",
 					target.role ?? "MEMBER",
 				)
 			) {
-				throw new Error("Cannot remove a member with equal or higher role");
+				throw new GraphQLError(
+					"Cannot remove a member with equal or higher role",
+					{ extensions: { code: "FORBIDDEN" } },
+				);
 			}
 
-			// Cannot remove yourself (use leaveOrganization instead)
 			if (target.userId === context.userId) {
-				throw new Error(
+				throw new GraphQLError(
 					"Cannot remove yourself. Use leaveOrganization instead.",
+					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
 			}
 
@@ -430,9 +451,7 @@ export const organizationResolvers = {
 		) => {
 			const membership = await requireMembership(context, organizationId);
 
-			// Owners cannot leave -- must transfer ownership first
 			if (membership.role === "OWNER") {
-				// Check if there's another owner
 				const otherOwners = await context.db.query.organizationMembers.findMany(
 					{
 						where: and(
@@ -444,8 +463,9 @@ export const organizationResolvers = {
 				);
 
 				if (otherOwners.length <= 1) {
-					throw new Error(
+					throw new GraphQLError(
 						"Cannot leave: you are the only owner. Transfer ownership first.",
+						{ extensions: { code: "FORBIDDEN" } },
 					);
 				}
 			}

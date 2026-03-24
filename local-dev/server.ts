@@ -431,7 +431,7 @@ app.get('/v1/graphql/docs', wrapHandler('../src/node/handlers/graphql/docs')); /
 
 app.listen(PORT, () => {
   console.log(`\n🚀 Local API server running on http://localhost:${PORT}`);
-  console.log(`📊 REST API docs: http://localhost:${PORT}/docs (run 'npm run docs:serve' separately)`);
+  console.log(`📊 REST API docs: http://localhost:${PORT}/docs (run 'pnpm docs:serve' separately)`);
   console.log(`🔵 GraphQL API: http://localhost:${PORT}/v1/graphql`);
   console.log(`📘 GraphQL docs: http://localhost:${PORT}/v1/graphql/docs`);
 });

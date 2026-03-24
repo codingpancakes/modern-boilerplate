@@ -18,7 +18,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 **Characteristics:**
 - Uses `withAuth` middleware
 - No organization membership required
-- User ID from JWT: `event.claims.sub`
+- User ID from `getUserIdFromClaims(event)` (resolves JWT subject to internal UUID)
 
 ---
 
@@ -81,7 +81,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
     */
    ```
 
-4. **Add Zod schema** (if needed) in `src/node/lib/validation.ts`
+4. **Add Zod schema** (if needed) in `src/node/lib/validation/{domain}.ts`, export from `index.ts`
 
 5. **Implement handler logic**
 
@@ -93,7 +93,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 
 ## Detailed Guide
 
-See [`.ai/TEMPLATES.md`](../.ai/TEMPLATES.md) for comprehensive guide with examples.
+See the template files in this directory for comprehensive examples.
 
 ## Code Patterns
 
@@ -187,7 +187,7 @@ const logger = new Logger({ serviceName: 'journeys-create' });
 
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   logger.addContext(context);
-  const userId = event.claims.sub;
+  const userId = await getUserIdFromClaims(event);
   logger.appendKeys({ userId });
 
   const input = parseBody(event, schemas.createJourney);
@@ -200,10 +200,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
   logger.info('Journey created', { journeyId: result[0].id });
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ success: true, data: result[0] })
-  };
+  return createSuccessResponse(result[0]);
 };
 
 export const handler = withAuth(handlerFn);
@@ -215,7 +212,7 @@ export const handler = withAuth(handlerFn);
 // src/node/handlers/journeys/list.ts
 const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   logger.addContext(context);
-  const userId = event.claims.sub;
+  const userId = await getUserIdFromClaims(event);
   logger.appendKeys({ userId });
 
   const query = validate(schemas.paginationQuery, event.queryStringParameters || {});
@@ -227,13 +224,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
     .where(eq(journeys.userId, userId))
     .limit(query.limit);
 
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      success: true,
-      data: { items: results, count: results.length }
-    })
-  };
+  return createSuccessResponse({ items: results, count: results.length });
 };
 ```
 
@@ -241,7 +232,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 ## Need Help?
 
-- **Detailed Template Guide:** [`.ai/TEMPLATES.md`](../.ai/TEMPLATES.md)
 - **Code Patterns:** [`.ai/PATTERNS.md`](../.ai/PATTERNS.md)
 - **Project Context:** [`.ai/CONTEXT.md`](../.ai/CONTEXT.md)
 - **Contributing:** [`CONTRIBUTING.md`](../CONTRIBUTING.md)

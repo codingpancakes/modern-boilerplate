@@ -19,18 +19,29 @@ export function getClaims(evt: APIGatewayProxyEventV2): Claims {
 	// const authHeader = evt.headers?.authorization || evt.headers?.Authorization;
 	// console.log("🔐 RAW TOKEN:", authHeader);
 
-	const rc = (evt.requestContext as any) || {};
+	const rc = evt.requestContext as typeof evt.requestContext & {
+		authorizer?: {
+			jwt?: { claims: Record<string, unknown> };
+			lambda?: Record<string, unknown>;
+		};
+	};
 	const authz = rc.authorizer || {};
 	const jwtClaims = authz.jwt?.claims;
-	const lambdaCtx = authz.lambda; // HTTP API SIMPLE Lambda authorizer context
+	const lambdaCtx = authz.lambda;
 	const claims = jwtClaims || lambdaCtx;
 
 	// console.log("PARSED CLAIMS:", JSON.stringify(claims, null, 2));
 
-	if (!claims?.sub) {
+	if (!claims?.sub || typeof claims.sub !== "string") {
 		throw Errors.Unauthorized();
 	}
-	return claims as Claims;
+	return {
+		...claims,
+		sub: claims.sub as string,
+		iss: (claims.iss as string) ?? "",
+		exp: Number(claims.exp) || 0,
+		iat: Number(claims.iat) || 0,
+	} as Claims;
 }
 
 /**

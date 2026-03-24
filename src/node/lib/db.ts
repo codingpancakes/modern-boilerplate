@@ -83,6 +83,7 @@ async function createDbConnection(
 		const sql: NeonQueryFunction<boolean, boolean> = neon(url, {
 			fetchOptions: {
 				cache: "no-store", // Disable caching for fresh data
+				signal: AbortSignal.timeout(8000), // 8s hard timeout per query
 			},
 			// Optimize for serverless - query via fetch for better cold starts
 			fullResults: false,

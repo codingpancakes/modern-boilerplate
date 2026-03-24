@@ -24,6 +24,10 @@ import { getDb } from "../../lib/db";
 import { Errors, formatError } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";
 import { validate, webhookSchemas } from "../../lib/validation";
+import {
+	parseWorkOSOrgData,
+	parseWorkOSUserData,
+} from "../../lib/validation/webhooks";
 import { withPublicCors } from "../../lib/withPublicCors";
 
 const logger = new Logger({ serviceName: "workos-webhook" });
@@ -90,30 +94,10 @@ const logger = new Logger({ serviceName: "workos-webhook" });
  *         $ref: '#/components/responses/ServerError'
  */
 
-// WorkOS webhook data types
-interface WorkOSUserData {
-	id: string;
-	email: string;
-	first_name: string;
-	last_name: string;
-	[key: string]: unknown;
-}
-
-interface WorkOSOrgData {
-	id: string;
-	name: string;
-	[key: string]: unknown;
-}
+// WorkOS webhook data types are now validated via Zod in validation/webhooks.ts
 
 async function getWebhookSecret(): Promise<string> {
-	logger.info("Getting webhook secret", {
-		hasEnvVar: !!process.env.WORKOS_WEBHOOK_SECRET,
-		hasSecretArn: !!process.env.WORKOS_SECRET_ARN,
-	});
-
-	// For local development, use env var directly
 	if (process.env.WORKOS_WEBHOOK_SECRET) {
-		logger.info("Using local WORKOS_WEBHOOK_SECRET");
 		return process.env.WORKOS_WEBHOOK_SECRET;
 	}
 
@@ -232,7 +216,7 @@ const webhookHandler = async (
 
 		// Atomic idempotency check using INSERT ON CONFLICT DO NOTHING
 		const idempotencyKey = `workos-webhook-${webhookEvent.id}`;
-		const insertResult = await db
+		const inserted = await db
 			.insert(idempotencyKeys)
 			.values({
 				key: idempotencyKey,
@@ -240,9 +224,10 @@ const webhookHandler = async (
 				status: "processing",
 				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
 			})
-			.onConflictDoNothing({ target: idempotencyKeys.key });
+			.onConflictDoNothing({ target: idempotencyKeys.key })
+			.returning({ key: idempotencyKeys.key });
 
-		if ((insertResult as { rowCount?: number }).rowCount === 0) {
+		if (inserted.length === 0) {
 			// Key already exists -- check if completed or stale processing
 			const [existing] = await db
 				.select()
@@ -277,7 +262,9 @@ const webhookHandler = async (
 		switch (webhookEvent.event) {
 			case "user.created":
 			case "user.updated": {
-				const userData = webhookEvent.data as WorkOSUserData;
+				const userData = parseWorkOSUserData(
+					webhookEvent.data as Record<string, unknown>,
+				);
 
 				// First, check if user exists via auth_identities
 				const [existingAuth] = await db
@@ -382,7 +369,9 @@ const webhookHandler = async (
 			}
 
 			case "user.deleted": {
-				const userData = webhookEvent.data as WorkOSUserData;
+				const userData = parseWorkOSUserData(
+					webhookEvent.data as Record<string, unknown>,
+				);
 
 				// Find user via auth_identities and delete
 				const [authIdentity] = await db
@@ -417,7 +406,9 @@ const webhookHandler = async (
 
 			case "organization.created":
 			case "organization.updated": {
-				const orgData = webhookEvent.data as WorkOSOrgData;
+				const orgData = parseWorkOSOrgData(
+					webhookEvent.data as Record<string, unknown>,
+				);
 
 				const [org] = await db
 					.insert(organizations)
@@ -453,7 +444,9 @@ const webhookHandler = async (
 			}
 
 			case "organization.deleted": {
-				const orgData = webhookEvent.data as WorkOSOrgData;
+				const orgData = parseWorkOSOrgData(
+					webhookEvent.data as Record<string, unknown>,
+				);
 
 				const [deleted] = await db
 					.select({ id: organizations.id })

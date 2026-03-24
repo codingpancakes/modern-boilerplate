@@ -56,12 +56,14 @@ phases:
       - echo "  API_DOMAIN=$API_DOMAIN"
       - echo "  IMAGES_BUCKET=$IMAGES_BUCKET"
       - echo "  HOSTED_ZONE_NAME=$HOSTED_ZONE_NAME"
+      - echo "Running tests..."
+      - pnpm run test:run
       - echo "Building TypeScript..."
       - pnpm run build
       - echo "Running database migrations..."
       - pnpm run migrate
       - echo "Deploying CDK stacks..."
-      - pnpm run cdk deploy --all --require-approval never
+      - pnpm run cdk deploy "${PROJECT_NAME}-${STAGE}-SecurityStack" "${PROJECT_NAME}-${STAGE}-DatabaseStack" "${PROJECT_NAME}-${STAGE}-MonitoringStack" "${PROJECT_NAME}-${STAGE}-CostMonitoringStack" "${PROJECT_NAME}-${STAGE}-CloudTrailStack" "${PROJECT_NAME}-${STAGE}-MediaStack" "${PROJECT_NAME}-${STAGE}-PublicAssetsStack" "${PROJECT_NAME}-${STAGE}-ApiStack" --require-approval never
 
   post_build:
     commands:

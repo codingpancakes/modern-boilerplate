@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { GraphQLError } from "graphql";
 import { organizationMembers, profiles, users } from "../../../db/schema/index";
 import {
 	AUDIT_ACTIONS,
@@ -20,7 +21,9 @@ export const userResolvers = {
 			});
 
 			if (!user) {
-				throw new Error("User not found");
+				throw new GraphQLError("User not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
 			return user;
@@ -33,8 +36,9 @@ export const userResolvers = {
 			context: GraphQLContext,
 		) => {
 			if (!context.orgId) {
-				throw new Error(
+				throw new GraphQLError(
 					"Organization context required. Ensure your token includes an org_id claim.",
+					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
 			}
 
@@ -47,7 +51,9 @@ export const userResolvers = {
 			});
 
 			if (!membership) {
-				throw new Error("User not found or not in your organization");
+				throw new GraphQLError("User not found or not in your organization", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
 			return context.db.query.users.findFirst({

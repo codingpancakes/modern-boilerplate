@@ -5,40 +5,43 @@ import type {
 } from "aws-lambda";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { formatError } from "./errors";
+import type { SuccessResponse } from "./response";
 
 /**
  * Middleware for public endpoints that only adds CORS headers
  * No authentication required
  */
 export const withPublicCors = (
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
+	handlerFn: (
+		event: APIGatewayProxyEventV2,
+		context: Context,
+	) => Promise<SuccessResponse>,
 ): APIGatewayProxyHandlerV2 => {
 	return async (event: APIGatewayProxyEventV2, context: Context) => {
 		const origin = event.headers.origin || event.headers.Origin;
 
-		// Handle preflight OPTIONS requests
 		if (event.requestContext.http.method === "OPTIONS") {
-			return handleOptionsRequest(origin);
+			return handleOptionsRequest(
+				origin,
+				event.headers as Record<string, string>,
+			);
 		}
 
 		try {
 			const response = await handlerFn(event, context);
-			const headers = securityHeaders(getCorsHeaders(origin));
-
-			if (typeof response === "object" && response !== null) {
-				return {
-					...response,
-					headers: { ...(response.headers || {}), ...headers },
-				};
-			}
-
-			return { statusCode: 200, headers, body: JSON.stringify(response) };
-		} catch (error: any) {
-			const headers = securityHeaders(getCorsHeaders(origin));
+			const corsHeaders = securityHeaders(getCorsHeaders(origin));
+			return {
+				statusCode: response.statusCode,
+				headers: { ...(response.headers || {}), ...corsHeaders },
+				body: response.body,
+			};
+		} catch (error: unknown) {
+			const corsHeaders = securityHeaders(getCorsHeaders(origin));
 			const errorResponse = formatError(error, context.awsRequestId);
 			return {
-				...errorResponse,
-				headers: { ...(errorResponse.headers || {}), ...headers },
+				statusCode: errorResponse.statusCode,
+				headers: { ...(errorResponse.headers || {}), ...corsHeaders },
+				body: errorResponse.body,
 			};
 		}
 	};

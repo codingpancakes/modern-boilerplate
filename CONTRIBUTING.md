@@ -89,18 +89,24 @@ export const handler = withAuth(handlerFn);
 ## Testing
 
 ```bash
-pnpm dev                  # Start local server
-pnpm biome check src/     # Lint
-pnpm tsc --noEmit         # Typecheck
+pnpm test                 # Run unit tests in watch mode
+pnpm test:run             # Run unit tests once (CI)
+pnpm check                # Lint + typecheck + unit tests
+
+pnpm dev                  # Start local server for integration tests
+./tests/integration/test-all.sh "YOUR_JWT_TOKEN"  # Run integration suite
 ```
+
+See [Testing Guide](./docs/guides/TESTING.md) for full details on local, staging, and production testing.
 
 ## Deployment
 
-Deployments are handled via the CI/CD pipeline (CodeBuild + CDK).
+Deployments are handled via the CI/CD pipeline (CodeBuild + CDK). The pipeline runs `pnpm test:run` before building and deploying.
 
 ```bash
 # Manual deploy (if needed)
-cdk deploy --all
+pnpm deploy:staging
+pnpm deploy:production
 ```
 
 ## Reference

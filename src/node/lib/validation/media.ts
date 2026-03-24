@@ -33,7 +33,13 @@ export const uploadImageRequest = z.object({
 export const uploadImageDirectRequest = z.object({
 	filename: z.string().min(1).max(255),
 	contentType: z.enum(imageContentTypes),
-	imageData: z.string().min(1), // Base64 encoded image
+	imageData: z
+		.string()
+		.min(1)
+		.regex(
+			/^(?:data:[^;]*;base64,)?[A-Za-z0-9+/\n\r]+=*$/,
+			"Invalid base64 format",
+		),
 	category: z.string().max(50).optional(),
 });
 
@@ -42,7 +48,12 @@ export const uploadImageDirectRequest = z.object({
  */
 export const listImagesQuery = z.object({
 	limit: z.coerce.number().min(1).max(100).default(20),
-	prefix: z.string().optional(),
+	prefix: z
+		.string()
+		.max(100)
+		.regex(/^[a-zA-Z0-9._\-/]*$/, "Invalid prefix characters")
+		.refine((v) => !v.includes(".."), "Path traversal not allowed")
+		.optional(),
 	continuationToken: z.string().optional(),
 });
 

@@ -20,22 +20,5 @@
 			"quoteStyle": "double",
 			"trailingCommas": "all"
 		}
-	},
-	"overrides": [
-		{
-			"includes": [
-				"src/node/lib/withCustomHeader.ts",
-				"src/node/lib/withPublicCors.ts",
-				"src/node/lib/auth.ts",
-				"src/node/handlers/media/upload-image.ts"
-			],
-			"linter": {
-				"rules": {
-					"suspicious": {
-						"noExplicitAny": "off"
-					}
-				}
-			}
-		}
-	]
+	}
 }

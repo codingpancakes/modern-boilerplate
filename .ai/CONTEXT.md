@@ -2,7 +2,7 @@
 
 ## Stack
 
-- **Runtime:** Node.js 20 / TypeScript 5 / pnpm
+- **Runtime:** Node.js 24 / TypeScript 5 / pnpm
 - **Cloud:** AWS Lambda + API Gateway (HTTP v2) + S3 + CloudFront + CDK
 - **Database:** PostgreSQL on Neon (via `drizzle-orm/neon-http`)
 - **Auth:** WorkOS JWT (custom Lambda authorizer)

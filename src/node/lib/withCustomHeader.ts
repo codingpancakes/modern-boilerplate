@@ -6,6 +6,7 @@ import type {
 } from "aws-lambda";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { Errors, formatError } from "./errors";
+import type { SuccessResponse } from "./response";
 
 export interface CustomHeaderConfig {
 	headerName: string;
@@ -96,14 +97,19 @@ function wrapResponse(
  */
 export const withCustomHeader = (
 	config: CustomHeaderConfig,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
+	handlerFn: (
+		event: APIGatewayProxyEventV2,
+		context: Context,
+	) => Promise<SuccessResponse>,
 ): APIGatewayProxyHandlerV2 => {
 	return async (event: APIGatewayProxyEventV2, context: Context) => {
 		const origin = event.headers.origin || event.headers.Origin;
 
-		// Handle preflight OPTIONS requests
 		if (event.requestContext.http.method === "OPTIONS") {
-			return handleOptionsRequest(origin);
+			return handleOptionsRequest(
+				origin,
+				event.headers as Record<string, string>,
+			);
 		}
 
 		try {
@@ -125,7 +131,10 @@ export const withCustomHeader = (
  */
 export const withApiKey = (
 	expectedApiKey: string,
-	handlerFn: (event: APIGatewayProxyEventV2, context: Context) => Promise<any>,
+	handlerFn: (
+		event: APIGatewayProxyEventV2,
+		context: Context,
+	) => Promise<SuccessResponse>,
 ): APIGatewayProxyHandlerV2 => {
 	return withCustomHeader(
 		{

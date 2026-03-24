@@ -6,6 +6,18 @@
 
 import { z } from "zod";
 
+const jsonObject = z
+	.record(z.unknown())
+	.refine(
+		(obj) => JSON.stringify(obj).length <= 10_000,
+		"Object too large (max 10KB serialized)",
+	);
+
+const httpsUrl = z
+	.string()
+	.url()
+	.refine((url) => url.startsWith("https://"), "URL must use https:// scheme");
+
 /**
  * Create user schema
  */
@@ -45,14 +57,14 @@ export const updateUserProfile = z
 				pronouns: z.string().max(50).optional(),
 				location: z.string().max(200).optional(),
 				countryCode: z.string().length(2).optional(),
-				photoUrl: z.string().url().optional(),
+				photoUrl: httpsUrl.optional(),
 				gender: z.string().max(50).optional(),
 				lgbtq: z.boolean().optional(),
 				ethnicity: z.string().max(100).optional(),
 				languages: z.array(z.string()).optional(),
 				onboardingCompleted: z.boolean().optional(),
-				persona: z.record(z.unknown()).optional(),
-				snapshot: z.record(z.unknown()).optional(),
+				persona: jsonObject.optional(),
+				snapshot: jsonObject.optional(),
 			})
 			.optional(),
 	})
@@ -69,14 +81,14 @@ export const updateProfileInput = z.object({
 	pronouns: z.string().max(50).optional(),
 	location: z.string().max(200).optional(),
 	countryCode: z.string().length(2).optional(),
-	photoUrl: z.string().url().optional(),
+	photoUrl: httpsUrl.optional(),
 	gender: z.string().max(50).optional(),
 	lgbtq: z.boolean().optional(),
 	ethnicity: z.string().max(100).optional(),
 	languages: z.array(z.string()).optional(),
 	onboardingCompleted: z.boolean().optional(),
-	persona: z.record(z.unknown()).optional(),
-	snapshot: z.record(z.unknown()).optional(),
+	persona: jsonObject.optional(),
+	snapshot: jsonObject.optional(),
 });
 
 /**

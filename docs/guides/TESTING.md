@@ -2,10 +2,8 @@
 
 Complete guide for unit tests, integration tests, and testing the backend locally, staging, and production.
 
-**Last Updated**: December 10, 2025  
 **Framework**: Vitest (unit) + Bash scripts (integration)  
-**Status**: Consolidated & Production-Ready  
-**Coverage**: ~60% (Unit), 90% (Integration)
+**Status**: Boilerplate — enough tests to show the patterns  
 
 ---
 
@@ -14,17 +12,17 @@ Complete guide for unit tests, integration tests, and testing the backend locall
 ```
 tests/
 ├── unit/                           # Vitest unit tests
-│   ├── setup.ts
 │   ├── lib/
-│   │   ├── validation.test.ts      ✅
+│   │   ├── auth.test.ts            ✅
 │   │   ├── errors.test.ts          ✅
-│   │   └── permissions.test.ts     ✅
+│   │   └── validation-schemas.test.ts ✅
 │   └── graphql/
 │       └── resolvers/
 │           └── users.test.ts       ✅
 │
 ├── integration/                    # Integration tests
 │   ├── test-all.sh                 ✅ Master runner
+│   ├── test-api.sh                 ✅ Staging/prod runner
 │   ├── test-handlers.sh            ✅ REST API
 │   ├── test-graphql.sh             ✅ GraphQL
 │   ├── test-api-auth.sh            ✅ Auth
@@ -45,10 +43,9 @@ tests/
 This project includes comprehensive unit tests to ensure code quality and catch regressions early.
 
 **Test Statistics:**
-- **Total Tests**: 40+
 - **Test Files**: 4
 - **Execution Time**: ~300ms
-- **Coverage**: Validation, Error handling, Permissions, GraphQL resolvers
+- **Coverage**: Auth, Error handling, Validation schemas, GraphQL user resolvers
 
 ### Available Commands
 
@@ -91,7 +88,7 @@ pnpm build         # Full build: check + test + compile + docs
 **Why it matters**: Ensures consistent error responses across all API endpoints. Client apps depend on this format.
 
 #### 3. Validation Schemas (`tests/unit/lib/validation-schemas.test.ts`)
-**11 tests** - Validates Zod schemas for media uploads
+**11+ tests** - Validates Zod schemas for media uploads
 
 - ✅ Accept valid image upload requests
 - ✅ Reject invalid content types
@@ -109,11 +106,10 @@ pnpm build         # Full build: check + test + compile + docs
 ✓ tests/unit/lib/validation-schemas.test.ts (11 tests) 3ms
 ✓ tests/unit/lib/errors.test.ts (12 tests) 6ms
 ✓ tests/unit/lib/auth.test.ts (6 tests) 2ms
+✓ tests/unit/graphql/resolvers/users.test.ts (15 tests) 8ms
 
-Test Files  3 passed (3)
-     Tests  29 passed (29)
-  Start at  19:57:53
-  Duration  270ms
+Test Files  4 passed (4)
+  Duration  ~300ms
 ```
 
 ### Debugging Failed Tests
@@ -151,7 +147,6 @@ pnpm test:ui
 
 - Tests use **Vitest** (fast, modern test runner)
 - Path aliases configured: `@/*` → `src/node/*`
-- Test setup in `tests/unit/setup.ts`
 - Configuration in `vitest.config.ts`
 - TypeScript paths configured in `tsconfig.json`
 
@@ -477,12 +472,8 @@ git commit -m "feat: add new feature"
 ```
 
 ### CI/CD Pipeline
-```yaml
-# Recommended GitHub Actions workflow
-- run: pnpm install
-- run: pnpm check        # Lint + typecheck + tests
-- run: pnpm build        # Full build with tests
-```
+
+The `buildspec.yml` runs `pnpm test:run` before building and deploying via CodePipeline/CodeBuild.
 
 ### Before Deployment
 ```bash
@@ -571,14 +562,14 @@ test('User can upload and retrieve images', async () => {
 - **Local API:** http://localhost:3000
 - **Staging API:** https://api-staging.postway.services
 - **Production API:** https://api.postway.services
-- **API Docs:** Run `node docs/api/serve-docs.js`
+- **API Docs:** Run `pnpm docs:serve`
 - **CloudWatch Logs:** AWS Console → CloudWatch → Log Groups
 
 ---
 
 ## ✅ Current Status
 
-- ✅ **29/29 unit tests passing**
+- ✅ **Unit tests passing** (4 test files)
 - ✅ **Lint checks passing**
 - ✅ **TypeScript checks passing**
 - ✅ **Build successful**

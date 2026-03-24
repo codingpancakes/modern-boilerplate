@@ -1,26 +1,17 @@
-import { randomUUID } from "node:crypto";
-import {
-	ListObjectsV2Command,
-	PutObjectCommand,
-	S3Client,
-} from "@aws-sdk/client-s3";
+import { ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { sanitizeFilename, validateFileExtension } from "../../../lib/sanitize";
+import { GraphQLError } from "graphql";
+import {
+	buildImageKey,
+	buildImageUrl,
+	getMediaConfig,
+	getS3Client,
+	validateContentTypeExtension,
+} from "../../../lib/media";
+import { validateFileExtension } from "../../../lib/sanitize";
 import type { GraphQLContext } from "../context";
 
-const s3Client = new S3Client({
-	region: process.env.AWS_REGION || "us-east-1",
-});
-const IMAGES_BUCKET = process.env.IMAGES_BUCKET ?? "";
-const CDN_URL = process.env.IMAGES_CDN_URL || "";
 const UPLOAD_EXPIRY_SECONDS = 300;
-
-const ALLOWED_CONTENT_TYPES: Record<string, string[]> = {
-	"image/jpeg": ["jpg", "jpeg"],
-	"image/png": ["png"],
-	"image/gif": ["gif"],
-	"image/webp": ["webp"],
-};
 
 export const mediaResolvers = {
 	Query: {
@@ -33,6 +24,7 @@ export const mediaResolvers = {
 			}: { category?: string; limit?: number; continuationToken?: string },
 			context: GraphQLContext,
 		) => {
+			const config = getMediaConfig();
 			const safeLimit = Math.min(Math.max(limit ?? 20, 1), 100);
 
 			const prefix = category
@@ -40,19 +32,17 @@ export const mediaResolvers = {
 				: `users/${context.userId}/`;
 
 			const command = new ListObjectsV2Command({
-				Bucket: IMAGES_BUCKET,
+				Bucket: config.bucketName,
 				Prefix: prefix,
 				MaxKeys: safeLimit,
 				ContinuationToken: continuationToken,
 			});
 
-			const response = await s3Client.send(command);
+			const response = await getS3Client().send(command);
 
 			const images = (response.Contents || []).map((item) => ({
 				key: item.Key ?? "",
-				url: CDN_URL
-					? `${CDN_URL}/${item.Key}`
-					: `https://${IMAGES_BUCKET}.s3.amazonaws.com/${item.Key}`,
+				url: buildImageUrl(item.Key ?? "", config),
 				size: item.Size || 0,
 				lastModified:
 					item.LastModified?.toISOString() || new Date().toISOString(),
@@ -78,42 +68,36 @@ export const mediaResolvers = {
 			context: GraphQLContext,
 		) => {
 			if (!filename || filename.length > 255) {
-				throw new Error("Filename must be 1-255 characters");
+				throw new GraphQLError("Filename must be 1-255 characters", {
+					extensions: { code: "BAD_USER_INPUT" },
+				});
 			}
 			if (category && category.length > 50) {
-				throw new Error("Category must be 50 characters or less");
+				throw new GraphQLError("Category must be 50 characters or less", {
+					extensions: { code: "BAD_USER_INPUT" },
+				});
 			}
 
-			const safeFilename = sanitizeFilename(filename);
-
-			if (!validateFileExtension(safeFilename, "IMAGE")) {
-				throw new Error(
+			if (!validateFileExtension(filename, "IMAGE")) {
+				throw new GraphQLError(
 					"Invalid file extension. Allowed: jpg, jpeg, png, gif, webp",
+					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
 			}
 
-			// Validate contentType against allowlist and check extension match
-			const allowedExts = ALLOWED_CONTENT_TYPES[contentType];
-			if (!allowedExts) {
-				throw new Error(
-					`Invalid content type. Allowed: ${Object.keys(ALLOWED_CONTENT_TYPES).join(", ")}`,
-				);
-			}
-			const ext = safeFilename.split(".").pop()?.toLowerCase() || "";
-			if (!allowedExts.includes(ext)) {
-				throw new Error(
+			const ext = filename.split(".").pop()?.toLowerCase() || "";
+			if (!validateContentTypeExtension(contentType, ext)) {
+				throw new GraphQLError(
 					`Content type ${contentType} does not match file extension .${ext}`,
+					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
 			}
 
-			const timestamp = Date.now();
-			const uniqueId = randomUUID();
-			const key = category
-				? `users/${context.userId}/${category}/${timestamp}_${uniqueId}_${safeFilename}`
-				: `users/${context.userId}/general/${timestamp}_${uniqueId}_${safeFilename}`;
+			const config = getMediaConfig();
+			const key = buildImageKey(context.userId, category, filename);
 
 			const command = new PutObjectCommand({
-				Bucket: IMAGES_BUCKET,
+				Bucket: config.bucketName,
 				Key: key,
 				ContentType: contentType,
 				ServerSideEncryption: "AES256",
@@ -124,17 +108,13 @@ export const mediaResolvers = {
 				},
 			});
 
-			const uploadUrl = await getSignedUrl(s3Client, command, {
+			const uploadUrl = await getSignedUrl(getS3Client(), command, {
 				expiresIn: UPLOAD_EXPIRY_SECONDS,
 			});
 
-			const imageUrl = CDN_URL
-				? `${CDN_URL}/${key}`
-				: `https://${IMAGES_BUCKET}.s3.amazonaws.com/${key}`;
-
 			return {
 				uploadUrl,
-				imageUrl,
+				imageUrl: buildImageUrl(key, config),
 				key,
 				expiresIn: UPLOAD_EXPIRY_SECONDS,
 			};

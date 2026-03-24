@@ -78,7 +78,7 @@ export function sanitizeFilename(
 	filename: string,
 	options: {
 		maxLength?: number;
-		allowedExtensions?: string[];
+		allowedExtensions?: readonly string[];
 	} = {},
 ): string {
 	if (typeof filename !== "string") {
@@ -122,80 +122,6 @@ export function sanitizeFilename(
 	}
 
 	return sanitized;
-}
-
-/**
- * Check if a hostname resolves to a private/loopback/link-local address (SSRF protection)
- */
-function isPrivateHost(hostname: string): boolean {
-	const lower = hostname.toLowerCase();
-	if (lower === "localhost" || lower === "[::1]" || lower === "0.0.0.0") {
-		return true;
-	}
-	const parts = lower.split(".").map(Number);
-	if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
-	const [a, b] = parts;
-	return (
-		a === 127 ||
-		a === 10 ||
-		a === 0 ||
-		(a === 172 && b >= 16 && b <= 31) ||
-		(a === 192 && b === 168) ||
-		(a === 169 && b === 254)
-	);
-}
-
-/**
- * Sanitize URL to prevent open redirect and SSRF attacks
- *
- * @param url - The URL to sanitize
- * @param options - Sanitization options
- * @returns Sanitized URL or null if invalid
- */
-function _sanitizeUrl(
-	url: string,
-	options: {
-		allowedProtocols?: string[];
-		allowedDomains?: string[];
-	} = {},
-): string | null {
-	if (typeof url !== "string") {
-		return null;
-	}
-
-	const allowedProtocols = options.allowedProtocols || ["http:", "https:"];
-
-	try {
-		const parsed = new URL(url);
-
-		// Check protocol
-		if (!allowedProtocols.includes(parsed.protocol)) {
-			return null;
-		}
-
-		// Block private/loopback/link-local addresses (SSRF protection)
-		if (isPrivateHost(parsed.hostname)) {
-			return null;
-		}
-
-		// Check domain if allowedDomains provided
-		if (options.allowedDomains && options.allowedDomains.length > 0) {
-			const hostname = parsed.hostname.toLowerCase();
-			const isAllowed = options.allowedDomains.some((domain) => {
-				const domainLower = domain.toLowerCase();
-				return hostname === domainLower || hostname.endsWith(`.${domainLower}`);
-			});
-
-			if (!isAllowed) {
-				return null;
-			}
-		}
-
-		return parsed.toString();
-	} catch {
-		// Invalid URL
-		return null;
-	}
 }
 
 /**
@@ -274,34 +200,6 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 }
 
 /**
- * Validate and sanitize email address
- *
- * @param email - The email to validate
- * @returns Sanitized email or null if invalid
- */
-function _sanitizeEmail(email: string): string | null {
-	if (typeof email !== "string") {
-		return null;
-	}
-
-	// Basic email validation regex
-	const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-	const trimmed = email.trim().toLowerCase();
-
-	if (!emailRegex.test(trimmed)) {
-		return null;
-	}
-
-	// Additional checks
-	if (trimmed.length > 254) {
-		return null; // Max email length per RFC 5321
-	}
-
-	return trimmed;
-}
-
-/**
  * File upload size limits (in bytes)
  */
 export const FILE_SIZE_LIMITS = {
@@ -322,21 +220,6 @@ export const ALLOWED_FILE_EXTENSIONS = {
 } as const;
 
 /**
- * Validate file size
- *
- * @param sizeInBytes - File size in bytes
- * @param category - File category
- * @returns true if valid, false otherwise
- */
-function _validateFileSize(
-	sizeInBytes: number,
-	category: keyof typeof FILE_SIZE_LIMITS,
-): boolean {
-	const limit = FILE_SIZE_LIMITS[category];
-	return sizeInBytes > 0 && sizeInBytes <= limit;
-}
-
-/**
  * Validate file extension
  *
  * @param filename - The filename
@@ -350,20 +233,4 @@ export function validateFileExtension(
 	const extension = filename.split(".").pop()?.toLowerCase() || "";
 	const allowed = ALLOWED_FILE_EXTENSIONS[category] as readonly string[];
 	return allowed.includes(extension);
-}
-
-/**
- * Get human-readable file size
- *
- * @param bytes - Size in bytes
- * @returns Human-readable string (e.g., "10 MB")
- */
-function _formatFileSize(bytes: number): string {
-	if (bytes === 0) return "0 Bytes";
-
-	const k = 1024;
-	const sizes = ["Bytes", "KB", "MB", "GB"];
-	const i = Math.floor(Math.log(bytes) / Math.log(k));
-
-	return `${Math.round((bytes / k ** i) * 100) / 100} ${sizes[i]}`;
 }

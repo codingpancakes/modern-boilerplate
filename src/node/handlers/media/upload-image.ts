@@ -1,19 +1,23 @@
-import { randomUUID } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
+import {
+	buildImageKey,
+	buildImageUrl,
+	getMediaConfig,
+	getS3Client,
+	validateContentTypeExtension,
+} from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
-import { ALLOWED_FILE_EXTENSIONS, sanitizeFilename } from "../../lib/sanitize";
 import { parseBody } from "../../lib/validation/helpers";
 import { uploadImageRequest } from "../../lib/validation/media";
 
 const logger = new Logger({ serviceName: "media-upload-image" });
 
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
 const UPLOAD_EXPIRY_SECONDS = 300; // 5 minutes
 
 /**
@@ -88,82 +92,38 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
 
-	// Get bucket name and CDN URL from environment variables
-	const BUCKET_NAME = process.env.IMAGES_BUCKET;
-	const CDN_URL = process.env.IMAGES_CDN_URL;
+	const config = getMediaConfig();
 
-	if (!BUCKET_NAME || !CDN_URL) {
-		logger.error("Missing required environment variables", {
-			bucket: !!BUCKET_NAME,
-			cdn: !!CDN_URL,
-		});
-		throw Errors.InternalServerError();
-	}
-
-	// Validate request body with Zod
 	const input = parseBody(event, uploadImageRequest);
 
-	// Validate file extension
 	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
-	if (!ALLOWED_FILE_EXTENSIONS.IMAGE.includes(fileExtension as any)) {
-		throw Errors.BadRequest(
-			`File type .${fileExtension} is not allowed. Allowed types: ${ALLOWED_FILE_EXTENSIONS.IMAGE.join(", ")}`,
-		);
-	}
-
-	// Validate content type matches extension
-	const contentTypeMap: Record<string, string[]> = {
-		"image/jpeg": ["jpg", "jpeg"],
-		"image/png": ["png"],
-		"image/gif": ["gif"],
-		"image/webp": ["webp"],
-	};
-	const allowedExtensions = contentTypeMap[input.contentType] || [];
-	if (!allowedExtensions.includes(fileExtension)) {
+	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
 		throw Errors.BadRequest(
 			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
 		);
 	}
 
-	const baseDir = "users";
-	const finalUserId = userId;
-	const nameRoute = input.category || "general";
-
-	// Sanitize filename
-	const safeName = sanitizeFilename(input.filename, {
-		maxLength: 100,
-		allowedExtensions: ALLOWED_FILE_EXTENSIONS.IMAGE as unknown as string[],
-	});
-
-	// Generate unique image key
-	const timestamp = Date.now();
-	const uniqueId = randomUUID();
-	const key = `${baseDir}/${finalUserId}/${nameRoute}/${timestamp}_${uniqueId}_${safeName}`;
+	const key = buildImageKey(userId, input.category, input.filename);
 
 	logger.info("Generating presigned URL for image upload", {
-		finalUserId,
-		baseDir,
-		nameRoute,
+		userId,
 		key,
 		contentType: input.contentType,
 	});
 
-	// Create presigned URL for upload
 	const command = new PutObjectCommand({
-		Bucket: BUCKET_NAME,
+		Bucket: config.bucketName,
 		Key: key,
 		ContentType: input.contentType,
 		ServerSideEncryption: "AES256",
 		Metadata: {
-			userId: finalUserId,
-			baseDir,
-			nameRoute,
+			userId,
 			originalFilename: input.filename,
 			uploadedAt: new Date().toISOString(),
 		},
 	});
 
-	const uploadUrl = await getSignedUrl(s3Client, command, {
+	const uploadUrl = await getSignedUrl(getS3Client(), command, {
 		expiresIn: UPLOAD_EXPIRY_SECONDS,
 	});
 
@@ -171,10 +131,9 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	return createSuccessResponse({
 		uploadUrl,
-		imageUrl: `${CDN_URL}/${key}`,
+		imageUrl: buildImageUrl(key, config),
 		key,
 	});
 };
 
-// 5. ARCHITECTURE - Export with withAuth wrapper
 export const handler = withAuth(handlerFn);

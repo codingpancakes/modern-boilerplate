@@ -10,7 +10,7 @@ This project provides both **REST** and **GraphQL** APIs with interactive docume
 
 ### Local Development
 ```bash
-npm run docs:serve
+pnpm docs:serve
 ```
 Then open: http://localhost:3111
 
@@ -36,7 +36,7 @@ Access at: `https://your-api-domain.com/docs`
 ### Local Development
 Start the dev server:
 ```bash
-npm run dev
+pnpm dev
 ```
 Then open: http://localhost:3000/graphql/docs
 
@@ -178,7 +178,7 @@ export const handler = async (event) => {
 };
 ```
 
-Run `npm run docs:generate` to regenerate.
+Run `pnpm docs:generate` to regenerate.
 
 ### GraphQL API (GraphiQL)
 
@@ -225,7 +225,7 @@ Every query/mutation checks:
 1. **Add new REST endpoint:**
    - Create handler in `src/node/handlers/`
    - Add JSDoc comments
-   - Run `npm run docs:generate`
+   - Run `pnpm docs:generate`
    - Test in Swagger UI
 
 2. **Add new GraphQL query/mutation:**
@@ -235,16 +235,15 @@ Every query/mutation checks:
 
 3. **Deploy:**
    ```bash
-   npm run deploy:staging
+   pnpm deploy:staging
    ```
 
 ---
 
 ## 📚 Additional Resources
 
-- [GraphQL Guide](./GRAPHQL_GUIDE.md) - Complete GraphQL implementation guide
-- [OpenAPI Spec](./api/openapi.json) - Machine-readable REST API spec
 - [GraphQL Schema](../src/node/handlers/graphql/schema/) - GraphQL type definitions
+- [OpenAPI Spec](./api/openapi.json) - Machine-readable REST API spec
 
 ---
 
@@ -265,4 +264,4 @@ Every query/mutation checks:
 
 ---
 
-**Need help?** Check the [GRAPHQL_GUIDE.md](./GRAPHQL_GUIDE.md) for detailed implementation examples.
+**Need help?** Check the GraphQL schema files in `src/node/handlers/graphql/schema/` for type definitions.

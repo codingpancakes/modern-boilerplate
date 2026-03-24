@@ -13,6 +13,7 @@ import * as route53targets from "aws-cdk-lib/aws-route53-targets";
 import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
 import { Construct } from "constructs";
 import { Aspects } from "aws-cdk-lib";
 import * as path from "path";
@@ -199,39 +200,6 @@ export class ApiStack extends cdk.Stack {
       SENTRY_ENVIRONMENT: props.stage,
     };
 
-    // Custom Lambda Authorizer for WorkOS (matches local validation)
-    const workosAuthorizerHandler = new lambdaNodejs.NodejsFunction(
-      this,
-      "WorkOSAuthorizer",
-      {
-        functionName: `${projectName}-${props.stage}-workos-authorizer`,
-        entry: path.join(__dirname, "../../src/node/authorizers/workos-jwt.ts"),
-        handler: "handler",
-        runtime: lambda.Runtime.NODEJS_24_X,
-        timeout: cdk.Duration.seconds(30),
-        environment: commonEnv,
-        bundling: {
-          minify: true,
-          sourceMap: false,
-          target: "node24",
-          format: lambdaNodejs.OutputFormat.CJS,
-          mainFields: ["main", "module"],
-        },
-      }
-    );
-
-    const customAuthorizer = new apigwv2Authorizers.HttpLambdaAuthorizer(
-      "WorkOSAuthorizer",
-      workosAuthorizerHandler,
-      {
-        authorizerName: `${props.stage}-workos-authorizer`,
-        responseTypes: [apigwv2Authorizers.HttpLambdaResponseType.SIMPLE],
-        // Cache valid tokens for 5 minutes to reduce Lambda invocations
-        // Tokens are validated by signature, so caching is safe
-        resultsCacheTtl: cdk.Duration.minutes(5),
-      }
-    );
-
     // Lambda execution role with consolidated permissions
     const lambdaRole = new iam.Role(this, "LambdaExecutionRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
@@ -270,13 +238,77 @@ export class ApiStack extends cdk.Stack {
     });
 
     // Get S3 bucket name from environment variable
-    const bucketName = process.env.IMAGES_BUCKET || 
+    const bucketName = process.env.IMAGES_BUCKET ||
       (props.stage === "production"
         ? `${projectName}-images-depot`
         : `${projectName}-images-depot-staging`);
 
-    // Create route builder for handler creation
-    const routeBuilder = new RouteBuilder(this, commonEnv, lambdaRole, props.stage);
+    // ============================================
+    // BLUE-GREEN DEPLOYMENT — CodeDeploy
+    // Production: canary 10% for 5 min before full cutover, automatic rollback on errors.
+    // Staging: immediate cutover (ALL_AT_ONCE) for fast iteration.
+    // All handlers (Node.js, Python, authorizer) are wrapped with wrapWithBlueGreen().
+    // ============================================
+    const codeDeployApp = new codedeploy.LambdaApplication(this, "LambdaDeployApp", {
+      applicationName: `${projectName}-${props.stage}-lambda-deploy`,
+    });
+
+    const deploymentConfig =
+      props.stage === "production"
+        ? codedeploy.LambdaDeploymentConfig.CANARY_10PERCENT_5MINUTES
+        : codedeploy.LambdaDeploymentConfig.ALL_AT_ONCE;
+
+    // Route builder — creates handlers and wraps each one in CodeDeploy blue-green.
+    // All API Gateway integrations target the returned "live" alias, not the raw function.
+    const routeBuilder = new RouteBuilder(
+      this,
+      commonEnv,
+      lambdaRole,
+      props.stage,
+      codeDeployApp,
+      deploymentConfig,
+    );
+
+    // ============================================
+    // WORKOS AUTHORIZER — blue-green wrapped
+    // ============================================
+    const workosAuthorizerFn = new lambdaNodejs.NodejsFunction(
+      this,
+      "WorkOSAuthorizer",
+      {
+        functionName: `${projectName}-${props.stage}-workos-authorizer`,
+        entry: path.join(__dirname, "../../src/node/authorizers/workos-jwt.ts"),
+        handler: "handler",
+        runtime: lambda.Runtime.NODEJS_24_X,
+        timeout: cdk.Duration.seconds(30),
+        environment: commonEnv,
+        tracing: lambda.Tracing.ACTIVE,
+        bundling: {
+          minify: true,
+          sourceMap: false,
+          target: "node24",
+          format: lambdaNodejs.OutputFormat.CJS,
+          mainFields: ["main", "module"],
+        },
+      }
+    );
+
+    const workosAuthorizerAlias = routeBuilder.wrapWithBlueGreen(
+      workosAuthorizerFn,
+      "WorkOSAuthorizer",
+    );
+
+    const customAuthorizer = new apigwv2Authorizers.HttpLambdaAuthorizer(
+      "WorkOSAuthorizer",
+      workosAuthorizerAlias,
+      {
+        authorizerName: `${props.stage}-workos-authorizer`,
+        responseTypes: [apigwv2Authorizers.HttpLambdaResponseType.SIMPLE],
+        // Cache valid tokens for 5 minutes to reduce Lambda invocations
+        // Tokens are validated by signature, so caching is safe
+        resultsCacheTtl: cdk.Duration.minutes(5),
+      }
+    );
 
     // Register route groups organized by authentication pattern
     // Public routes: health checks, webhooks (no auth, but with their own verification)
@@ -299,7 +331,7 @@ export class ApiStack extends cdk.Stack {
     new InternalRoutes(this, this.httpApi, routeBuilder);
 
     // Python test handler (kept separate as it's a special case)
-    const pythonTestHandler = new lambda.Function(this, "PythonTestHandler", {
+    const pythonTestFn = new lambda.Function(this, "PythonTestHandler", {
       functionName: `${projectName}-${props.stage}-python-test-handler`,
       runtime: lambda.Runtime.PYTHON_3_11,
       code: lambda.Code.fromAsset(path.join(__dirname, "../../src/python")),
@@ -310,20 +342,21 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined, // Disabled to avoid AWS rate limits
-      // reservedConcurrentExecutions removed - use unreserved pool
     });
+
+    const pythonTestAlias = routeBuilder.wrapWithBlueGreen(pythonTestFn, "PythonTest");
 
     this.httpApi.addRoutes({
       path: "/v1/test/python",
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "PythonTestIntegration",
-        pythonTestHandler
+        pythonTestAlias
       ),
     });
 
     // Python user profile handler (invoked by TypeScript proxy)
-    const pythonUserProfileHandler = new lambda.Function(this, "PythonUserProfileHandler", {
+    const pythonUserProfileFn = new lambda.Function(this, "PythonUserProfileHandler", {
       functionName: `${projectName}-${props.stage}-python-user-profile`,
       runtime: lambda.Runtime.PYTHON_3_11,
       code: lambda.Code.fromAsset(path.join(__dirname, "../../src/python")),
@@ -334,15 +367,19 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined,
-      // reservedConcurrentExecutions removed - use unreserved pool
     });
+
+    const pythonUserProfileAlias = routeBuilder.wrapWithBlueGreen(
+      pythonUserProfileFn,
+      "PythonUserProfile",
+    );
 
     this.httpApi.addRoutes({
       path: "/v1/users/python-profile",
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "PythonProfileIntegration",
-        pythonUserProfileHandler
+        pythonUserProfileAlias
       ),
       authorizer: customAuthorizer,
     });
@@ -353,7 +390,7 @@ export class ApiStack extends cdk.Stack {
     // ============================================
     // GRAPHQL HANDLER
     // ============================================
-    const graphqlHandler = new lambdaNodejs.NodejsFunction(this, "GraphQLHandler", {
+    const graphqlFn = new lambdaNodejs.NodejsFunction(this, "GraphQLHandler", {
       functionName: `${projectName}-${props.stage}-graphql`,
       entry: path.join(__dirname, "../../src/node/handlers/graphql/handler.ts"),
       handler: "handler",
@@ -364,11 +401,10 @@ export class ApiStack extends cdk.Stack {
       environment: commonEnv,
       tracing: lambda.Tracing.ACTIVE,
       logRetention: undefined,
-      // reservedConcurrentExecutions removed - use unreserved pool
       bundling: {
         minify: true,
         sourceMap: true,
-        externalModules: ['@aws-sdk/*'], // AWS SDK v3 is available in Lambda runtime
+        externalModules: ["@aws-sdk/*"], // AWS SDK v3 is available in Lambda runtime
         commandHooks: {
           beforeBundling: (_inputDir: string, _outputDir: string): string[] => [],
           afterBundling: (inputDir: string, outputDir: string): string[] => [
@@ -379,9 +415,11 @@ export class ApiStack extends cdk.Stack {
       },
     });
 
-    // Grant permissions
-    props.dbSecret.grantRead(graphqlHandler);
-    props.workosSecret.grantRead(graphqlHandler);
+    // Grant permissions on the raw function (grants apply to execution role, valid via alias)
+    props.dbSecret.grantRead(graphqlFn);
+    props.workosSecret.grantRead(graphqlFn);
+
+    const graphqlAlias = routeBuilder.wrapWithBlueGreen(graphqlFn, "GraphQL");
 
     // Add GraphQL route with WorkOS authorizer
     this.httpApi.addRoutes({
@@ -389,7 +427,7 @@ export class ApiStack extends cdk.Stack {
       methods: [apigwv2.HttpMethod.POST, apigwv2.HttpMethod.GET], // GET for GraphQL Playground
       integration: new apigwv2Integrations.HttpLambdaIntegration(
         "GraphQLIntegration",
-        graphqlHandler
+        graphqlAlias
       ),
       authorizer: customAuthorizer, // Same WorkOS JWT authorizer as REST!
     });

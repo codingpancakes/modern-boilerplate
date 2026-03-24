@@ -4,6 +4,7 @@ import {
 	handlers,
 	startServerAndCreateLambdaHandler,
 } from "@as-integrations/aws-lambda";
+import { Logger } from "@aws-lambda-powertools/logger";
 import depthLimit from "graphql-depth-limit";
 import { captureException, flush as flushSentry } from "../../lib/sentry";
 import type { GraphQLContext } from "./context";
@@ -12,6 +13,8 @@ import { mediaResolvers } from "./resolvers/media";
 import { organizationResolvers } from "./resolvers/organizations";
 import { userResolvers } from "./resolvers/users";
 import { typeDefs } from "./schema";
+
+const logger = new Logger({ serviceName: "graphql" });
 
 const resolvers = {
 	Query: {
@@ -44,14 +47,18 @@ const sentryPlugin: ApolloServerPlugin<GraphQLContext> = {
 		return {
 			async didEncounterErrors(requestContext) {
 				for (const error of requestContext.errors) {
-					if (CLIENT_ERROR_CODES.has(error.extensions?.code as string)) {
+					const code =
+						typeof error.extensions?.code === "string"
+							? error.extensions.code
+							: "";
+					if (CLIENT_ERROR_CODES.has(code)) {
 						continue;
 					}
 					const originalError =
 						error.originalError instanceof Error ? error.originalError : error;
 					captureException(originalError, {
 						graphqlPath: error.path,
-						graphqlQuery: requestContext.request.query,
+						graphqlOperationName: requestContext.request.operationName,
 					});
 				}
 			},
@@ -71,7 +78,7 @@ const server = new ApolloServer<GraphQLContext>({
 	validationRules: [depthLimit(10)],
 	plugins: [sentryPlugin],
 	formatError: (error) => {
-		console.error("GraphQL Error:", error);
+		logger.error("GraphQL Error", { error });
 
 		const code = error.extensions?.code || "INTERNAL_SERVER_ERROR";
 		const message =

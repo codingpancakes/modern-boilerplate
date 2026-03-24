@@ -108,7 +108,7 @@ const apiStack = new ApiStack(app, `${stackPrefix}-ApiStack`, {
 // Add dependencies
 apiStack.addDependency(securityStack);
 apiStack.addDependency(mediaStack);
-databaseStack.addDependency(securityStack)
+databaseStack.addDependency(securityStack);
 
 // Independent stacks - no dependencies needed
 // Referenced to avoid unused variable warnings

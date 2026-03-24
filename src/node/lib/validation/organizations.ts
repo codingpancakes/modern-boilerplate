@@ -4,6 +4,13 @@
 
 import { z } from "zod";
 
+const jsonObject = z
+	.record(z.unknown())
+	.refine(
+		(obj) => JSON.stringify(obj).length <= 10_000,
+		"Object too large (max 10KB serialized)",
+	);
+
 export const createOrganization = z.object({
 	name: z.string().min(1).max(200),
 	slug: z
@@ -15,8 +22,8 @@ export const createOrganization = z.object({
 	visibility: z.string().max(50).optional(),
 	defaultTimezone: z.string().max(50).optional(),
 	countryCode: z.string().length(2).optional(),
-	branding: z.record(z.unknown()).optional(),
-	metadata: z.record(z.unknown()).optional(),
+	branding: jsonObject.optional(),
+	metadata: jsonObject.optional(),
 });
 
 export const updateOrganization = z.object({
@@ -31,8 +38,8 @@ export const updateOrganization = z.object({
 	visibility: z.string().max(50).optional(),
 	defaultTimezone: z.string().max(50).optional(),
 	countryCode: z.string().length(2).optional(),
-	branding: z.record(z.unknown()).optional(),
-	metadata: z.record(z.unknown()).optional(),
+	branding: jsonObject.optional(),
+	metadata: jsonObject.optional(),
 });
 
 const orgRoles = ["OWNER", "ADMIN", "MANAGER", "MEMBER", "VIEWER"] as const;
@@ -53,7 +60,7 @@ export const createOrgUnit = z.object({
 	code: z.string().max(100).optional(),
 	name: z.string().min(1).max(200),
 	isRoot: z.boolean().optional(),
-	metadata: z.record(z.unknown()).optional(),
+	metadata: jsonObject.optional(),
 });
 
 export const organizationSchemas = {

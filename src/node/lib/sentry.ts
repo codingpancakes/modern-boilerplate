@@ -24,11 +24,15 @@ if (SENTRY_ENABLED) {
 		environment: SENTRY_ENVIRONMENT,
 		tracesSampleRate: SENTRY_ENVIRONMENT === "production" ? 0.1 : 1.0, // 10% in prod, 100% in staging
 		beforeSend(event, hint) {
-			// Filter out expected errors (like 404s, validation errors)
-			const error = hint.originalException as ErrorWithStatusCode;
-			if (error?.statusCode) {
-				// Don't send client errors (4xx) to Sentry
-				if (error.statusCode >= 400 && error.statusCode < 500) {
+			const error = hint.originalException;
+			if (
+				error &&
+				typeof error === "object" &&
+				"statusCode" in error &&
+				typeof (error as ErrorWithStatusCode).statusCode === "number"
+			) {
+				const statusCode = (error as ErrorWithStatusCode).statusCode ?? 0;
+				if (statusCode >= 400 && statusCode < 500) {
 					return null;
 				}
 			}

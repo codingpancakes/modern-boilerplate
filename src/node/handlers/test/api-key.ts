@@ -36,8 +36,10 @@ const handlerFn = async (_event: APIGatewayProxyEventV2, _context: Context) => {
 	});
 };
 
-const EXPECTED_API_KEY = process.env.TEST_API_KEY;
+const EXPECTED_API_KEY = process.env.TEST_API_KEY || "";
 if (!EXPECTED_API_KEY) {
-	throw new Error("TEST_API_KEY environment variable is required");
+	console.warn(
+		"⚠️  TEST_API_KEY not set — /v1/test/api-key endpoint will reject all requests",
+	);
 }
 export const handler = withApiKey(EXPECTED_API_KEY, handlerFn);

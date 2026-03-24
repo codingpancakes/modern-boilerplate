@@ -167,10 +167,10 @@ Once everything is destroyed, you can redeploy using your existing deployment me
 
 ```bash
 # For staging
-npm run deploy:staging
+pnpm deploy:staging
 
 # For production
-npm run deploy:production
+pnpm deploy:production
 ```
 
 ## Cost Savings

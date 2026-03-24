@@ -1,19 +1,13 @@
 import { Logger } from "@aws-lambda-powertools/logger";
-import {
-	type _Object,
-	ListObjectsV2Command,
-	S3Client,
-} from "@aws-sdk/client-s3";
+import { type _Object, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
-import { Errors } from "../../lib/errors";
+import { buildImageUrl, getMediaConfig, getS3Client } from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { mediaSchemas, parseQuery } from "../../lib/validation";
 
 const logger = new Logger({ serviceName: "media-list-images" });
-
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
 
 /**
  * @swagger
@@ -90,13 +84,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
 
-	// Validate environment variables
-	const BUCKET_NAME = process.env.IMAGES_BUCKET;
-	const CDN_URL = process.env.IMAGES_CDN_URL;
-	if (!BUCKET_NAME) {
-		logger.error("Missing required environment variable: IMAGES_BUCKET");
-		throw Errors.InternalServerError();
-	}
+	const config = getMediaConfig();
 
 	// Parse and validate query parameters
 	const query = parseQuery(event, mediaSchemas.listImages);
@@ -112,28 +100,23 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 	logger.info("Listing user images", { category, limit, prefix });
 
-	// List objects from S3
 	const command = new ListObjectsV2Command({
-		Bucket: BUCKET_NAME,
+		Bucket: config.bucketName,
 		Prefix: prefix,
 		MaxKeys: limit,
 		ContinuationToken: continuationToken,
 	});
 
-	const response = await s3Client.send(command);
+	const response = await getS3Client().send(command);
 
-	// Format the response
 	const images = (response.Contents || []).map((obj: _Object) => {
 		const key = obj.Key || "";
 		const parts = key.split("/");
-		// S3 key format: users/{userId}/{category}/{timestamp}_{uuid}_{filename}
 		const categoryFromPath = parts.length > 2 ? parts[2] : "general";
 
 		return {
 			key,
-			url: CDN_URL
-				? `${CDN_URL}/${key}`
-				: `https://${BUCKET_NAME}.s3.amazonaws.com/${key}`,
+			url: buildImageUrl(key, config),
 			size: obj.Size,
 			lastModified: obj.LastModified?.toISOString(),
 			category: categoryFromPath,
@@ -154,5 +137,4 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	});
 };
 
-// 5. ARCHITECTURE - Export with withAuth wrapper
 export const handler = withAuth(handlerFn);

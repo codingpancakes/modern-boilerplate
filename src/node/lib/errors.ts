@@ -29,7 +29,7 @@ export function formatError(error: unknown, requestId?: string) {
 				error: error.message,
 				details: {
 					code: error.code,
-					details: error.details,
+					extra: error.details,
 					requestId,
 					timestamp,
 				},
