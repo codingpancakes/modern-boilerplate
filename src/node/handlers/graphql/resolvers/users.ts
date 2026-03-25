@@ -275,7 +275,19 @@ export const userResolvers = {
 	},
 
 	Organization: {
-		members: (org: { id: string }, _args: unknown, context: GraphQLContext) =>
-			context.loaders.membershipsByOrgId.load(org.id),
+		members: async (
+			org: { id: string },
+			_args: unknown,
+			context: GraphQLContext,
+		) => {
+			const members = await context.loaders.membershipsByOrgId.load(org.id);
+			if (!members.some((m) => m.userId === context.userId)) {
+				throw new GraphQLError(
+					"Organization not found or you are not a member",
+					{ extensions: { code: "FORBIDDEN" } },
+				);
+			}
+			return members;
+		},
 	},
 };

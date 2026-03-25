@@ -8,6 +8,20 @@
 			"when": 1774102183757,
 			"tag": "0000_calm_silvermane",
 			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "5",
+			"when": 1774402693271,
+			"tag": "0001_robust_the_renegades",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "5",
+			"when": 1774403879513,
+			"tag": "0002_faithful_fallen_one",
+			"breakpoints": true
 		}
 	]
 }

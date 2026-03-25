@@ -9,6 +9,7 @@ import {
 	auditLogs,
 } from "../db/schema";
 import { getDb } from "./db";
+import { captureException } from "./sentry";
 
 /**
  * Context with audit fields
@@ -77,9 +78,10 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 		});
 	} catch (error) {
 		// Don't throw - audit logging should never break the main flow
-		// Silence in test environment (NODE_ENV=test or no DATABASE_URL)
 		if (process.env.NODE_ENV !== "test") {
 			console.error("Failed to log audit event:", error);
+			const err = error instanceof Error ? error : new Error(String(error));
+			captureException(err);
 		}
 	}
 }
@@ -92,58 +94,6 @@ export function extractRequestContext(event: APIGatewayProxyEventV2) {
 		ipAddress: event.requestContext?.http?.sourceIp,
 		userAgent: event.headers?.["user-agent"],
 		requestId: event.requestContext?.requestId,
-	};
-}
-
-/**
- * Audit middleware for Lambda handlers
- *
- * Automatically logs the action with request context.
- *
- * @example
- * ```typescript
- * export const handler = withAudit(
- *   async (event, context, auditLog) => {
- *     const user = await updateUser(data);
- *     await auditLog({
- *       action: AUDIT_ACTIONS.UPDATE,
- *       resourceType: AUDIT_RESOURCE_TYPES.USER,
- *       resourceId: user.id,
- *       changes: { after: user },
- *     });
- *     return { statusCode: 200, body: JSON.stringify(user) };
- *   }
- * );
- * ```
- */
-function _withAudit<T = unknown>(
-	handler: (
-		event: APIGatewayProxyEventV2,
-		context: AuditContext,
-		auditLog: (
-			entry: Omit<AuditLogEntry, "ipAddress" | "userAgent" | "requestId">,
-		) => Promise<void>,
-	) => Promise<T>,
-) {
-	return async (
-		event: APIGatewayProxyEventV2,
-		context: AuditContext,
-	): Promise<T> => {
-		const requestContext = extractRequestContext(event);
-
-		// Create audit log function with pre-filled request context
-		const auditLog = async (
-			entry: Omit<AuditLogEntry, "ipAddress" | "userAgent" | "requestId">,
-		) => {
-			await logAudit({
-				...entry,
-				...requestContext,
-				userId: entry.userId || context.userId,
-				organizationId: entry.organizationId || context.organizationId,
-			});
-		};
-
-		return handler(event, context, auditLog);
 	};
 }
 

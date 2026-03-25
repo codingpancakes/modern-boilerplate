@@ -165,8 +165,15 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 	for (const [key, value] of Object.entries(obj)) {
 		if (typeof value === "string") {
 			if (skipEscape.has(key)) {
-				// Trim only -- no HTML escaping for URL/path fields
-				sanitized[key] = value.trim();
+				const trimmed = value.trim();
+				// Block dangerous URL schemes (XSS via javascript:, data:, vbscript:)
+				const lower = trimmed.toLowerCase();
+				sanitized[key] =
+					lower.startsWith("javascript:") ||
+					lower.startsWith("data:") ||
+					lower.startsWith("vbscript:")
+						? ""
+						: trimmed;
 			} else {
 				sanitized[key] = sanitizeString(value, {
 					maxLength: options.maxStringLength,

@@ -186,6 +186,13 @@ const webhookHandler = async (
 			bodyLength: event.body?.length ?? 0,
 		});
 
+		// Reject oversized payloads before any parsing (DoS protection)
+		const MAX_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
+		if ((event.body?.length ?? 0) > MAX_PAYLOAD_BYTES) {
+			logger.error("Webhook payload too large", { size: event.body?.length });
+			throw Errors.BadRequest("Payload too large");
+		}
+
 		// Get signature from headers
 		const signature =
 			event.headers["workos-signature"] || event.headers["WorkOS-Signature"];
@@ -386,7 +393,23 @@ const webhookHandler = async (
 					.limit(1);
 
 				if (authIdentity?.userId) {
-					await db.delete(users).where(eq(users.id, authIdentity.userId));
+					// Soft-delete: anonymize PII and retain row for audit trail
+					await db
+						.update(users)
+						.set({
+							status: "deleted",
+							email: null,
+							firstName: null,
+							lastName: null,
+							phone: null,
+							updatedAt: new Date().toISOString(),
+						})
+						.where(eq(users.id, authIdentity.userId));
+
+					// Remove auth identity so the account cannot be re-authenticated
+					await db
+						.delete(authIdentities)
+						.where(eq(authIdentities.userId, authIdentity.userId));
 
 					await logAudit({
 						userId: authIdentity.userId,

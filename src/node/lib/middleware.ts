@@ -30,15 +30,6 @@ export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
 	};
 }
 
-/**
- * Returns the WorkOS custom claim key for the given name.
- * Namespace is derived from PROJECT_NAME env var (e.g. "urn:myapp:email").
- * Configure matching claim names in your WorkOS dashboard.
- */
-function _customClaim(name: string): string {
-	return `urn:${process.env.PROJECT_NAME || "app"}:${name}`;
-}
-
 export interface HandlerResponse {
 	statusCode: number;
 	headers?: Record<string, string>;

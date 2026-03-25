@@ -1,3 +1,4 @@
+import { Logger } from "@aws-lambda-powertools/logger";
 import {
 	GetSecretValueCommand,
 	SecretsManagerClient,
@@ -6,26 +7,36 @@ import { type NeonQueryFunction, neon } from "@neondatabase/serverless";
 import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import * as schema from "../db/schema/index";
 
+const logger = new Logger({ serviceName: "db" });
+
 type DbInstance = NeonHttpDatabase<typeof schema>;
 
 let dbInstance: DbInstance | null = null;
 let dbUrl: string | null = null;
+let dbUrlCachedAt: number | null = null;
+const DB_URL_TTL_MS = 15 * 60 * 1000;
 let connectionAttempts = 0;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 100;
 
 async function getDbUrl(): Promise<string> {
-	// Return cached URL if available
-	if (dbUrl) return dbUrl;
-
-	// Option 1: Use DATABASE_URL from environment
+	// Option 1: Use DATABASE_URL from environment (no TTL — env vars don't rotate)
 	if (process.env.DATABASE_URL) {
-		dbUrl = process.env.DATABASE_URL;
+		if (!dbUrl) dbUrl = process.env.DATABASE_URL;
 		return dbUrl;
 	}
 
-	// Option 2: Fetch from Secrets Manager (preferred in deployed environments)
+	// Option 2: Fetch from Secrets Manager — apply TTL so rotation is picked up
 	if (process.env.DB_SECRET_ARN) {
+		const expired =
+			!dbUrl || !dbUrlCachedAt || Date.now() - dbUrlCachedAt >= DB_URL_TTL_MS;
+
+		if (!expired && dbUrl) return dbUrl;
+
+		// Cache expired or missing — reset instance so it reconnects with new URL
+		dbInstance = null;
+		dbUrl = null;
+
 		const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
 		const command = new GetSecretValueCommand({
 			SecretId: process.env.DB_SECRET_ARN,
@@ -38,6 +49,7 @@ async function getDbUrl(): Promise<string> {
 				// Format stored by sync-secrets script: { url: "postgresql://..." }
 				if (secret.url) {
 					dbUrl = String(secret.url);
+					dbUrlCachedAt = Date.now();
 					return dbUrl;
 				}
 				// Fallback: RDS-style secret with individual fields
@@ -46,11 +58,12 @@ async function getDbUrl(): Promise<string> {
 					? `&channel_binding=${secret.channel_binding}`
 					: "";
 				dbUrl = `postgresql://${secret.username}:${secret.password}@${secret.host}:${secret.port || 5432}/${secret.database}?sslmode=${sslmode}${channelBinding}`;
+				dbUrlCachedAt = Date.now();
 				return dbUrl;
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			console.error("Failed to retrieve database secret:", message);
+			logger.error("Failed to retrieve database secret", { error: message });
 			throw new Error("Failed to retrieve database credentials");
 		}
 	}
@@ -103,17 +116,18 @@ async function createDbConnection(
 			// Exponential backoff
 			const delay = RETRY_DELAY_MS * 2 ** retryCount;
 			const message = error instanceof Error ? error.message : String(error);
-			console.warn(
-				`Database connection attempt ${retryCount + 1} failed, retrying in ${delay}ms:`,
-				message,
-			);
+			logger.warn("Database connection attempt failed, retrying", {
+				attempt: retryCount + 1,
+				retryInMs: delay,
+				error: message,
+			});
 
 			await new Promise((resolve) => setTimeout(resolve, delay));
 			return createDbConnection(url, retryCount + 1);
 		}
 
 		const message = error instanceof Error ? error.message : String(error);
-		console.error("Database connection failed after retries", {
+		logger.error("Database connection failed after retries", {
 			attempts: connectionAttempts,
 			error: message,
 		});

@@ -16,9 +16,6 @@ export type Claims = {
 };
 
 export function getClaims(evt: APIGatewayProxyEventV2): Claims {
-	// const authHeader = evt.headers?.authorization || evt.headers?.Authorization;
-	// console.log("🔐 RAW TOKEN:", authHeader);
-
 	const rc = evt.requestContext as typeof evt.requestContext & {
 		authorizer?: {
 			jwt?: { claims: Record<string, unknown> };
@@ -29,8 +26,6 @@ export function getClaims(evt: APIGatewayProxyEventV2): Claims {
 	const jwtClaims = authz.jwt?.claims;
 	const lambdaCtx = authz.lambda;
 	const claims = jwtClaims || lambdaCtx;
-
-	// console.log("PARSED CLAIMS:", JSON.stringify(claims, null, 2));
 
 	if (!claims?.sub || typeof claims.sub !== "string") {
 		throw Errors.Unauthorized();
@@ -86,14 +81,22 @@ export async function getUserIdFromClaims(
 			})
 			.returning({ id: users.id });
 
-		await db.insert(profiles).values({ userId: newUser.id });
-
-		await db.insert(authIdentities).values({
-			userId: newUser.id,
-			providerType: "workos",
-			providerSubject,
-			emailAtProvider: claims.email || null,
-		});
+		try {
+			await db.insert(profiles).values({ userId: newUser.id });
+			await db.insert(authIdentities).values({
+				userId: newUser.id,
+				providerType: "workos",
+				providerSubject,
+				emailAtProvider: claims.email || null,
+			});
+		} catch (insertErr) {
+			// Compensate: remove the orphaned user row before re-throwing
+			await db
+				.delete(users)
+				.where(eq(users.id, newUser.id))
+				.catch(() => {});
+			throw insertErr;
+		}
 
 		return newUser.id;
 	} catch (err) {

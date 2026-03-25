@@ -70,11 +70,12 @@ const sentryPlugin: ApolloServerPlugin<GraphQLContext> = {
 };
 
 const isProduction = process.env.STAGE === "production";
+const isDevelopment = process.env.STAGE === "development";
 
 const server = new ApolloServer<GraphQLContext>({
 	typeDefs,
 	resolvers,
-	introspection: !isProduction,
+	introspection: isDevelopment,
 	validationRules: [depthLimit(10)],
 	plugins: [sentryPlugin],
 	formatError: (error) => {

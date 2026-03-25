@@ -12,6 +12,8 @@ export interface MonitoringStackProps extends cdk.StackProps {
 }
 
 export class MonitoringStack extends cdk.Stack {
+  public readonly alarmTopic: sns.Topic;
+
   constructor(scope: Construct, id: string, props: MonitoringStackProps) {
     super(scope, id, props);
 
@@ -21,14 +23,14 @@ export class MonitoringStack extends cdk.Stack {
     const projectName = process.env.PROJECT_NAME;
 
     // SNS topic for alarms
-    const alarmTopic = new sns.Topic(this, 'AlarmTopic', {
+    this.alarmTopic = new sns.Topic(this, 'AlarmTopic', {
       topicName: `${projectName}-${props.stage}-alarms`,
       displayName: `${projectName} ${props.stage} API Alarms`,
     });
 
     // Subscribe email if provided
     if (props.alarmEmail) {
-      alarmTopic.addSubscription(
+      this.alarmTopic.addSubscription(
         new snsSubscriptions.EmailSubscription(props.alarmEmail)
       );
     }
@@ -107,7 +109,7 @@ export class MonitoringStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    api5xxAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    api5xxAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Alarm for API Gateway 4xx errors (> 10% error rate)
     const api4xxAlarm = new cloudwatch.Alarm(this, 'Api4xxAlarm', {
@@ -127,7 +129,7 @@ export class MonitoringStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    api4xxAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    api4xxAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Lambda error rate metric
     const lambdaErrorMetric = new cloudwatch.Metric({
@@ -154,7 +156,7 @@ export class MonitoringStack extends cdk.Stack {
       alarmDescription: 'Lambda error rate is too high',
     });
 
-    lambdaErrorAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    lambdaErrorAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Alarm for Lambda p95 latency
     const lambdaLatencyAlarm = new cloudwatch.Alarm(this, 'LambdaLatencyAlarm', {
@@ -165,7 +167,7 @@ export class MonitoringStack extends cdk.Stack {
       alarmDescription: 'Lambda p95 latency is too high',
     });
 
-    lambdaLatencyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    lambdaLatencyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Account-wide Lambda Concurrency Alarm
     const concurrencyLimit = 1000; // Default AWS limit (update after requesting increase)
@@ -186,7 +188,7 @@ export class MonitoringStack extends cdk.Stack {
       alarmDescription: `Lambda concurrent executions > ${concurrencyThreshold} (70% of ${concurrencyLimit} limit)`,
     });
 
-    concurrencyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    concurrencyAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Account-wide Lambda Throttle Alarm
     const throttleMetric = new cloudwatch.Metric({
@@ -204,7 +206,7 @@ export class MonitoringStack extends cdk.Stack {
       alarmDescription: 'Lambda functions throttled due to account concurrency limit',
     });
 
-    accountThrottleAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    accountThrottleAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Add widgets to dashboard
     dashboard.addWidgets(
@@ -283,7 +285,7 @@ export class MonitoringStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    dlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(alarmTopic));
+    dlqAlarm.addAlarmAction(new cloudwatchActions.SnsAction(this.alarmTopic));
 
     // Add DLQ widget to dashboard
     dashboard.addWidgets(
@@ -304,7 +306,7 @@ export class MonitoringStack extends cdk.Stack {
 
     // Outputs
     new cdk.CfnOutput(this, 'AlarmTopicArn', {
-      value: alarmTopic.topicArn,
+      value: this.alarmTopic.topicArn,
       description: 'ARN of SNS topic for alarms',
     });
 

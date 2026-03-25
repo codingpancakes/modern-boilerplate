@@ -116,9 +116,13 @@ export const authIdentities = pgTable(
 	(table) => {
 		return {
 			ixAuthUser: index("ix_auth_user").on(table.userId),
-			ixAuthProviderLookup: index("ix_auth_provider_lookup").on(
-				table.providerSubject,
+			uxAuthUserProvider: uniqueIndex("ux_auth_user_provider").on(
+				table.userId,
 				table.providerType,
+			),
+			uxAuthProviderSubject: uniqueIndex("ux_auth_provider_subject").on(
+				table.providerType,
+				table.providerSubject,
 			),
 		};
 	},

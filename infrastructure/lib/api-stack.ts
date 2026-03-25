@@ -14,6 +14,7 @@ import * as wafv2 from "aws-cdk-lib/aws-wafv2";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
+import * as sns from "aws-cdk-lib/aws-sns";
 import { Construct } from "constructs";
 import { Aspects } from "aws-cdk-lib";
 import * as path from "path";
@@ -27,6 +28,7 @@ export interface ApiStackProps extends cdk.StackProps {
   stage: string;
   workosSecret: secretsmanager.Secret;
   dbSecret: secretsmanager.Secret;
+  alarmTopic: sns.Topic;
 }
 
 export class ApiStack extends cdk.Stack {
@@ -200,6 +202,12 @@ export class ApiStack extends cdk.Stack {
       SENTRY_ENVIRONMENT: props.stage,
     };
 
+    // Exact bucket name used for scoped IAM permissions (same logic as bucketName below)
+    const iamBucketName = process.env.IMAGES_BUCKET ||
+      (props.stage === "production"
+        ? `${projectName}-images-depot`
+        : `${projectName}-images-depot-staging`);
+
     // Lambda execution role with consolidated permissions
     const lambdaRole = new iam.Role(this, "LambdaExecutionRole", {
       assumedBy: new iam.ServicePrincipal("lambda.amazonaws.com"),
@@ -221,16 +229,16 @@ export class ApiStack extends cdk.Stack {
                 props.dbSecret.secretArn,
               ],
             }),
-            // S3 access for image buckets
+            // S3 access for image bucket (scoped to exact bucket name)
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
-              resources: [`arn:aws:s3:::${process.env.IMAGES_BUCKET_PREFIX || `${projectName}-images-depot`}*/*`],
+              resources: [`arn:aws:s3:::${iamBucketName}/*`],
             }),
             new iam.PolicyStatement({
               effect: iam.Effect.ALLOW,
               actions: ["s3:ListBucket"],
-              resources: [`arn:aws:s3:::${process.env.IMAGES_BUCKET_PREFIX || `${projectName}-images-depot`}*`],
+              resources: [`arn:aws:s3:::${iamBucketName}`],
             }),
           ],
         }),
@@ -267,6 +275,7 @@ export class ApiStack extends cdk.Stack {
       props.stage,
       codeDeployApp,
       deploymentConfig,
+      props.alarmTopic,
     );
 
     // ============================================

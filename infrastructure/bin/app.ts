@@ -103,11 +103,13 @@ const apiStack = new ApiStack(app, `${stackPrefix}-ApiStack`, {
   stage,
   workosSecret: securityStack.workosSecret,
   dbSecret: securityStack.dbSecret,
+  alarmTopic: monitoringStack.alarmTopic,
 });
 
 // Add dependencies
 apiStack.addDependency(securityStack);
 apiStack.addDependency(mediaStack);
+apiStack.addDependency(monitoringStack);
 databaseStack.addDependency(securityStack);
 
 // Independent stacks - no dependencies needed

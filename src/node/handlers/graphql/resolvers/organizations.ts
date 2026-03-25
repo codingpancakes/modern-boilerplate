@@ -104,6 +104,20 @@ export const organizationResolvers = {
 			{ input }: { input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
+			const ownedOrgs = await context.db.query.organizationMembers.findMany({
+				where: and(
+					eq(organizationMembers.userId, context.userId),
+					eq(organizationMembers.role, "OWNER"),
+					eq(organizationMembers.status, "ACTIVE"),
+				),
+			});
+
+			if (ownedOrgs.length >= 10) {
+				throw new GraphQLError("Organization limit reached (max 10)", {
+					extensions: { code: "FORBIDDEN" },
+				});
+			}
+
 			const validated = organizationSchemas.create.parse(input);
 			const sanitized = sanitizeObject(validated);
 

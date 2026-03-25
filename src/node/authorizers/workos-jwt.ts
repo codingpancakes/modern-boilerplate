@@ -1,3 +1,4 @@
+import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayRequestAuthorizerEvent } from "aws-lambda";
 import {
 	createRemoteJWKSet,
@@ -5,6 +6,8 @@ import {
 	type JWTVerifyResult,
 	jwtVerify,
 } from "jose";
+
+const logger = new Logger({ serviceName: "workos-authorizer" });
 
 const CLIENT_ID = process.env.WORKOS_CLIENT_ID || "";
 const AUTH_ISSUER = process.env.AUTH_ISSUER ?? "https://api.workos.com/";
@@ -20,7 +23,9 @@ try {
 		},
 	);
 } catch (jwksError) {
-	console.error("Failed to create JWKS:", jwksError);
+	logger.error("Failed to create JWKS", {
+		error: (jwksError as Error).message,
+	});
 }
 
 // HTTP API Lambda Authorizer (Simple response)
@@ -41,12 +46,11 @@ export const handler = async (
 			: "";
 
 		if (!token) {
-			console.log("No token, rejecting");
 			return { isAuthorized: false };
 		}
 
 		if (!JWKS) {
-			console.error("JWKS not initialized, rejecting");
+			logger.error("JWKS not initialized, rejecting");
 			return { isAuthorized: false };
 		}
 
@@ -82,7 +86,7 @@ export const handler = async (
 
 			// Reject tokens without a subject claim
 			if (!payload.sub) {
-				console.error("JWT missing sub claim, rejecting");
+				logger.error("JWT missing sub claim, rejecting");
 				return { isAuthorized: false };
 			}
 
@@ -109,17 +113,16 @@ export const handler = async (
 
 			return { isAuthorized: true, context: ctx };
 		} catch (err) {
-			// Classify for observability
 			const reason =
 				err instanceof errors.JWTExpired ? "token_expired" : "invalid_token";
-			console.error("JWT verification failed:", {
+			logger.warn("JWT verification failed", {
 				reason,
 				error: (err as Error).message,
 			});
 			return { isAuthorized: false };
 		}
 	} catch (globalErr) {
-		console.error("Authorizer error:", (globalErr as Error).message);
+		logger.error("Authorizer error", { error: (globalErr as Error).message });
 		return { isAuthorized: false };
 	}
 };

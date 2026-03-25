@@ -1,9 +1,11 @@
 import * as cdk from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as codedeploy from "aws-cdk-lib/aws-codedeploy";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
+import * as sns from "aws-cdk-lib/aws-sns";
 import * as path from "path";
 import { Construct } from "constructs";
 
@@ -39,6 +41,7 @@ export class RouteBuilder {
     private stage?: string,
     private codeDeployApp?: codedeploy.LambdaApplication,
     private deploymentConfig?: codedeploy.ILambdaDeploymentConfig,
+    private alarmTopic?: sns.Topic,
   ) {}
 
   /**
@@ -119,12 +122,19 @@ export class RouteBuilder {
             period: cdk.Duration.minutes(1),
             statistic: "Sum",
           }),
-          threshold: 5,
+          threshold: 3,
           evaluationPeriods: 1,
           treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-          alarmDescription: `${name}: error count exceeded 5 in 1 minute — rolling back`,
+          alarmDescription: `${name}: error count exceeded 3 in 1 minute — rolling back`,
         },
       );
+
+      // Notify via SNS when the alarm fires (email + any other subscribers)
+      if (this.alarmTopic) {
+        errorAlarm.addAlarmAction(
+          new cloudwatchActions.SnsAction(this.alarmTopic),
+        );
+      }
 
       new codedeploy.LambdaDeploymentGroup(
         this.scope,
