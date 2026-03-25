@@ -59,7 +59,9 @@ export class ApiStack extends cdk.Stack {
       description: "Production-grade serverless HTTP API",
       disableExecuteApiEndpoint: false,
       corsPreflight: {
-        allowOrigins: ["*"],
+        allowOrigins: process.env.CORS_EXACT_ORIGINS
+          ? process.env.CORS_EXACT_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+          : ["*"],
         allowMethods: [
           apigwv2.CorsHttpMethod.GET,
           apigwv2.CorsHttpMethod.POST,

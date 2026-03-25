@@ -115,6 +115,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		Bucket: config.bucketName,
 		Key: key,
 		ContentType: input.contentType,
+		ContentLength: input.fileSize,
 		ServerSideEncryption: "AES256",
 		Metadata: {
 			userId,

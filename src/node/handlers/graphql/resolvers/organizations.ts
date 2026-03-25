@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, gt, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
 import { organizationMembers, organizations } from "../../../db/schema/index";
 import {
@@ -7,6 +7,7 @@ import {
 	AUDIT_STATUS,
 	logAudit,
 } from "../../../lib/audit";
+import { createPaginatedResponse, decodeCursor } from "../../../lib/pagination";
 import { sanitizeObject } from "../../../lib/sanitize";
 import { organizationSchemas } from "../../../lib/validation";
 import type { GraphQLContext } from "../context";
@@ -59,15 +60,38 @@ export const organizationResolvers = {
 	Query: {
 		myOrganizations: async (
 			_parent: unknown,
-			_args: unknown,
+			{ limit = 20, cursor }: { limit?: number; cursor?: string },
 			context: GraphQLContext,
 		) => {
-			return context.db.query.organizationMembers.findMany({
+			const clampedLimit = Math.min(limit, 100);
+			const parsed = cursor ? decodeCursor(cursor) : null;
+			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
+
+			const rows = await context.db.query.organizationMembers.findMany({
 				where: and(
 					eq(organizationMembers.userId, context.userId),
 					eq(organizationMembers.status, "ACTIVE"),
+					parsed && cursorTs
+						? or(
+								gt(organizationMembers.createdAt, cursorTs),
+								and(
+									eq(organizationMembers.createdAt, cursorTs),
+									gt(organizationMembers.id, parsed.id),
+								),
+							)
+						: undefined,
 				),
+				orderBy: [
+					asc(organizationMembers.createdAt),
+					asc(organizationMembers.id),
+				],
+				limit: clampedLimit + 1,
 			});
+
+			return createPaginatedResponse(
+				rows as ((typeof rows)[0] & { createdAt: string })[],
+				clampedLimit,
+			);
 		},
 
 		organization: async (
@@ -84,17 +108,44 @@ export const organizationResolvers = {
 
 		organizationMembers: async (
 			_parent: unknown,
-			{ organizationId }: { organizationId: string },
+			{
+				organizationId,
+				limit = 20,
+				cursor,
+			}: { organizationId: string; limit?: number; cursor?: string },
 			context: GraphQLContext,
 		) => {
 			await requireMembership(context, organizationId);
 
-			return context.db.query.organizationMembers.findMany({
+			const clampedLimit = Math.min(limit, 100);
+			const parsed = cursor ? decodeCursor(cursor) : null;
+			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
+
+			const rows = await context.db.query.organizationMembers.findMany({
 				where: and(
 					eq(organizationMembers.organizationId, organizationId),
 					eq(organizationMembers.status, "ACTIVE"),
+					parsed && cursorTs
+						? or(
+								gt(organizationMembers.createdAt, cursorTs),
+								and(
+									eq(organizationMembers.createdAt, cursorTs),
+									gt(organizationMembers.id, parsed.id),
+								),
+							)
+						: undefined,
 				),
+				orderBy: [
+					asc(organizationMembers.createdAt),
+					asc(organizationMembers.id),
+				],
+				limit: clampedLimit + 1,
 			});
+
+			return createPaginatedResponse(
+				rows as ((typeof rows)[0] & { createdAt: string })[],
+				clampedLimit,
+			);
 		},
 	},
 

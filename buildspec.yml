@@ -6,7 +6,7 @@ version: 0.2
 phases:
   install:
     runtime-versions:
-      nodejs: 20
+      nodejs: 24
     commands:
       - echo "Installing pnpm..."
       - npm install -g pnpm@9

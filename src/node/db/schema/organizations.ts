@@ -157,6 +157,10 @@ export const organizationMembers = pgTable(
 		return {
 			ixOrgMembersOrg: index("ix_org_members_org").on(table.organizationId),
 			ixOrgMembersUser: index("ix_org_members_user").on(table.userId),
+			uxOrgMemberUserOrg: uniqueIndex("ux_org_member_user_org").on(
+				table.userId,
+				table.organizationId,
+			),
 		};
 	},
 );

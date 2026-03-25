@@ -38,11 +38,21 @@ enum OrgRole {
 	VIEWER
 }
 
+type OrganizationMembershipPage {
+	items: [OrganizationMembership!]!
+	nextCursor: String
+	hasMore: Boolean!
+}
+
 # Queries
 extend type Query {
-	myOrganizations: [OrganizationMembership!]!
+	myOrganizations(limit: Int, cursor: String): OrganizationMembershipPage!
 	organization(id: ID!): Organization
-	organizationMembers(organizationId: ID!): [OrganizationMembership!]!
+	organizationMembers(
+		organizationId: ID!
+		limit: Int
+		cursor: String
+	): OrganizationMembershipPage!
 }
 
 # Mutations

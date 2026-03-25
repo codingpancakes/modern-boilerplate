@@ -210,7 +210,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(
  * File upload size limits (in bytes)
  */
 export const FILE_SIZE_LIMITS = {
-	IMAGE: 10 * 1024 * 1024, // 10 MB
+	IMAGE: 250 * 1024 * 1024, // 250 MB
 	DOCUMENT: 25 * 1024 * 1024, // 25 MB
 	VIDEO: 100 * 1024 * 1024, // 100 MB
 	AVATAR: 2 * 1024 * 1024, // 2 MB

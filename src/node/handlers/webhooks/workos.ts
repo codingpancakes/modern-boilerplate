@@ -6,10 +6,11 @@ import {
 	SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import {
 	authIdentities,
 	idempotencyKeys,
+	organizationMembers,
 	organizations,
 	profiles,
 	users,
@@ -243,25 +244,39 @@ const webhookHandler = async (
 				.limit(1);
 
 			if (existing?.status === "completed") {
-				logger.warn("Duplicate event detected, skipping", {
-					idempotencyKey,
-				});
+				logger.warn("Duplicate event detected, skipping", { idempotencyKey });
 				return createSuccessResponse({ message: "Event already processed" });
 			}
 
-			// Stale processing key -- delete and re-insert to retry
-			logger.warn("Found stale processing key, retrying", {
-				idempotencyKey,
-			});
-			await db
-				.delete(idempotencyKeys)
-				.where(eq(idempotencyKeys.key, idempotencyKey));
-			await db.insert(idempotencyKeys).values({
-				key: idempotencyKey,
-				requestHash: webhookEvent.id,
-				status: "processing",
-				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-			});
+			// Atomically reclaim a stale processing key (older than 5 min) via UPDATE.
+			// Using UPDATE instead of DELETE+INSERT prevents a race where two concurrent
+			// requests both see the stale key and both proceed.
+			const staleThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+			const reclaimed = await db
+				.update(idempotencyKeys)
+				.set({
+					requestHash: webhookEvent.id,
+					expiresAt: new Date(
+						Date.now() + 7 * 24 * 60 * 60 * 1000,
+					).toISOString(),
+					updatedAt: new Date().toISOString(),
+				})
+				.where(
+					and(
+						eq(idempotencyKeys.key, idempotencyKey),
+						eq(idempotencyKeys.status, "processing"),
+						lt(idempotencyKeys.createdAt, staleThreshold),
+					),
+				)
+				.returning({ key: idempotencyKeys.key });
+
+			if (reclaimed.length === 0) {
+				// Another request is actively processing this event
+				logger.warn("Event is already being processed", { idempotencyKey });
+				return createSuccessResponse({ message: "Event already processing" });
+			}
+
+			logger.warn("Reclaimed stale processing key", { idempotencyKey });
 		}
 		logger.info("Processing event", { idempotencyKey });
 
@@ -471,17 +486,22 @@ const webhookHandler = async (
 					webhookEvent.data as Record<string, unknown>,
 				);
 
+				// Soft-delete: consistent with GraphQL deleteOrganization mutation
 				const [deleted] = await db
-					.select({ id: organizations.id })
-					.from(organizations)
+					.update(organizations)
+					.set({ status: "DELETED", updatedAt: new Date().toISOString() })
 					.where(eq(organizations.workosOrgId, orgData.id))
-					.limit(1);
-
-				await db
-					.delete(organizations)
-					.where(eq(organizations.workosOrgId, orgData.id));
+					.returning({ id: organizations.id });
 
 				if (deleted) {
+					await db
+						.update(organizationMembers)
+						.set({
+							status: "INACTIVE",
+							updatedAt: new Date().toISOString(),
+						})
+						.where(eq(organizationMembers.organizationId, deleted.id));
+
 					await logAudit({
 						organizationId: deleted.id,
 						action: AUDIT_ACTIONS.DELETE,

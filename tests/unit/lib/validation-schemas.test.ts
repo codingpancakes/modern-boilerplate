@@ -40,6 +40,7 @@ describe("Media Validation Schemas", () => {
 			const validData = {
 				filename: "test.png",
 				contentType: "image/png",
+				fileSize: 1024 * 1024,
 			};
 
 			const result = uploadImageRequest.safeParse(validData);
