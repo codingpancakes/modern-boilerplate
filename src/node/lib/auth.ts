@@ -1,8 +1,16 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { and, eq } from "drizzle-orm";
-import { authIdentities, profiles, users } from "../db/schema/index";
+import { authIdentities } from "../db/schema/index";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	logAudit,
+} from "./audit";
 import { getDb } from "./db";
+import { errorMessage } from "./error-utils";
 import { Errors } from "./errors";
+import { createUserWithIdentity } from "./services/user-provisioning";
 
 export type Claims = {
 	sub: string;
@@ -73,39 +81,28 @@ export async function getUserIdFromClaims(
 
 	// First login race condition: webhook hasn't fired yet — provision JIT
 	try {
-		const [newUser] = await db
-			.insert(users)
-			.values({
-				email: claims.email || null,
-				type: "MEMBER",
-			})
-			.returning({ id: users.id });
+		const newUserId = await createUserWithIdentity(db, {
+			providerSubject,
+			email: claims.email || null,
+		});
 
-		try {
-			await db.insert(profiles).values({ userId: newUser.id });
-			await db.insert(authIdentities).values({
-				userId: newUser.id,
-				providerType: "workos",
-				providerSubject,
-				emailAtProvider: claims.email || null,
-			});
-		} catch (insertErr) {
-			// Compensate: remove the orphaned user row before re-throwing
-			await db
-				.delete(users)
-				.where(eq(users.id, newUser.id))
-				.catch(() => {});
-			throw insertErr;
-		}
+		void logAudit({
+			userId: newUserId,
+			action: AUDIT_ACTIONS.CREATE,
+			resourceType: AUDIT_RESOURCE_TYPES.USER,
+			resourceId: newUserId,
+			status: AUDIT_STATUS.SUCCESS,
+			metadata: { source: "jit_provisioning", providerSubject },
+		});
 
-		return newUser.id;
+		return newUserId;
 	} catch (err) {
 		// Unique-constraint violation means a concurrent request already provisioned
-		const message = err instanceof Error ? err.message : String(err);
+		const msg = errorMessage(err);
 		const isUniqueViolation =
-			message.includes("unique") ||
-			message.includes("duplicate") ||
-			message.includes("23505");
+			msg.includes("unique") ||
+			msg.includes("duplicate") ||
+			msg.includes("23505");
 
 		if (isUniqueViolation) {
 			const retry = await lookup();

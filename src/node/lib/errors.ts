@@ -1,6 +1,10 @@
 import { Logger } from "@aws-lambda-powertools/logger";
+import { errorMessage } from "./error-utils";
 
 const logger = new Logger({ serviceName: "api" });
+
+const isDeployed =
+	process.env.NODE_ENV === "production" || process.env.NODE_ENV === "staging";
 
 export class ApiError extends Error {
 	constructor(
@@ -18,18 +22,23 @@ export function formatError(error: unknown, requestId?: string) {
 	const timestamp = new Date().toISOString();
 
 	if (error instanceof ApiError) {
+		// In production, mask internal details for server errors
+		const safeMessage =
+			isDeployed && error.statusCode >= 500
+				? "Internal server error"
+				: error.message;
+
 		return {
 			statusCode: error.statusCode,
 			headers: {
 				"Content-Type": "application/json",
-				// CORS headers added by middleware
 			},
 			body: JSON.stringify({
 				success: false,
-				error: error.message,
+				error: safeMessage,
 				details: {
 					code: error.code,
-					extra: error.details,
+					extra: isDeployed ? undefined : error.details,
 					requestId,
 					timestamp,
 				},
@@ -38,7 +47,10 @@ export function formatError(error: unknown, requestId?: string) {
 	}
 
 	// Log unexpected errors
-	logger.error("Unexpected error", { error, requestId });
+	logger.error("Unexpected error", {
+		error: errorMessage(error),
+		requestId,
+	});
 
 	return {
 		statusCode: 500,

@@ -1,8 +1,8 @@
 # 📋 Data Retention Policy
 
 **Effective Date:** December 10, 2025  
-**Last Updated:** December 10, 2025  
-**Version:** 1.0
+**Last Updated:** March 2026  
+**Version:** 1.1
 
 ---
 
@@ -110,28 +110,13 @@ This document defines the data retention and deletion policies for the RailBranc
 - Uploaded media files
 
 **Exceptions:**
-- Audit logs (if implemented) retained for 7 years for compliance
+- Audit logs retained for 7 years for compliance (Phase 1 implemented)
 - CloudTrail logs retained per infrastructure policy (1 year)
 
 **Justification:**
 - No regulatory requirement for soft delete in current markets
 - Immediate deletion respects user privacy
 - Can be changed to soft delete if GDPR compliance is required
-
----
-
-### Contact Data
-**Retention:** Hard-deleted immediately when user deletes
-
-**Process:**
-1. User deletes contact via API
-2. Contact record deleted immediately from database
-3. No soft delete or recovery period
-
-**Justification:**
-- Contacts are user-managed data
-- Immediate deletion provides clear user control
-- Can be changed to soft delete if business requirements change
 
 ---
 
@@ -155,15 +140,16 @@ This document defines the data retention and deletion policies for the RailBranc
 
 ---
 
-### Audit Logs (When Implemented)
-**Retention:** 7 years (planned)
+### Audit Logs
+**Retention:** 7 years
 
 **Purpose:** Compliance, security investigations, SOC 2 requirements
 
-**Implementation:** To be implemented
-- Database table: `auditLogs`
+**Implementation:** Phase 1 complete
+- Database table: `auditLogs` (14 columns, 6 indexes)
 - Tracks all user actions (create, update, delete)
-- Includes: userId, action, resourceType, timestamp, changes
+- Includes: userId, action, resourceType, timestamp, changes, IP, user agent, request ID
+- Utilities: `logAudit()`, `auditResolver()`, `extractRequestContext()`
 
 **Justification:**
 - 7 years is standard for financial/compliance records
@@ -228,9 +214,8 @@ This document defines the data retention and deletion policies for the RailBranc
 | Webhook DLQ | 14 days | Automatic | ✅ Yes |
 | S3 Multipart Uploads | 7 days | Automatic | ✅ Yes |
 | User Accounts | Immediate | Manual (user request) | ❌ No |
-| Contact Data | Immediate | Manual (user action) | ❌ No |
 | Media Files | Until deleted | Manual (user action) | ❌ No |
-| Audit Logs | 7 years (planned) | Automatic (planned) | ⏳ Future |
+| Audit Logs | 7 years | Automatic (cleanup TBD) | ⏳ Partial |
 
 ---
 
@@ -251,6 +236,7 @@ This document defines the data retention and deletion policies for the RailBranc
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
 | 2025-12-10 | 1.0 | Initial policy documentation | System |
+| 2026-03 | 1.1 | Updated audit status to Phase 1 complete, removed stale contact data section | System |
 
 ---
 
@@ -272,7 +258,7 @@ For questions about data retention or deletion requests:
 - [x] Encryption at rest enabled
 - [x] Encryption in transit enabled
 - [x] Access controls implemented
-- [ ] Audit logs implemented (planned)
+- [x] Audit logs implemented (Phase 1 — automated purge TBD)
 - [ ] GDPR compliance (if needed)
 - [ ] Data export API (if needed)
 

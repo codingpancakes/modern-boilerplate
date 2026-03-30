@@ -1,9 +1,9 @@
 # Base schema with root types
 
 type Query {
-	_empty: String
+	_empty: String @deprecated(reason: "Placeholder field — use extended types")
 }
 
 type Mutation {
-	_empty: String
+	_empty: String @deprecated(reason: "Placeholder field — use extended types")
 }

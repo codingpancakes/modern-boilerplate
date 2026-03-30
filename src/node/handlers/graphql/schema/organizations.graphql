@@ -97,7 +97,7 @@ input UpdateOrganizationInput {
 
 input InviteMemberInput {
 	userId: ID!
-	role: OrgRole
+	role: OrgRole = MEMBER
 }
 
 input UpdateMemberRoleInput {

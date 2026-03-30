@@ -5,13 +5,7 @@
  */
 
 import { z } from "zod";
-
-const jsonObject = z
-	.record(z.unknown())
-	.refine(
-		(obj) => JSON.stringify(obj).length <= 10_000,
-		"Object too large (max 10KB serialized)",
-	);
+import { jsonObject } from "./helpers";
 
 const httpsUrl = z
 	.string()
@@ -61,7 +55,7 @@ export const updateUserProfile = z
 				gender: z.string().max(50).optional(),
 				lgbtq: z.boolean().optional(),
 				ethnicity: z.string().max(100).optional(),
-				languages: z.array(z.string()).optional(),
+				languages: z.array(z.string().max(100)).max(20).optional(),
 				onboardingCompleted: z.boolean().optional(),
 				persona: jsonObject.optional(),
 				snapshot: jsonObject.optional(),
@@ -85,7 +79,7 @@ export const updateProfileInput = z.object({
 	gender: z.string().max(50).optional(),
 	lgbtq: z.boolean().optional(),
 	ethnicity: z.string().max(100).optional(),
-	languages: z.array(z.string()).optional(),
+	languages: z.array(z.string().max(100)).max(20).optional(),
 	onboardingCompleted: z.boolean().optional(),
 	persona: jsonObject.optional(),
 	snapshot: jsonObject.optional(),

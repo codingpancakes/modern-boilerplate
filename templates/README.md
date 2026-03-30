@@ -13,7 +13,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 - `GET /v1/users/me` - Get current user profile
 - `PATCH /v1/users/me` - Update user profile
 - `POST /v1/media/upload-image` - Upload user's image
-- `GET /v1/journeys` - List user's journeys
+- `GET /v1/media/images` - List user's images
 
 **Characteristics:**
 - Uses `withAuth` middleware
@@ -26,9 +26,9 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 **Use for:** Endpoints that require organization membership.
 
 **Examples:**
-- `GET /v1/orgs/{orgId}/campaigns` - List organization campaigns
-- `POST /v1/orgs/{orgId}/contacts` - Create organization contact
-- `GET /v1/orgs/{orgId}/analytics` - Get organization analytics
+- `GET /v1/orgs/{orgId}/members` - List organization members
+- `POST /v1/orgs/{orgId}/members` - Add organization member
+- `GET /v1/orgs/{orgId}/settings` - Get organization settings
 
 **Characteristics:**
 - Uses `withAuth` middleware
@@ -43,7 +43,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 
 **Examples:**
 - `GET /v1/health` - Health check
-- `POST /v1/webhooks/stripe` - Stripe webhook
+- `POST /v1/webhooks/workos` - WorkOS webhook
 - `POST /v1/webhooks/workos` - WorkOS webhook
 - `GET /v1/public/status` - Public status endpoint
 
@@ -85,7 +85,7 @@ Templates use `.ts.template` extension so TypeScript ignores them during build. 
 
 5. **Implement handler logic**
 
-6. **Register route** in `local-dev/server.ts`
+6. **Register route** in `infrastructure/lib/routes/` (CDK) and `local-dev/server.ts` (dev server)
 
 7. **Add test** to `tests/integration/test-handlers.sh`
 
@@ -97,7 +97,7 @@ See the template files in this directory for comprehensive examples.
 
 ## Code Patterns
 
-See [`.ai/PATTERNS.md`](../.ai/PATTERNS.md) for coding standards and patterns.
+See [`.cursor/rules/`](../.cursor/rules/) for AI-enforced coding standards and patterns.
 
 ---
 
@@ -136,10 +136,7 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
   // ... database operations
   
   // Return response
-  return {
-    statusCode: 200,
-    body: JSON.stringify({ success: true, data: result })
-  };
+  return createSuccessResponse(result);
 };
 
 // 5. Export with middleware
@@ -232,6 +229,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 
 ## Need Help?
 
-- **Code Patterns:** [`.ai/PATTERNS.md`](../.ai/PATTERNS.md)
-- **Project Context:** [`.ai/CONTEXT.md`](../.ai/CONTEXT.md)
-- **Contributing:** [`CONTRIBUTING.md`](../CONTRIBUTING.md)
+- **Code Patterns:** [`.cursor/rules/`](../.cursor/rules/) — AI-enforced coding standards
+- **Project Overview:** [`README.md`](../README.md) — Architecture and quick start
+- **Handler Patterns:** [`.cursor/rules/handlers.mdc`](../.cursor/rules/handlers.mdc) — REST handler conventions

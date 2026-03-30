@@ -27,8 +27,16 @@ const workosUserData = z
 	.object({
 		id: z.string().min(1),
 		email: z.string().email(),
-		first_name: z.string().default(""),
-		last_name: z.string().default(""),
+		first_name: z
+			.string()
+			.nullable()
+			.transform((v) => v ?? "")
+			.default(""),
+		last_name: z
+			.string()
+			.nullable()
+			.transform((v) => v ?? "")
+			.default(""),
 	})
 	.passthrough();
 

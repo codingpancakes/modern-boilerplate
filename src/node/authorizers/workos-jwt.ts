@@ -6,12 +6,19 @@ import {
 	type JWTVerifyResult,
 	jwtVerify,
 } from "jose";
+import { errorMessage } from "../lib/error-utils";
 
 const logger = new Logger({ serviceName: "workos-authorizer" });
 
 const CLIENT_ID = process.env.WORKOS_CLIENT_ID || "";
 const AUTH_ISSUER = process.env.AUTH_ISSUER ?? "https://api.workos.com/";
-// WorkOS JWKS for your client - make it more defensive
+
+const IS_LOCAL =
+	process.env.NODE_ENV === "development" || process.env.STAGE === "development";
+if (!CLIENT_ID && !IS_LOCAL) {
+	throw new Error("WORKOS_CLIENT_ID is required in deployed environments");
+}
+
 let JWKS: ReturnType<typeof createRemoteJWKSet> | undefined;
 try {
 	JWKS = createRemoteJWKSet(
@@ -24,7 +31,7 @@ try {
 	);
 } catch (jwksError) {
 	logger.error("Failed to create JWKS", {
-		error: (jwksError as Error).message,
+		error: errorMessage(jwksError),
 	});
 }
 
@@ -62,6 +69,7 @@ export const handler = async (
 					AUTH_ISSUER,
 					`https://api.workos.com/user_management/${CLIENT_ID}`,
 				],
+				audience: CLIENT_ID || undefined,
 				algorithms: ["RS256"],
 				clockTolerance: 60,
 			});
@@ -117,12 +125,14 @@ export const handler = async (
 				err instanceof errors.JWTExpired ? "token_expired" : "invalid_token";
 			logger.warn("JWT verification failed", {
 				reason,
-				error: (err as Error).message,
+				error: errorMessage(err),
 			});
 			return { isAuthorized: false };
 		}
 	} catch (globalErr) {
-		logger.error("Authorizer error", { error: (globalErr as Error).message });
+		logger.error("Authorizer error", {
+			error: errorMessage(globalErr),
+		});
 		return { isAuthorized: false };
 	}
 };

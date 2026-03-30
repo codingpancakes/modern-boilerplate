@@ -6,12 +6,14 @@ import {
 import { type NeonQueryFunction, neon } from "@neondatabase/serverless";
 import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
 import * as schema from "../db/schema/index";
+import { errorMessage } from "./error-utils";
 
 const logger = new Logger({ serviceName: "db" });
 
-type DbInstance = NeonHttpDatabase<typeof schema>;
+export type DbInstance = NeonHttpDatabase<typeof schema>;
 
 let dbInstance: DbInstance | null = null;
+let dbInitPromise: Promise<DbInstance> | null = null;
 let dbUrl: string | null = null;
 let dbUrlCachedAt: number | null = null;
 const DB_URL_TTL_MS = 15 * 60 * 1000;
@@ -45,25 +47,46 @@ async function getDbUrl(): Promise<string> {
 		try {
 			const response = await client.send(command);
 			if (response.SecretString) {
-				const secret = JSON.parse(response.SecretString);
-				// Format stored by sync-secrets script: { url: "postgresql://..." }
-				if (secret.url) {
-					dbUrl = String(secret.url);
+				const secret = JSON.parse(response.SecretString) as Record<
+					string,
+					unknown
+				>;
+
+				if (
+					typeof secret.url === "string" &&
+					secret.url.startsWith("postgresql")
+				) {
+					dbUrl = secret.url;
 					dbUrlCachedAt = Date.now();
 					return dbUrl;
 				}
+
 				// Fallback: RDS-style secret with individual fields
-				const sslmode = secret.sslmode || "require";
-				const channelBinding = secret.channel_binding
-					? `&channel_binding=${secret.channel_binding}`
-					: "";
-				dbUrl = `postgresql://${secret.username}:${secret.password}@${secret.host}:${secret.port || 5432}/${secret.database}?sslmode=${sslmode}${channelBinding}`;
-				dbUrlCachedAt = Date.now();
-				return dbUrl;
+				if (
+					typeof secret.username === "string" &&
+					typeof secret.password === "string" &&
+					typeof secret.host === "string" &&
+					typeof secret.database === "string"
+				) {
+					const sslmode =
+						typeof secret.sslmode === "string" ? secret.sslmode : "require";
+					const channelBinding =
+						typeof secret.channel_binding === "string"
+							? `&channel_binding=${secret.channel_binding}`
+							: "";
+					dbUrl = `postgresql://${encodeURIComponent(secret.username as string)}:${encodeURIComponent(secret.password as string)}@${secret.host}:${secret.port || 5432}/${secret.database}?sslmode=${sslmode}${channelBinding}`;
+					dbUrlCachedAt = Date.now();
+					return dbUrl;
+				}
+
+				throw new Error(
+					"Secret JSON missing required fields (url or username/password/host/database)",
+				);
 			}
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			logger.error("Failed to retrieve database secret", { error: message });
+			logger.error("Failed to retrieve database secret", {
+				error: errorMessage(error),
+			});
 			throw new Error("Failed to retrieve database credentials");
 		}
 	}
@@ -77,12 +100,29 @@ async function getDbUrl(): Promise<string> {
  * @throws Error if connection fails after retries
  * @returns Drizzle database instance
  */
+function isDbUrlExpired(): boolean {
+	if (process.env.DATABASE_URL) return false;
+	if (!process.env.DB_SECRET_ARN) return false;
+	return !dbUrlCachedAt || Date.now() - dbUrlCachedAt >= DB_URL_TTL_MS;
+}
+
 export async function getDb(): Promise<DbInstance> {
-	if (!dbInstance) {
-		const url = await getDbUrl();
-		dbInstance = await createDbConnection(url);
+	// Check TTL even when dbInstance exists so secret rotation is picked up
+	if (dbInstance && !isDbUrlExpired()) return dbInstance;
+
+	// Reuse in-flight init to prevent concurrent callers from creating duplicates
+	if (!dbInitPromise) {
+		dbInitPromise = (async () => {
+			const url = await getDbUrl();
+			const db = await createDbConnection(url);
+			dbInstance = db;
+			return db;
+		})().finally(() => {
+			dbInitPromise = null;
+		});
 	}
-	return dbInstance;
+
+	return dbInitPromise;
 }
 
 /**
@@ -92,6 +132,8 @@ async function createDbConnection(
 	url: string,
 	retryCount = 0,
 ): Promise<DbInstance> {
+	if (retryCount === 0) connectionAttempts = 0;
+
 	try {
 		const sql: NeonQueryFunction<boolean, boolean> = neon(url, {
 			fetchOptions: {
@@ -107,7 +149,6 @@ async function createDbConnection(
 			logger: process.env.NODE_ENV === "development",
 		});
 
-		connectionAttempts = 0; // Reset on success
 		return db;
 	} catch (error) {
 		connectionAttempts++;
@@ -115,33 +156,22 @@ async function createDbConnection(
 		if (retryCount < MAX_RETRIES) {
 			// Exponential backoff
 			const delay = RETRY_DELAY_MS * 2 ** retryCount;
-			const message = error instanceof Error ? error.message : String(error);
 			logger.warn("Database connection attempt failed, retrying", {
 				attempt: retryCount + 1,
 				retryInMs: delay,
-				error: message,
+				error: errorMessage(error),
 			});
 
 			await new Promise((resolve) => setTimeout(resolve, delay));
 			return createDbConnection(url, retryCount + 1);
 		}
 
-		const message = error instanceof Error ? error.message : String(error);
 		logger.error("Database connection failed after retries", {
 			attempts: connectionAttempts,
-			error: message,
+			error: errorMessage(error),
 		});
 		throw new Error("Failed to connect to database after multiple attempts");
 	}
-}
-
-/**
- * Reset database connection (useful for testing or connection issues)
- */
-function _resetDbConnection(): void {
-	dbInstance = null;
-	dbUrl = null;
-	connectionAttempts = 0;
 }
 
 export { schema };

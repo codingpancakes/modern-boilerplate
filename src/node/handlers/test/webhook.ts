@@ -69,9 +69,12 @@ const handlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
 
 	logger.info("Webhook received", { event: parsed.event });
 
+	if (process.env.STAGE === "production") {
+		throw Errors.NotFound("endpoint");
+	}
+
 	return createSuccessResponse({
 		message: "Webhook processed successfully",
-		received: parsed,
 		timestamp: new Date().toISOString(),
 	});
 };

@@ -43,13 +43,36 @@ def handler(event, context):
         }
     }
     
+    headers = event.get('headers') or {}
+    origin = headers.get('origin', '')
+    
+    allowed_suffixes = os.environ.get('CORS_PARENT_DOMAINS', '').split(',')
+    origin_allowed = False
+    if origin:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        hostname = parsed.hostname or ''
+        for suffix in allowed_suffixes:
+            suffix = suffix.strip()
+            if suffix and (hostname == suffix or hostname.endswith('.' + suffix)):
+                origin_allowed = True
+                break
+    
+    cors_origin = origin if origin_allowed else ''
+    
     return {
         'statusCode': 200,
         'headers': {
             'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+            'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Referrer-Policy': 'strict-origin-when-cross-origin',
+            'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+            'Access-Control-Allow-Origin': cors_origin,
+            'Access-Control-Allow-Methods': 'GET, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Vary': 'Origin'
         },
         'body': json.dumps(response_body)
     }

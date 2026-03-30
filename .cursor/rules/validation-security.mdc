@@ -1,0 +1,40 @@
+---
+description: Validation, sanitization, and security patterns
+globs: src/node/lib/**/*.ts
+alwaysApply: false
+---
+
+# Validation & Security Patterns
+
+## Zod Schemas
+- Live in `src/node/lib/validation/{domain}.ts`
+- Export a `{domain}Schemas` object, re-export from `index.ts`
+- Use `jsonObject` helper for arbitrary JSON fields (has depth + size limits)
+- Bound arrays: `.array(z.string().max(100)).max(20)` — always set max length + element length
+- Use `.nullable()` for fields that can be null from external providers
+
+## Input Flow
+```
+request → parseBody(event, schema) → sanitizeObject(validated) → DB write
+```
+Never skip steps. `sanitizeObject` HTML-escapes strings and validates URLs on `RAW_STRING_KEYS`.
+
+## Security Checklist for New Endpoints
+- [ ] Zod schema validates all input fields with appropriate constraints
+- [ ] `sanitizeObject()` applied before any DB write
+- [ ] Auth: `withAuth` (REST) or authorizer (GraphQL) protects the route
+- [ ] Null guard: check DB results before returning (`if (!result) throw ...`)
+- [ ] Audit: `logAudit()` called on all mutations
+- [ ] Transactions: multi-step writes wrapped in `db.transaction()`
+- [ ] File uploads: validate magic bytes, content-type/extension match, size limit
+
+## Error Handling
+- REST: `throw Errors.NotFound("User")` — middleware formats the response
+- GraphQL: `throw new GraphQLError("msg", { extensions: { code: "NOT_FOUND" } })`
+- Never return raw error details in production — `formatError` masks non-safe codes
+- Safe GraphQL codes: BAD_USER_INPUT, GRAPHQL_VALIDATION_FAILED, GRAPHQL_PARSE_FAILED, FORBIDDEN, UNAUTHENTICATED, NOT_FOUND, CONFLICT
+
+## CORS
+- Dynamic origin matching via `CORS_EXACT_ORIGINS`, `CORS_PARENT_DOMAINS`
+- HTTPS enforced for non-localhost origins
+- `withAuth` and `withPublicCors` add CORS headers automatically

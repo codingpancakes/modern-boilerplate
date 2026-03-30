@@ -10,16 +10,20 @@ This document lists all environment variables used in the project and where they
 
 ---
 
-## 🔧 Local Development (.env files)
+## 🔧 Environment Files
 
-These variables must be defined in `.env.staging` and `.env.production` files:
+- **`.env.local`** — local development (`pnpm dev`, `pnpm migrate`, `pnpm db:generate`)
+- **`.env.staging`** — staging deployment (`pnpm deploy:staging`, `pnpm sync-secrets staging`)
+- **`.env.production`** — production deployment (`pnpm deploy:production`, `pnpm sync-secrets production`)
+
+All files share the same variable schema. None are committed to git.
 
 ### Required Variables
-- `PROJECT_NAME` - Project identifier (e.g., "postway")
+- `PROJECT_NAME` - Project identifier (e.g., "railbranch")
 - `STAGE` - Environment stage ("staging" or "production")
 - `AWS_REGION` - AWS region (e.g., "us-east-1")
 - `HOSTED_ZONE_ID` - Route53 hosted zone ID
-- `HOSTED_ZONE_NAME` - Domain name (e.g., "postway.services")
+- `HOSTED_ZONE_NAME` - Domain name (e.g., "yourdomain.com")
 - `GITHUB_OWNER` - GitHub organization/user
 - `GITHUB_REPO` - Repository name
 - `GITHUB_BRANCH` - Branch to deploy from
@@ -170,22 +174,22 @@ pnpm sync-secrets production
 
 ### List all SSM parameters for a stage
 ```bash
-aws ssm get-parameters-by-path --path "/postway/staging" --region us-east-1
+aws ssm get-parameters-by-path --path "/{PROJECT_NAME}/staging" --region us-east-1
 ```
 
 ### List all secrets for a stage
 ```bash
-aws secretsmanager list-secrets --filters Key=name,Values=/postway/staging --region us-east-1
+aws secretsmanager list-secrets --filters Key=name,Values=/{PROJECT_NAME}/staging --region us-east-1
 ```
 
 ### Get specific SSM parameter
 ```bash
-aws ssm get-parameter --name "/postway/staging/hosted-zone-name" --region us-east-1
+aws ssm get-parameter --name "/{PROJECT_NAME}/staging/hosted-zone-name" --region us-east-1
 ```
 
 ### Get specific secret
 ```bash
-aws secretsmanager get-secret-value --secret-id "/postway/staging/workos" --region us-east-1
+aws secretsmanager get-secret-value --secret-id "/{PROJECT_NAME}/staging/workos" --region us-east-1
 ```
 
 ---
@@ -200,4 +204,4 @@ aws secretsmanager get-secret-value --secret-id "/postway/staging/workos" --regi
 
 ---
 
-**Last Updated:** December 8, 2025
+**Last Updated:** March 2026

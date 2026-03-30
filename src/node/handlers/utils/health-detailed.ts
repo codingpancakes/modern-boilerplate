@@ -1,6 +1,7 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import { sql } from "drizzle-orm";
 import { getDb } from "../../lib/db";
+import { errorMessage } from "../../lib/error-utils";
 import { createSuccessResponse } from "../../lib/response";
 import { withPublicCors } from "../../lib/withPublicCors";
 
@@ -8,7 +9,7 @@ const logger = new Logger({ serviceName: "health-detailed" });
 
 /**
  * @swagger
- * /v1/utils/health/detailed:
+ * /v1/health/detailed:
  *   get:
  *     tags: [Utils]
  *     summary: Detailed health check endpoint
@@ -80,18 +81,6 @@ interface HealthCheck {
 	configured?: boolean;
 }
 
-interface HealthCheckResult {
-	status: "healthy" | "degraded" | "unhealthy";
-	timestamp: string;
-	version: string;
-	stage: string;
-	checks: {
-		database: HealthCheck;
-		workos: HealthCheck;
-		s3: HealthCheck;
-	};
-}
-
 async function checkDatabase(): Promise<HealthCheck> {
 	const start = Date.now();
 	try {
@@ -108,7 +97,7 @@ async function checkDatabase(): Promise<HealthCheck> {
 	} catch (error) {
 		const responseTime = Date.now() - start;
 		logger.error("Database health check failed", {
-			error: error instanceof Error ? error.message : String(error),
+			error: errorMessage(error),
 		});
 		return {
 			status: "error",
@@ -177,23 +166,26 @@ const healthHandler = async () => {
 	}
 
 	// Degraded: External services have issues but not critical
-	if (workos.status === "error" || s3.status === "error") {
+	else if (workos.status === "error" || s3.status === "error") {
 		overallStatus = "degraded";
 	}
 
-	const result: HealthCheckResult = {
+	// Log full details for internal debugging; public response is minimal
+	logger.info("Health check completed", {
 		status: overallStatus,
-		timestamp: new Date().toISOString(),
-		version: process.env.API_VERSION || "v1",
-		stage: process.env.STAGE || "dev",
-		checks: {
-			database,
-			workos,
-			s3,
-		},
-	};
+		checks: { database, workos, s3 },
+	});
 
-	return createSuccessResponse(result);
+	const httpStatus = overallStatus === "unhealthy" ? 503 : 200;
+
+	return createSuccessResponse(
+		{
+			status: overallStatus,
+			timestamp: new Date().toISOString(),
+			version: process.env.API_VERSION || "v1",
+		},
+		httpStatus,
+	);
 };
 
 export const handler = withPublicCors(healthHandler);

@@ -1,0 +1,38 @@
+---
+description: AWS CDK infrastructure patterns
+globs: infrastructure/**/*.ts
+alwaysApply: false
+---
+
+# Infrastructure (CDK) Patterns
+
+## Stack Structure (instantiation order in `bin/app.ts`)
+- `SecurityStack` — Secrets Manager, shared IAM role (created first — other stacks depend on it)
+- `DatabaseStack` — migration runner Lambda
+- `MonitoringStack` — SNS alarms, Lambda metrics, CloudWatch dashboard
+- `CostMonitoringStack` — AWS Budgets + alerts
+- `CloudTrailStack` — CloudTrail + S3 lifecycle
+- `MediaStack` / `PublicAssetsStack` — S3 + CloudFront CDNs
+- `ApiStack` — HTTP API, Lambda handlers, WAF, API Gateway alarms, CodeDeploy
+- `PipelineStack` — CodePipeline + CodeBuild CI/CD (staging/production only)
+
+## Adding a New Lambda Handler
+1. Use `RouteBuilder.createHandler()` — it applies the shared `lambdaRole`, blue-green wrapping, and standard config
+2. Register the route via the appropriate route group: `PublicRoutes`, `ProtectedRoutes`, or `InternalRoutes`
+3. The `lambdaRole` includes: Secrets Manager, S3, X-Ray permissions
+4. If the handler needs additional permissions, grant them on `lambdaRole` — NOT on individual functions
+
+## Key Conventions
+- All handlers use `lambdaRole` (shared IAM role with S3 + Secrets Manager + X-Ray)
+- Blue-green deployment via `wrapWithBlueGreen()` — canary 10% for 5 min in prod, ALL_AT_ONCE in staging
+- Source maps only when `stage === "development"` (disabled for staging/prod)
+- GraphQL GET only when `stage === "development"` (POST-only otherwise, including dev/local CDK stages)
+- GraphiQL docs deployed when `stage` is `development`, `dev`, or `local`
+- API Gateway metrics use `ApiId` dimension (NOT `ApiName` — that's REST v1)
+- WAF scope is `CLOUDFRONT`, attached to distribution (not directly to HTTP API v2)
+- CDK alpha packages (`@aws-cdk/aws-apigatewayv2-alpha`) must match `aws-cdk-lib` version
+
+## Environment
+- Secrets via AWS Secrets Manager (never plaintext env vars for credentials)
+- Non-secret config via `commonEnv` object shared across all Lambdas
+- `CORS_EXACT_ORIGINS` is required at synth time (throws if missing)

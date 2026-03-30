@@ -10,8 +10,6 @@ phases:
     commands:
       - echo "Installing pnpm..."
       - npm install -g pnpm@9
-      - echo "Cleaning up any existing node_modules..."
-      - rm -rf node_modules .pnpm-store
       - echo "Installing dependencies (including devDependencies)..."
       - NODE_ENV=development pnpm install --frozen-lockfile
 
@@ -47,23 +45,23 @@ phases:
       - export GITHUB_REPO=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-repo" --query 'Parameter.Value' --output text --region $AWS_REGION)
       - export GITHUB_BRANCH=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-branch" --query 'Parameter.Value' --output text --region $AWS_REGION)
       - echo "Loading Secrets Manager secrets..."
-      - WORKOS_SECRET=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region $AWS_REGION)
-      - export WORKOS_CLIENT_ID=$(echo $WORKOS_SECRET | jq -r '.clientId')
-      - echo "✓ Loaded all environment variables"
-      - echo "  PROJECT_NAME=$PROJECT_NAME"
-      - echo "  STAGE=$STAGE"
-      - echo "  AWS_REGION=$AWS_REGION"
-      - echo "  API_DOMAIN=$API_DOMAIN"
-      - echo "  IMAGES_BUCKET=$IMAGES_BUCKET"
-      - echo "  HOSTED_ZONE_NAME=$HOSTED_ZONE_NAME"
+      - export WORKOS_CLIENT_ID=$(aws secretsmanager get-secret-value --secret-id "/${PROJECT_NAME}/${STAGE}/workos" --query 'SecretString' --output text --region $AWS_REGION | jq -r '.clientId')
+      - export SENTRY_DSN=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/sentry-dsn" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
+      - echo "✓ Loaded all environment variables for stage=$STAGE"
+      - echo "Running dependency audit..."
+      - pnpm audit --audit-level=high || echo "⚠️ Audit found vulnerabilities (non-blocking)"
+      - echo "Running lint..."
+      - pnpm run lint
+      - echo "Running typecheck..."
+      - pnpm run typecheck
       - echo "Running tests..."
       - pnpm run test:run
       - echo "Building TypeScript..."
       - pnpm run build
-      - echo "Running database migrations..."
-      - pnpm run migrate
       - echo "Deploying CDK stacks..."
       - pnpm run cdk deploy "${PROJECT_NAME}-${STAGE}-SecurityStack" "${PROJECT_NAME}-${STAGE}-DatabaseStack" "${PROJECT_NAME}-${STAGE}-MonitoringStack" "${PROJECT_NAME}-${STAGE}-CostMonitoringStack" "${PROJECT_NAME}-${STAGE}-CloudTrailStack" "${PROJECT_NAME}-${STAGE}-MediaStack" "${PROJECT_NAME}-${STAGE}-PublicAssetsStack" "${PROJECT_NAME}-${STAGE}-ApiStack" --require-approval never
+      - echo "Running database migrations (after deploy for backward-compat)..."
+      - pnpm run migrate
 
   post_build:
     commands:
@@ -75,6 +73,11 @@ phases:
         else
           API_URL="https://api.${HOSTED_ZONE_NAME}"
         fi
-      - echo "Testing health endpoint at $API_URL/v1/health/detailed"
-      - curl -f "$API_URL/v1/health/detailed" || (echo "❌ Smoke test failed!" && exit 1)
-      - echo "✅ Smoke tests passed!"
+        echo "Testing health endpoint at $API_URL/v1/health/detailed"
+        HEALTH_RESPONSE=$(curl -sf "$API_URL/v1/health/detailed") || (echo "❌ Smoke test failed — endpoint unreachable!" && exit 1)
+        HEALTH_STATUS=$(echo "$HEALTH_RESPONSE" | jq -r '.data.status')
+        if [ "$HEALTH_STATUS" = "unhealthy" ]; then
+          echo "❌ Smoke test failed — health status: $HEALTH_STATUS"
+          exit 1
+        fi
+        echo "✅ Smoke tests passed (status: $HEALTH_STATUS)"

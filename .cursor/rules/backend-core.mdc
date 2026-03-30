@@ -1,0 +1,42 @@
+---
+description: Core project conventions and architecture — applies to all files
+alwaysApply: true
+---
+
+# RailBranch Backend — Core Rules
+
+## Stack
+Node.js 24 / TypeScript 5 / pnpm / AWS Lambda + API Gateway HTTP v2 / Neon Postgres (drizzle-orm) / WorkOS JWT / Zod / Biome / Vitest
+
+## Critical Invariants
+- **No try-catch in handlers** — middleware (`withAuth`, `withPublicCors`) catches all errors
+- **Zod for all validation** — `parseBody(event, schema)` for POST/PATCH, `parseQuery(event, schema)` for GET
+- **Drizzle ORM only** — never raw SQL
+- **sanitizeObject()** on all user input before DB write
+- **logAudit()** on all mutations (fire-and-forget in GraphQL: `void logAudit(...)`)
+- **ACTIVE filter** on all membership queries: `eq(organizationMembers.status, "ACTIVE")`
+- **Response helpers** — `createSuccessResponse(data)`, never raw `{ statusCode, body }`
+- **Errors factory** — `throw Errors.NotFound("User")`, never manual JSON error responses
+- **CDN URLs only** — `${IMAGES_CDN_URL}/${key}` for images, never raw S3 URLs
+- **Transactions** for multi-step writes — use `db.transaction(async (tx) => { ... })`
+
+## Directory Layout
+```
+src/node/handlers/       # One Lambda handler per file (create.ts, update.ts, list.ts)
+src/node/lib/            # Shared libs (middleware, cors, db, errors, audit, sanitize)
+src/node/lib/validation/ # Zod schemas by domain (users.ts, media.ts, organizations.ts)
+src/node/lib/services/   # Business logic (user-provisioning.ts)
+src/node/db/schema/      # Drizzle schema (8 tables, 3 enums)
+src/node/authorizers/    # Lambda authorizer (workos-jwt.ts)
+infrastructure/          # CDK stacks (api-stack, monitoring-stack, pipeline-stack)
+local-dev/server.ts      # Express dev server mimicking Lambda
+templates/               # Handler templates (.ts.template)
+```
+
+## Adding New Code
+1. Handler → `src/node/handlers/{domain}/{action}.ts`
+2. Validation → `src/node/lib/validation/{domain}.ts`, export from `index.ts`
+3. Schema → `src/node/db/schema/{domain}.ts`, export from `index.ts`
+4. Route → register in `infrastructure/lib/routes/` AND `local-dev/server.ts`
+5. Test → `tests/unit/` or `tests/integration/`
+6. Run `pnpm check` (lint + typecheck + tests) before committing

@@ -34,13 +34,17 @@ function validateHeader(
 
 	// Validate header value
 	let isValid = false;
-	if (config.expectedValue) {
+	if (config.expectedValue !== undefined && config.expectedValue !== "") {
 		// Constant-time comparison to prevent timing attacks on API keys / secret tokens
 		const a = Buffer.from(headerValue);
 		const b = Buffer.from(config.expectedValue);
 		isValid = a.length === b.length && timingSafeEqual(a, b);
 	} else if (config.validateFn) {
 		isValid = config.validateFn(headerValue);
+	} else if (config.expectedValue === "") {
+		throw Errors.BadRequest(
+			`${config.headerName} validation not configured — rejecting`,
+		);
 	} else {
 		isValid = true;
 	}

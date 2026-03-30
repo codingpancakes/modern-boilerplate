@@ -13,11 +13,11 @@ import { getDb } from "../../lib/db";
 
 export interface GraphQLContext extends AuditContext {
 	userId: string;
-	orgId: string;
 	role: string;
 	email: string;
 	providerSubject: string;
 	claims: Record<string, unknown>;
+	requestId: string;
 	db: Awaited<ReturnType<typeof getDb>>;
 	organizationId?: string;
 	loaders: ReturnType<typeof createLoaders>;
@@ -121,16 +121,21 @@ export async function createContext({
 	const userId = await getUserIdFromClaims(event);
 	const db = await getDb();
 
-	const orgId = (claims.org_id as string) || "";
+	const organizationId = (claims.org_id as string) || undefined;
+	const requestId = event.requestContext.requestId;
+	const sub = claims.sub;
+	if (typeof sub !== "string" || sub.length === 0) {
+		throw new Error("JWT missing required 'sub' claim");
+	}
 
 	return {
 		userId,
-		orgId,
-		organizationId: orgId || undefined,
-		role: (claims.role as string) || "MEMBER",
+		organizationId,
+		role: (claims.role as string) || "VIEWER",
 		email: (claims.email as string) || "",
-		providerSubject: claims.sub,
+		providerSubject: sub,
 		claims,
+		requestId,
 		db,
 		loaders: createLoaders(db),
 	};

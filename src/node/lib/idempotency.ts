@@ -3,7 +3,7 @@ import type {
 	APIGatewayProxyEventV2,
 	APIGatewayProxyResultV2,
 } from "aws-lambda";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { idempotencyKeys } from "../db/schema/index";
 import { getDb } from "./db";
 import { ApiError } from "./errors";
@@ -53,30 +53,52 @@ export async function withIdempotency(
 			.where(eq(idempotencyKeys.key, idempotencyKey))
 			.limit(1);
 
+		let expired = false;
 		if (existing) {
-			if (existing.requestHash !== requestHash) {
-				throw new ApiError(
-					422,
-					"IDEMPOTENCY_KEY_REUSED",
-					"Idempotency key already used for different request",
-				);
-			}
+			expired = !!(
+				existing.expiresAt && new Date(existing.expiresAt) < new Date()
+			);
 
-			if (existing.status === "processing") {
-				throw new ApiError(
-					409,
-					"REQUEST_IN_PROGRESS",
-					"Request is still being processed",
-				);
-			}
+			if (!expired) {
+				if (existing.requestHash !== requestHash) {
+					throw new ApiError(
+						422,
+						"IDEMPOTENCY_KEY_REUSED",
+						"Idempotency key already used for different request",
+					);
+				}
 
-			if (existing.status === "completed" && existing.response) {
-				return JSON.parse(existing.response);
+				if (existing.status === "processing") {
+					throw new ApiError(
+						409,
+						"REQUEST_IN_PROGRESS",
+						"Request is still being processed",
+					);
+				}
+
+				if (existing.status === "completed" && existing.response) {
+					try {
+						const parsed: unknown = JSON.parse(existing.response);
+						if (
+							typeof parsed === "object" &&
+							parsed !== null &&
+							"statusCode" in parsed
+						) {
+							return parsed as APIGatewayProxyResultV2;
+						}
+					} catch {
+						// Corrupt JSON — fall through to reclaim
+					}
+				}
 			}
 		}
 
-		// Key existed but was in a failed/expired state — reclaim it
-		await db
+		// Expired rows can be reclaimed regardless of status (including stuck "processing")
+		const reclaimStatuses = expired
+			? ["failed", "completed", "processing"]
+			: ["failed", "completed"];
+
+		const reclaimed = await db
 			.update(idempotencyKeys)
 			.set({
 				status: "processing",
@@ -84,7 +106,20 @@ export async function withIdempotency(
 				updatedAt: new Date().toISOString(),
 				expiresAt: expiresAt.toISOString(),
 			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+			.where(
+				and(
+					eq(idempotencyKeys.key, idempotencyKey),
+					inArray(idempotencyKeys.status, reclaimStatuses),
+				),
+			);
+
+		if ((reclaimed.rowCount ?? 0) === 0) {
+			throw new ApiError(
+				409,
+				"REQUEST_IN_PROGRESS",
+				"Request is still being processed",
+			);
+		}
 	}
 
 	try {
@@ -118,7 +153,12 @@ export async function withIdempotency(
 }
 
 function hashRequest(event: APIGatewayProxyEventV2): string {
+	const authorizer = event.requestContext as {
+		authorizer?: { lambda?: { sub?: string } };
+	} & typeof event.requestContext;
+
 	const data = {
+		sub: authorizer.authorizer?.lambda?.sub || "anonymous",
 		method: event.requestContext.http.method,
 		path: event.requestContext.http.path,
 		body: event.body,

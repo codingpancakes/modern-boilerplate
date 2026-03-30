@@ -11,6 +11,7 @@ import {
 } from "./audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 // Auth claims are now provided by API Gateway authorizer
+import { toError } from "./error-utils";
 import { formatError } from "./errors";
 import * as Sentry from "./sentry";
 import { tracer } from "./tracer";
@@ -23,9 +24,8 @@ export interface AuthenticatedEvent extends APIGatewayProxyEventV2 {
 		org_id?: string;
 		role?: string;
 		permissions?: string;
-		exp?: number;
-		iat?: number;
-		// Additional claims (including WorkOS custom claims) accessible via customClaim()
+		exp?: number | string;
+		iat?: number | string;
 		[key: string]: string | number | boolean | undefined;
 	};
 }
@@ -64,9 +64,23 @@ export const withAuth = (
 				authorizer?: { lambda?: Record<string, unknown> };
 			} & typeof event.requestContext;
 			const lambdaCtx = requestContext?.authorizer?.lambda;
-			const claims = lambdaCtx as AuthenticatedEvent["claims"] | undefined;
 
-			if (!claims?.sub) {
+			// HTTP API simple authorizer returns all context values as strings,
+			// so exp/iat arrive as e.g. "1711385600" or "" — accept both types.
+			const isNumericish = (v: unknown): boolean =>
+				v === undefined ||
+				v === "" ||
+				typeof v === "number" ||
+				(typeof v === "string" && /^\d+$/.test(v));
+
+			const claimsValid =
+				lambdaCtx &&
+				typeof lambdaCtx.sub === "string" &&
+				lambdaCtx.sub.length > 0 &&
+				isNumericish(lambdaCtx.exp) &&
+				isNumericish(lambdaCtx.iat);
+
+			if (!claimsValid) {
 				// Add trace annotation for failed auth
 				const segment = tracer.getSegment();
 				if (segment) {
@@ -89,9 +103,19 @@ export const withAuth = (
 				return {
 					statusCode: 401,
 					headers: securityHeaders(corsHeaders(origin)),
-					body: JSON.stringify({ error: "unauthorized" }),
+					body: JSON.stringify({
+						success: false,
+						error: "Unauthorized",
+						details: {
+							code: "UNAUTHORIZED",
+							requestId: event.requestContext?.requestId,
+							timestamp: new Date().toISOString(),
+						},
+					}),
 				};
 			}
+
+			const claims = lambdaCtx as AuthenticatedEvent["claims"];
 
 			// Add user ID to trace
 			const segment = tracer.getSegment();
@@ -107,9 +131,6 @@ export const withAuth = (
 				context,
 			);
 
-			// Flush Sentry before returning
-			await Sentry.flush();
-
 			return {
 				statusCode: result.statusCode,
 				headers: securityHeaders({
@@ -119,14 +140,16 @@ export const withAuth = (
 				body: result.body,
 			};
 		} catch (err) {
+			const error = toError(err);
+
 			// Capture error in Sentry
-			Sentry.captureException(err as Error);
+			Sentry.captureException(error);
 			await Sentry.flush();
 
 			// Add error to trace
 			const segment = tracer.getSegment();
 			if (segment) {
-				segment.addError(err as Error);
+				segment.addError(error);
 			}
 			const errorResponse = formatError(err, context.awsRequestId);
 			return {

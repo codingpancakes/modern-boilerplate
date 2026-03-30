@@ -28,7 +28,7 @@ A complete guide to setting up and deploying a new system using this CDK backend
 - [Sentry](https://sentry.io) — error tracking (optional but recommended)
 
 **Tools:**
-- Node.js 20+ and pnpm
+- Node.js 24+ and pnpm
 - AWS CLI configured (`aws configure`)
 - AWS CDK CLI: `npm install -g aws-cdk`
 
@@ -120,24 +120,24 @@ Replace each occurrence with your own values:
 |---|---|---|
 | `postway` | `.env.*`, `docs/` | Your project name |
 | `postway.services`, `postway.ai` | `docs/`, `.env.*` | Your domain |
-| `357225328504` | `docs/QUICK_REFERENCE.md`, `docs/AWS_PIPELINE_SETUP.md` | Your AWS account ID |
-| `codingpancakes` | `docs/AWS_PIPELINE_SETUP.md` | Your GitHub username or org |
+| `357225328504` | `docs/`, `.env.*` | Your AWS account ID |
+| `codingpancakes` | `.env.*` | Your GitHub username or org |
 
 ### Things hardcoded in source that need attention
 
-**Alert email** — `infrastructure/bin/app.ts` line 71:
+**Alert email** — `infrastructure/bin/app.ts`:
 `ALERT_EMAIL` has no fallback. If unset, CloudWatch alarms are created but have no notification destination. Set it in your `.env` files:
 ```bash
 ALERT_EMAIL=you@yourdomain.com
 ```
 
-**Monthly budget** — `infrastructure/bin/app.ts` line 72:
+**Monthly budget** — `infrastructure/bin/app.ts`:
 ```typescript
 monthlyBudget: stage === 'production' ? 200 : 50  // $200 prod, $50 staging
 ```
 Adjust to match your expected AWS spend.
 
-**GitHub vars required at synth time** — `infrastructure/bin/app.ts` lines 26–34:
+**GitHub vars required at synth time** — `infrastructure/bin/app.ts`:
 `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_BRANCH` are validated at CDK synth time. They must be present in your `.env` file even before you set up CI/CD, otherwise `pnpm deploy:staging` will throw immediately.
 
 ---
@@ -242,7 +242,7 @@ pnpm install
 cdk bootstrap aws://YOUR_ACCOUNT_ID/us-east-1
 
 # 3. Push secrets and config to AWS Secrets Manager and SSM Parameter Store
-pnpm sync-secrets
+pnpm sync-secrets staging
 
 # 4. Deploy all CDK stacks to staging
 pnpm deploy:staging
@@ -275,7 +275,7 @@ PipelineStack (staging/production only, depends on SecurityStack)
 
 The project uses AWS CodePipeline (not GitHub Actions). Every push to your branch automatically runs: lint → typecheck → test → migrate → CDK deploy.
 
-For the full setup walkthrough, see [AWS_PIPELINE_SETUP.md](./AWS_PIPELINE_SETUP.md).
+The CI/CD pipeline is created automatically by CDK as part of `pnpm deploy:staging`.
 
 Short version:
 
@@ -385,7 +385,7 @@ Register the route in:
 - [ ] `test/` handlers removed for production
 - [ ] Sentry project pointing to the right project
 - [ ] SNS alarm email subscription confirmed
-- [ ] Delete this file when setup is complete
+- [ ] Consider archiving this file after setup is complete
 
 ---
 
@@ -432,7 +432,7 @@ Common causes:
 
 Common causes:
 - Missing `?sslmode=require` on Neon connection strings
-- Secrets not synced to Secrets Manager — run `pnpm sync-secrets`
+- Secrets not synced to Secrets Manager — run `pnpm sync-secrets staging`
 - Migrations not run — run `pnpm migrate`
 
 Test DB connectivity:
@@ -444,7 +444,7 @@ curl https://api-staging.yourdomain.com/v1/health/detailed | jq '.data.checks.da
 
 Secrets haven't been synced yet. Run:
 ```bash
-pnpm sync-secrets
+pnpm sync-secrets staging   # or production
 ```
 
 Then re-trigger the pipeline.
@@ -457,7 +457,7 @@ Then re-trigger the pipeline.
 
 ## Further Reading
 
-- [AWS_PIPELINE_SETUP.md](./AWS_PIPELINE_SETUP.md) — CI/CD pipeline detailed walkthrough
 - [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) — full reference for every env var
-- [SYNC_SECRETS.md](./SYNC_SECRETS.md) — how the secrets sync script works
-- [QUICK_REFERENCE.md](./QUICK_REFERENCE.md) — daily development commands
+- [SECURITY.md](./SECURITY.md) — security architecture and threat model
+- [TESTING.md](./guides/TESTING.md) — unit and integration testing guide
+- [CDK_TEARDOWN.md](./guides/CDK_TEARDOWN.md) — how to destroy AWS stacks

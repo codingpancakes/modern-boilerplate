@@ -1,0 +1,56 @@
+---
+description: GraphQL resolver patterns and conventions
+globs: src/node/handlers/graphql/**/*.ts
+alwaysApply: false
+---
+
+# GraphQL Resolver Pattern
+
+## Context
+`GraphQLContext` provides: `userId`, `organizationId?`, `role`, `email`, `providerSubject`, `db`, `loaders`, `claims`
+
+## Query Pattern
+```typescript
+user: async (_parent, { id }, context: GraphQLContext) => {
+  if (!context.organizationId) {
+    throw new GraphQLError("Organization context required", { extensions: { code: "BAD_USER_INPUT" } });
+  }
+  const membership = await context.db.query.organizationMembers.findFirst({
+    where: and(
+      eq(organizationMembers.userId, id),
+      eq(organizationMembers.organizationId, context.organizationId),
+      eq(organizationMembers.status, "ACTIVE"),  // Always filter ACTIVE
+    ),
+  });
+  if (!membership) throw new GraphQLError("Not found", { extensions: { code: "NOT_FOUND" } });
+  const user = await context.db.query.users.findFirst({ where: eq(users.id, id) });
+  if (!user) throw new GraphQLError("User not found", { extensions: { code: "NOT_FOUND" } });
+  return user;
+},
+```
+
+## Mutation Pattern
+```typescript
+updateProfile: auditResolver(async (_parent, { input }, context) => {
+  const validated = userSchemas.updateProfileInput.parse(input);
+  const sanitized = sanitizeObject(validated);
+  const [updated] = await context.db.update(profiles)
+    .set({ ...sanitized, updatedAt: new Date().toISOString() })
+    .where(eq(profiles.userId, context.userId)).returning();
+  if (!updated) throw new GraphQLError("Not found", { extensions: { code: "NOT_FOUND" } });
+  return updated;
+}, { action: AUDIT_ACTIONS.UPDATE, resourceType: AUDIT_RESOURCE_TYPES.PROFILE, ... }),
+```
+
+## Rules
+- Use `GraphQLError` with `extensions: { code }` — NOT `Errors.*` (that's REST)
+- Use DataLoaders (`context.loaders.*`) for field resolvers — prevents N+1
+- Use `context.organizationId` (not `orgId`) — single canonical org field
+- Default role is `"VIEWER"` (lowest privilege) when claim is missing
+- Validate all mutation inputs with Zod `.parse()`
+- Wrap multi-step mutations in `context.db.transaction()`
+- Two audit patterns: `auditResolver()` wrapper for simple mutations, `void logAudit()` for complex multi-step mutations (e.g. `updateMyAccount`)
+- New resolvers go in `resolvers/{domain}.ts`, merged in `resolvers/merge.ts`
+- New schema goes in `schema/{domain}.graphql`, loaded in `schema/index.ts`
+- `merge.ts` uses `mergeResolverMaps()` which detects key collisions at startup
+- When testing `auditResolver`-wrapped resolvers, pass 4 args: `(parent, args, context, info)`

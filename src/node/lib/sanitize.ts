@@ -13,7 +13,7 @@
  * @param options - Sanitization options
  * @returns Sanitized string
  */
-function sanitizeString(
+export function sanitizeString(
 	input: string,
 	options: {
 		allowHtml?: boolean;
@@ -40,12 +40,30 @@ function sanitizeString(
 		sanitized = sanitized.replace(/[\r\n]/g, " ");
 	}
 
-	// Remove or escape HTML if not allowed
 	if (!options.allowHtml) {
 		sanitized = escapeHtml(sanitized);
+	} else {
+		sanitized = stripUnsafeTags(sanitized);
 	}
 
 	return sanitized;
+}
+
+const SAFE_TAG_RE =
+	/^\/?(b|i|em|strong|p|br|ul|ol|li|a|span|blockquote|code|pre|h[1-6])$/i;
+
+/**
+ * Strip all HTML tags except a safe formatting whitelist.
+ * Also strips event-handler attributes (on*) from surviving tags.
+ */
+function stripUnsafeTags(input: string): string {
+	return input
+		.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (match, tag: string) => {
+			if (!SAFE_TAG_RE.test(tag)) return "";
+			return match.replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/gi, "");
+		})
+		.replace(/<script[\s>][\s\S]*?<\/script>/gi, "")
+		.replace(/<style[\s>][\s\S]*?<\/style>/gi, "");
 }
 
 /**
@@ -102,10 +120,15 @@ export function sanitizeFilename(
 	// Enforce max length (default 255)
 	const maxLength = options.maxLength || 255;
 	if (sanitized.length > maxLength) {
-		const extension = sanitized.split(".").pop() || "";
-		const nameWithoutExt = sanitized.substring(0, sanitized.lastIndexOf("."));
-		const maxNameLength = maxLength - extension.length - 1;
-		sanitized = `${nameWithoutExt.substring(0, maxNameLength)}.${extension}`;
+		const dotIndex = sanitized.lastIndexOf(".");
+		if (dotIndex > 0) {
+			const extension = sanitized.substring(dotIndex + 1);
+			const nameWithoutExt = sanitized.substring(0, dotIndex);
+			const maxNameLength = maxLength - extension.length - 1;
+			sanitized = `${nameWithoutExt.substring(0, Math.max(1, maxNameLength))}.${extension}`;
+		} else {
+			sanitized = sanitized.substring(0, maxLength);
+		}
 	}
 
 	// Validate extension if allowedExtensions provided
@@ -151,6 +174,38 @@ const RAW_STRING_KEYS = new Set([
 	"website_url",
 ]);
 
+const BLOCKED_SCHEMES = new Set(["javascript:", "data:", "vbscript:", "blob:"]);
+
+/**
+ * Sanitize a URL value: block dangerous schemes and validate structure.
+ * Returns empty string if the URL is malicious or malformed.
+ */
+function sanitizeUrlValue(value: string): string {
+	if (!value) return "";
+	const lower = value.toLowerCase();
+
+	for (const scheme of BLOCKED_SCHEMES) {
+		if (lower.startsWith(scheme)) return "";
+	}
+
+	// Block protocol-relative URLs (//host/path)
+	if (value.startsWith("//")) return "";
+
+	// For absolute URLs, validate they have a proper http(s) scheme
+	if (value.includes("://")) {
+		try {
+			const parsed = new URL(value);
+			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+				return "";
+			}
+		} catch {
+			return "";
+		}
+	}
+
+	return value;
+}
+
 export function sanitizeObject<T extends Record<string, unknown>>(
 	obj: T,
 	options: {
@@ -166,14 +221,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 		if (typeof value === "string") {
 			if (skipEscape.has(key)) {
 				const trimmed = value.trim();
-				// Block dangerous URL schemes (XSS via javascript:, data:, vbscript:)
-				const lower = trimmed.toLowerCase();
-				sanitized[key] =
-					lower.startsWith("javascript:") ||
-					lower.startsWith("data:") ||
-					lower.startsWith("vbscript:")
-						? ""
-						: trimmed;
+				sanitized[key] = sanitizeUrlValue(trimmed);
 			} else {
 				sanitized[key] = sanitizeString(value, {
 					maxLength: options.maxStringLength,
@@ -210,7 +258,7 @@ export function sanitizeObject<T extends Record<string, unknown>>(
  * File upload size limits (in bytes)
  */
 export const FILE_SIZE_LIMITS = {
-	IMAGE: 250 * 1024 * 1024, // 250 MB
+	IMAGE: 15 * 1024 * 1024, // 15 MB — covers high-res mobile photos (iPhone ~3-8 MB)
 	DOCUMENT: 25 * 1024 * 1024, // 25 MB
 	VIDEO: 100 * 1024 * 1024, // 100 MB
 	AVATAR: 2 * 1024 * 1024, // 2 MB

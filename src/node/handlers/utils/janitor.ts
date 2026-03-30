@@ -1,5 +1,6 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { ScheduledHandler } from "aws-lambda";
+import { errorMessage } from "../../lib/error-utils";
 import { cleanupExpiredKeys } from "../../lib/idempotency";
 
 const logger = new Logger({ serviceName: "idempotency-janitor" });
@@ -16,7 +17,9 @@ export const handler: ScheduledHandler = async (_event, context) => {
 
 		// ScheduledHandler doesn't return anything
 	} catch (error) {
-		logger.error("Error during cleanup", { error });
+		logger.error("Error during cleanup", {
+			error: errorMessage(error),
+		});
 		throw error;
 	}
 };

@@ -1,8 +1,8 @@
 # 🔒 SOC 2 Compliance Readiness Checklist
 
 **Generated:** December 10, 2025  
-**Last Updated:** February 1, 2026  
-**Current Status:** 72% Ready (Audit logging Phase 1 complete!)  
+**Last Updated:** March 2026  
+**Current Status:** ~72% Ready (Audit logging Phase 1 complete)  
 **Node.js Version:** 24.x (Lambda Runtime: NODEJS_24_X)  
 **Estimated Time to Compliance:** 55-75 hours (1.5-2 weeks)
 
@@ -19,7 +19,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 ---
 
-## ✅ WHAT YOU ALREADY HAVE (65%)
+## ✅ WHAT YOU ALREADY HAVE (~72%)
 
 ### Security (80% Complete)
 
@@ -35,13 +35,13 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - [x] **HTTPS Enforcement** - All API traffic encrypted in transit
 - [x] **CORS Configuration** - Strict origin validation, no wildcards
 - [x] **Rate Limiting** - API Gateway throttling (500-2000 req/sec)
-- [x] **DDoS Protection** - Cloudflare proxy (if configured)
+- [x] **DDoS Protection** - CloudFront + WAFv2
 
 #### ✅ Data Protection
 - [x] **Encryption at Rest** - S3 buckets encrypted (AES-256)
 - [x] **Encryption in Transit** - TLS 1.2+ for all connections
 - [x] **Database Encryption** - Neon Postgres with encryption
-- [x] **Input Validation** - Zod schemas + sanitization (317 lines)
+- [x] **Input Validation** - Zod schemas + sanitization
 - [x] **SQL Injection Prevention** - Drizzle ORM with parameterized queries
 - [x] **XSS Prevention** - Comprehensive sanitization utilities
 
@@ -60,7 +60,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - [x] **Auto-scaling** - Lambda scales automatically
 - [x] **Health Checks** - `/v1/health` and `/v1/health/detailed` endpoints
 - [x] **Dead Letter Queues** - Webhook failures captured
-- [x] **Concurrency Limits** - All handlers have reserved concurrency
+- [x] **Concurrency Management** - Handlers use unreserved pool with API Gateway throttling
 - [x] **CloudWatch Dashboard** - Real-time system health visibility
 
 #### ✅ Disaster Recovery
@@ -79,7 +79,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 ---
 
-## ❌ WHAT'S MISSING FOR SOC 2 (35%)
+## ❌ WHAT'S MISSING FOR SOC 2 (~28%)
 
 ### 🔴 CRITICAL GAPS (Must Have)
 
@@ -97,16 +97,16 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 **Files Created:**
 - `src/node/db/schema/audit.ts` - Audit logs table schema
-- `src/node/lib/audit.ts` - Audit logging utilities (248 lines)
-- `src/node/db/migrations/0003_shallow_joystick.sql` - Database migration
+- `src/node/lib/audit.ts` - Audit logging utilities
+- `src/node/db/migrations/` - Database migration (audit logs table)
 - `docs/AUDIT_LOGGING_GUIDE.md` - Complete usage documentation
 
 **Features:**
 - ✅ Direct logging: `logAudit()` function
-- ✅ Lambda middleware: `withAudit()` wrapper (not yet used)
+- ✅ Request context extraction: `extractRequestContext()`
 - ✅ GraphQL decorator: `auditResolver()` wrapper
 - ✅ Standard action types: LOGIN, CREATE, UPDATE, DELETE, etc.
-- ✅ Standard resource types: USER, CONTACT, ORGANIZATION, etc.
+- ✅ Standard resource types: USER, PROFILE, ORGANIZATION, MEDIA, WEBHOOK, etc.
 - ✅ Automatic request context extraction
 - ✅ Error handling (never breaks main flow)
 
@@ -119,7 +119,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - ❌ GraphQL: `generateImageUploadUrl` (not yet implemented)
 
 **Next Steps:**
-1. ✅ Migration deployed: `pnpm db:migrate`
+1. ✅ Migration deployed: `pnpm migrate`
 2. ⚠️ Expand to media handlers (3 hours remaining)
 3. Add audit log query API endpoint (6 hours, optional)
 4. Add automated cleanup job for 7-year retention (4 hours, optional)
@@ -130,50 +130,22 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 
 ---
 
-#### 2. **Data Retention & Deletion Policies** ⚠️ MOSTLY COMPLETE (Just Documentation)
+#### 2. **Data Retention & Deletion Policies** ✅ COMPLETE
 **SOC 2 Requirement:** CC6.5, P4.2 - Define and enforce data retention
 
-**What You Already Have:**
-- ✅ CloudWatch logs: 1 month (prod), 1 week (staging) - **Automated via LogRetentionAspect**
-- ✅ CloudTrail logs: 1 year (365 days) - **Automated with Glacier transition**
-- ✅ Webhook DLQ: 14 days retention - **Already configured**
-- ✅ S3 lifecycle rules: Delete old multipart uploads after 7 days
+**Status:** Documented in `docs/DATA_RETENTION_POLICY.md`
 
-**What's Missing:**
-- ❌ **Documented data retention policy** (just write it down!)
-- ❌ User data export API (only needed for GDPR/CCPA compliance)
-- ❌ Soft delete for user accounts (optional, depends on requirements)
-
-**What You Need (Minimal):**
-Just **document your current behavior**:
-
-```markdown
-# Data Retention Policy
-
-## Infrastructure Logs
-- CloudWatch Logs: 1 month (production), 1 week (staging)
-- CloudTrail Logs: 1 year (Glacier after 30 days)
-- Webhook DLQ: 14 days
-- S3 multipart uploads: 7 days
-
-## Application Data
-- User Accounts: Hard-deleted immediately upon request
-- Contact Data: Hard-deleted immediately upon request
-- Media Files: Retained until user deletes
-- Audit Logs: 7 years (when implemented)
-
-## Justification
-- No regulatory requirement for soft delete
-- Users can request deletion at any time via support
-- Infrastructure logs retained for operational/security needs
-```
+**What's Implemented:**
+- ✅ CloudWatch logs: 1 month (prod), 1 week (staging) — automated via `LogRetentionAspect`
+- ✅ CloudTrail logs: 1 year (365 days) — automated with Glacier transition
+- ✅ Webhook DLQ: 14 days retention
+- ✅ S3 lifecycle rules: delete old multipart uploads after 7 days
+- ✅ Audit logs: 7 years target (Phase 1 infra in place, automated purge TBD)
+- ✅ Data retention policy documented
 
 **Optional Enhancements (only if needed for GDPR/CCPA):**
-- Soft delete for users (4 hours) - Add `deletedAt` column + cleanup job
-- Data export API (4 hours) - `GET /v1/users/me/export`
-
-**Estimated Time:** 1 hour (documentation only) OR 8 hours (with GDPR features)  
-**Priority:** MEDIUM (documentation) / HIGH (if GDPR required)
+- Soft delete for users (4 hours) — add `deletedAt` column + cleanup job
+- Data export API (4 hours) — `GET /v1/users/me/export`
 
 ---
 
@@ -236,7 +208,7 @@ Just **document your current behavior**:
 - WorkOS (SOC 2 compliant ✅)
 - Neon (SOC 2 compliant ✅)
 - Sentry (SOC 2 compliant ✅)
-- Cloudflare (SOC 2 compliant ✅)
+- CloudFront + WAFv2 (AWS SOC 2 compliant ✅)
 
 **What You Need:**
 - Collect SOC 2 reports from all vendors
@@ -252,18 +224,21 @@ Just **document your current behavior**:
 #### 5. **Security Scanning in CI/CD** ⚠️ MISSING
 **SOC 2 Requirement:** CC8.1 - Detect and respond to security threats
 
+**What Exists:**
+- ✅ `pnpm audit --audit-level=high` runs in `buildspec.yml` (non-blocking)
+- ✅ Biome lint + TypeScript strict checking in CI
+
 **What's Missing:**
-- No dependency vulnerability scanning
 - No SAST (Static Application Security Testing)
-- No IaC security scanning
-- No container image scanning
+- No IaC security scanning (e.g. cdk-nag, Checkov)
+- `pnpm audit` is non-blocking — should be made a blocking gate
 
 **What You Need:**
 ```yaml
 # Add to buildspec.yml or GitHub Actions
 - name: Dependency Scanning
   run: |
-    npm audit --audit-level=high
+    pnpm audit --audit-level=high
     # Or use Snyk, Dependabot, etc.
 
 - name: SAST Scanning
@@ -412,7 +387,7 @@ Just **document your current behavior**:
 | **Confidentiality** | 85% | DLP, key management | 🟢 |
 | **Privacy** | 75% | Just need documentation + optional GDPR | 🟡 |
 
-### Overall Readiness: 70% 🟡 (Better than expected!)
+### Overall Readiness: ~72%
 
 ---
 
@@ -421,13 +396,12 @@ Just **document your current behavior**:
 ### Phase 1: Critical Gaps (1.5-2 weeks)
 **Must complete before SOC 2 audit**
 
-1. **Application Audit Logging** (8 hours) - **CRITICAL CODE**
-   - Create `auditLogs` table
-   - Add audit middleware
-   - Log all mutations
+1. **Application Audit Logging** — Phase 1 COMPLETE
+   - `auditLogs` table, `logAudit()`, `auditResolver()` implemented
+   - Remaining: expand coverage to media handlers (~3 hours)
 
-2. **Data Retention Documentation** (1 hour) - **JUST WRITE IT DOWN**
-   - Document existing retention policies (already implemented!)
+2. **Data Retention Documentation** — COMPLETE
+   - Documented in `docs/DATA_RETENTION_POLICY.md`
    - Optional: Add GDPR features if needed (8 hours)
 
 3. **Incident Response Plan** (8 hours) - **DOCUMENTATION**
@@ -507,7 +481,7 @@ Just **document your current behavior**:
 ### Policies & Procedures
 - [ ] Information Security Policy
 - [ ] Access Control Policy
-- [ ] Data Retention & Deletion Policy
+- [x] Data Retention & Deletion Policy
 - [ ] Incident Response Plan
 - [ ] Disaster Recovery Plan
 - [ ] Change Management Procedures
@@ -539,8 +513,8 @@ Just **document your current behavior**:
 ## ✅ NEXT STEPS
 
 ### Immediate Actions (This Week)
-1. Create `auditLogs` table and middleware
-2. Document data retention policy
+1. ~~Create `auditLogs` table and middleware~~ (DONE)
+2. ~~Document data retention policy~~ (DONE)
 3. Write incident response plan
 4. Collect vendor SOC 2 reports
 
@@ -576,14 +550,14 @@ Just **document your current behavior**:
 
 ---
 
-**Last Updated:** December 10, 2025  
-**Next Review:** After Phase 1 completion
+**Last Updated:** March 2026  
+**Next Review:** After expanding audit coverage to all handlers
 
 ---
 
 ## 🎯 BOTTOM LINE
 
-**You're 70% ready for SOC 2!** (Better than initially assessed)
+**You're ~72% ready for SOC 2!**
 
 Your infrastructure is **excellent** - you already have:
 - ✅ CloudWatch log retention (automated)
@@ -593,8 +567,8 @@ Your infrastructure is **excellent** - you already have:
 
 **The main gaps are:**
 
-1. **Application audit logging** (8 hours) - **CODE**
-2. **Data retention documentation** (1 hour) - **JUST WRITE IT DOWN**
+1. ~~Application audit logging~~ (DONE — expand coverage: 3 hours)
+2. ~~Data retention documentation~~ (DONE)
 3. **Incident response plan** (8 hours) - **DOCUMENTATION**
 4. **Security scanning** (6 hours) - **CODE/CONFIG**
 5. **Vendor reports** (4 hours) - **COLLECT PDFs**
@@ -602,6 +576,6 @@ Your infrastructure is **excellent** - you already have:
 **Total time to SOC 2 ready:** 55-75 hours (1.5-2 weeks) - **Even better than expected!**  
 **Total cost:** $20,000-$65,000 (one-time) + $15,500-$47,000/year
 
-**Key Insight:** Audit logging Phase 1 is complete! You already built most of the hard stuff (retention policies + core audit infrastructure). Now it's mostly expanding coverage (3 hours) + documentation (20 hours total).
+**Key Insight:** Audit logging Phase 1 and data retention policy are complete. The remaining work is mostly expanding audit coverage to media handlers (~3 hours) and completing procedural documentation (~20 hours total).
 
-**Recommendation:** If pursuing SOC 2, expand audit logging to media handlers (3 hours) and complete documentation (20 hours total).
+**Recommendation:** If pursuing SOC 2, expand audit logging to media handlers (3 hours), write incident response plan (8 hours), and complete vendor risk documentation (4 hours).

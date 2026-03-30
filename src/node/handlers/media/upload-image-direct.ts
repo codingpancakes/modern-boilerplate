@@ -9,6 +9,7 @@ import {
 	getMediaConfig,
 	getS3Client,
 	validateContentTypeExtension,
+	validateImageMagicBytes,
 } from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
@@ -116,6 +117,12 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	if (imageBuffer.length > maxSize) {
 		throw Errors.BadRequest(
 			"Image size exceeds maximum allowed size of 4.5MB for direct upload. Use the presigned URL endpoint (/v1/media/upload-image) for larger files.",
+		);
+	}
+
+	if (!validateImageMagicBytes(imageBuffer, input.contentType)) {
+		throw Errors.BadRequest(
+			"File content does not match the declared content type",
 		);
 	}
 

@@ -35,7 +35,7 @@ export const userResolvers = {
 			{ id }: { id: string },
 			context: GraphQLContext,
 		) => {
-			if (!context.orgId) {
+			if (!context.organizationId) {
 				throw new GraphQLError(
 					"Organization context required. Ensure your token includes an org_id claim.",
 					{ extensions: { code: "BAD_USER_INPUT" } },
@@ -45,7 +45,7 @@ export const userResolvers = {
 			const membership = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, id),
-					eq(organizationMembers.organizationId, context.orgId),
+					eq(organizationMembers.organizationId, context.organizationId),
 					eq(organizationMembers.status, "ACTIVE"),
 				),
 			});
@@ -56,9 +56,17 @@ export const userResolvers = {
 				});
 			}
 
-			return context.db.query.users.findFirst({
+			const user = await context.db.query.users.findFirst({
 				where: eq(users.id, id),
 			});
+
+			if (!user) {
+				throw new GraphQLError("User not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
+			}
+
+			return user;
 		},
 	},
 
@@ -70,11 +78,9 @@ export const userResolvers = {
 				{ input }: { input: Record<string, unknown> },
 				context: GraphQLContext,
 			) => {
-				// Validate input
 				const validated = userSchemas.update.parse(input);
 				const sanitized = sanitizeObject(validated);
 
-				// Update user
 				const [updated] = await context.db
 					.update(users)
 					.set({
@@ -83,6 +89,12 @@ export const userResolvers = {
 					})
 					.where(eq(users.id, context.userId))
 					.returning();
+
+				if (!updated) {
+					throw new GraphQLError("User not found", {
+						extensions: { code: "NOT_FOUND" },
+					});
+				}
 
 				return updated;
 			},
@@ -116,6 +128,12 @@ export const userResolvers = {
 					.where(eq(profiles.userId, context.userId))
 					.returning();
 
+				if (!updated) {
+					throw new GraphQLError("Profile not found", {
+						extensions: { code: "NOT_FOUND" },
+					});
+				}
+
 				return updated;
 			},
 			{
@@ -141,81 +159,100 @@ export const userResolvers = {
 			},
 			context: GraphQLContext,
 		) => {
-			// Capture "before" state for audit trail
-			const [beforeUser, beforeProfile] = await Promise.all([
-				context.db
-					.select()
-					.from(users)
-					.where(eq(users.id, context.userId))
-					.limit(1)
-					.then((r) => r[0]),
-				context.db
-					.select()
-					.from(profiles)
-					.where(eq(profiles.userId, context.userId))
-					.limit(1)
-					.then((r) => r[0]),
-			]);
-
-			// Update user if provided
-			let updatedUser = null;
-			if (args.user && Object.keys(args.user).length > 0) {
-				const validated = userSchemas.update.parse(args.user);
-				const sanitized = sanitizeObject(validated);
-
-				[updatedUser] = await context.db
-					.update(users)
-					.set({
-						...sanitized,
-						updatedAt: new Date().toISOString(),
-					})
-					.where(eq(users.id, context.userId))
-					.returning();
-			}
-
-			// Update profile if provided
-			let updatedProfile = null;
-			if (args.profile && Object.keys(args.profile).length > 0) {
-				const validatedProfile = userSchemas.updateProfileInput.parse(
-					args.profile,
+			if (!args.user && !args.profile) {
+				throw new GraphQLError(
+					"At least one of user or profile input must be provided",
+					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
-				const sanitized = sanitizeObject(validatedProfile);
-
-				[updatedProfile] = await context.db
-					.update(profiles)
-					.set({
-						...sanitized,
-						updatedAt: new Date().toISOString(),
-					})
-					.where(eq(profiles.userId, context.userId))
-					.returning();
 			}
 
-			// Fetch current data if not updated
+			const {
+				beforeUser,
+				beforeProfile,
+				updatedUser,
+				updatedProfile,
+				validatedUserKeys,
+				validatedProfileKeys,
+			} = await context.db.transaction(async (tx) => {
+				const [bu, bp] = await Promise.all([
+					tx
+						.select()
+						.from(users)
+						.where(eq(users.id, context.userId))
+						.limit(1)
+						.then((r) => r[0]),
+					tx
+						.select()
+						.from(profiles)
+						.where(eq(profiles.userId, context.userId))
+						.limit(1)
+						.then((r) => r[0]),
+				]);
+
+				let uu = null;
+				const userKeys: string[] = [];
+				if (args.user && Object.keys(args.user).length > 0) {
+					const validated = userSchemas.update.parse(args.user);
+					userKeys.push(...Object.keys(validated));
+					const sanitized = sanitizeObject(validated);
+					[uu] = await tx
+						.update(users)
+						.set({
+							...sanitized,
+							updatedAt: new Date().toISOString(),
+						})
+						.where(eq(users.id, context.userId))
+						.returning();
+				}
+
+				let up = null;
+				const profileKeys: string[] = [];
+				if (args.profile && Object.keys(args.profile).length > 0) {
+					const validatedProfile = userSchemas.updateProfileInput.parse(
+						args.profile,
+					);
+					profileKeys.push(...Object.keys(validatedProfile));
+					const sanitized = sanitizeObject(validatedProfile);
+					[up] = await tx
+						.update(profiles)
+						.set({
+							...sanitized,
+							updatedAt: new Date().toISOString(),
+						})
+						.where(eq(profiles.userId, context.userId))
+						.returning();
+				}
+
+				return {
+					beforeUser: bu,
+					beforeProfile: bp,
+					updatedUser: uu ?? bu,
+					updatedProfile: up ?? bp,
+					validatedUserKeys: userKeys,
+					validatedProfileKeys: profileKeys,
+				};
+			});
+
 			if (!updatedUser) {
-				const result = await context.db
-					.select()
-					.from(users)
-					.where(eq(users.id, context.userId))
-					.limit(1);
-				updatedUser = result[0];
+				throw new GraphQLError("User not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
 			}
 
-			if (!updatedProfile) {
-				const result = await context.db
-					.select()
-					.from(profiles)
-					.where(eq(profiles.userId, context.userId))
-					.limit(1);
-				updatedProfile = result[0];
-			}
+			const updatedUserFields = validatedUserKeys;
+			const updatedProfileFields = validatedProfileKeys;
+			const resourceType =
+				updatedUserFields.length > 0 && updatedProfileFields.length > 0
+					? AUDIT_RESOURCE_TYPES.USER
+					: updatedProfileFields.length > 0
+						? AUDIT_RESOURCE_TYPES.PROFILE
+						: AUDIT_RESOURCE_TYPES.USER;
 
-			// Fire-and-forget audit log
 			void logAudit({
 				userId: context.userId,
-				organizationId: context.orgId || undefined,
+				organizationId: context.organizationId,
 				action: AUDIT_ACTIONS.UPDATE,
-				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
+				resourceType,
 				resourceId: context.userId,
 				changes: {
 					before: { user: beforeUser, profile: beforeProfile },
@@ -225,8 +262,8 @@ export const userResolvers = {
 				metadata: {
 					source: "graphql",
 					updatedFields: {
-						user: args.user ? Object.keys(args.user) : [],
-						profile: args.profile ? Object.keys(args.profile) : [],
+						user: updatedUserFields,
+						profile: updatedProfileFields,
 					},
 				},
 			});
@@ -243,11 +280,28 @@ export const userResolvers = {
 		profile: (user: { id: string }, _args: unknown, context: GraphQLContext) =>
 			context.loaders.profileByUserId.load(user.id),
 
-		organizations: (
+		organizations: async (
 			user: { id: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => context.loaders.membershipsByUserId.load(user.id),
+		) => {
+			const memberships = await context.loaders.membershipsByUserId.load(
+				user.id,
+			);
+
+			if (user.id === context.userId) {
+				return memberships;
+			}
+
+			// Cross-user query: only reveal orgs the caller also belongs to
+			const callerMemberships = await context.loaders.membershipsByUserId.load(
+				context.userId,
+			);
+			const callerOrgIds = new Set(
+				callerMemberships.map((m) => m.organizationId),
+			);
+			return memberships.filter((m) => callerOrgIds.has(m.organizationId));
+		},
 	},
 
 	Profile: {

@@ -20,12 +20,22 @@ const ROLE_HIERARCHY: Record<string, number> = {
 	OWNER: 4,
 };
 
+function roleLevel(role: string): number {
+	const level = ROLE_HIERARCHY[role];
+	if (level === undefined) {
+		throw new GraphQLError(`Unknown role: ${role}`, {
+			extensions: { code: "INTERNAL_SERVER_ERROR" },
+		});
+	}
+	return level;
+}
+
 function hasMinRole(userRole: string, requiredRole: string): boolean {
-	return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
+	return roleLevel(userRole) >= roleLevel(requiredRole);
 }
 
 function hasHigherRole(userRole: string, targetRole: string): boolean {
-	return (ROLE_HIERARCHY[userRole] ?? 0) > (ROLE_HIERARCHY[targetRole] ?? 0);
+	return roleLevel(userRole) > roleLevel(targetRole);
 }
 
 async function requireMembership(
@@ -63,7 +73,7 @@ export const organizationResolvers = {
 			{ limit = 20, cursor }: { limit?: number; cursor?: string },
 			context: GraphQLContext,
 		) => {
-			const clampedLimit = Math.min(limit, 100);
+			const clampedLimit = Math.min(Math.max(limit ?? 20, 1), 100);
 			const parsed = cursor ? decodeCursor(cursor) : null;
 			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
 
@@ -117,7 +127,7 @@ export const organizationResolvers = {
 		) => {
 			await requireMembership(context, organizationId);
 
-			const clampedLimit = Math.min(limit, 100);
+			const clampedLimit = Math.min(Math.max(limit ?? 20, 1), 100);
 			const parsed = cursor ? decodeCursor(cursor) : null;
 			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
 
@@ -155,37 +165,42 @@ export const organizationResolvers = {
 			{ input }: { input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
-			const ownedOrgs = await context.db.query.organizationMembers.findMany({
-				where: and(
-					eq(organizationMembers.userId, context.userId),
-					eq(organizationMembers.role, "OWNER"),
-					eq(organizationMembers.status, "ACTIVE"),
-				),
-			});
-
-			if (ownedOrgs.length >= 10) {
-				throw new GraphQLError("Organization limit reached (max 10)", {
-					extensions: { code: "FORBIDDEN" },
-				});
-			}
-
 			const validated = organizationSchemas.create.parse(input);
 			const sanitized = sanitizeObject(validated);
 
-			const [org] = await context.db
-				.insert(organizations)
-				.values({
-					...sanitized,
-				})
-				.returning();
+			const result = await context.db.transaction(async (tx) => {
+				const ownedOrgs = await tx.query.organizationMembers.findMany({
+					where: and(
+						eq(organizationMembers.userId, context.userId),
+						eq(organizationMembers.role, "OWNER"),
+						eq(organizationMembers.status, "ACTIVE"),
+					),
+				});
 
-			// Creator becomes OWNER
-			await context.db.insert(organizationMembers).values({
-				organizationId: org.id,
-				userId: context.userId,
-				role: "OWNER",
-				status: "ACTIVE",
+				if (ownedOrgs.length >= 10) {
+					throw new GraphQLError("Organization limit reached (max 10)", {
+						extensions: { code: "FORBIDDEN" },
+					});
+				}
+
+				const [org] = await tx
+					.insert(organizations)
+					.values({
+						...sanitized,
+					})
+					.returning();
+
+				await tx.insert(organizationMembers).values({
+					organizationId: org.id,
+					userId: context.userId,
+					role: "OWNER",
+					status: "ACTIVE",
+				});
+
+				return org;
 			});
+
+			const org = result;
 
 			void logAudit({
 				userId: context.userId,
@@ -216,20 +231,24 @@ export const organizationResolvers = {
 				});
 			}
 
-			const [before] = await context.db
-				.select()
-				.from(organizations)
-				.where(eq(organizations.id, id))
-				.limit(1);
+			const { before, updated } = await context.db.transaction(async (tx) => {
+				const [b] = await tx
+					.select()
+					.from(organizations)
+					.where(eq(organizations.id, id))
+					.limit(1);
 
-			const [updated] = await context.db
-				.update(organizations)
-				.set({
-					...sanitized,
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(organizations.id, id))
-				.returning();
+				const [u] = await tx
+					.update(organizations)
+					.set({
+						...sanitized,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizations.id, id))
+					.returning();
+
+				return { before: b, updated: u };
+			});
 
 			if (!updated) {
 				throw new GraphQLError("Organization not found", {
@@ -261,16 +280,34 @@ export const organizationResolvers = {
 		) => {
 			await requireMembership(context, id, "OWNER");
 
-			// Soft-delete: mark org as DELETED, deactivate all memberships
-			await context.db
-				.update(organizations)
-				.set({ status: "DELETED", updatedAt: new Date().toISOString() })
-				.where(eq(organizations.id, id));
+			const deleted = await context.db.transaction(async (tx) => {
+				const [del] = await tx
+					.update(organizations)
+					.set({
+						status: "DELETED",
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizations.id, id))
+					.returning({ id: organizations.id });
 
-			await context.db
-				.update(organizationMembers)
-				.set({ status: "INACTIVE", updatedAt: new Date().toISOString() })
-				.where(eq(organizationMembers.organizationId, id));
+				if (!del) return false;
+
+				await tx
+					.update(organizationMembers)
+					.set({
+						status: "INACTIVE",
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizationMembers.organizationId, id));
+
+				return true;
+			});
+
+			if (!deleted) {
+				throw new GraphQLError("Organization not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
+			}
 
 			void logAudit({
 				userId: context.userId,

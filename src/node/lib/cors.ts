@@ -23,11 +23,14 @@ const PARENT_DOMAINS = new Set(
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean)
-		.filter((s) => s.length > 0),
+		.filter((s) => s.length > 0)
+		// Reject bare TLDs (e.g. "com", "io") — must contain at least one dot
+		.filter((s) => s.includes(".")),
 );
 
-// Dev convenience
-const DEV = process.env.NODE_ENV !== "production";
+// Only allow dev origins when explicitly running in development (not staging)
+const DEV =
+	process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging";
 const DEV_ORIGINS = new Set([
 	"http://localhost:3000",
 	"http://127.0.0.1:3000",
@@ -71,7 +74,7 @@ export function isAllowedOrigin(origin?: string): boolean {
 
 	// Check parent domains (allow subdomains)
 	const hostname = url.hostname.toLowerCase();
-	for (const parentDomain of Array.from(PARENT_DOMAINS)) {
+	for (const parentDomain of PARENT_DOMAINS) {
 		if (hostname === parentDomain || hostname.endsWith(`.${parentDomain}`)) {
 			return true;
 		}
@@ -140,20 +143,6 @@ export function getExternalCorsHeaders(
 }
 
 /**
- * CORS headers that allow ANY origin (use sparingly for public webhooks)
- */
-export function getOpenCorsHeaders(): Record<string, string> {
-	return {
-		"Content-Type": "application/json",
-		"Access-Control-Allow-Origin": "*",
-		"Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers":
-			"Authorization, Content-Type, Idempotency-Key, X-Requested-With, X-API-Key, X-Secret-Token, X-Webhook-Signature",
-		"Access-Control-Max-Age": "86400",
-	};
-}
-
-/**
  * Standard security headers — apply to every response regardless of auth model
  */
 export function securityHeaders(
@@ -208,10 +197,7 @@ export function handleOptionsRequest(
 			return {
 				statusCode: 400,
 				headers: { ...base },
-				body: JSON.stringify({
-					error: "Headers not allowed",
-					rejected: notAllowed,
-				}),
+				body: JSON.stringify({ error: "Headers not allowed" }),
 			};
 		}
 		// Echo the allowed requested headers to match browser expectations
@@ -229,14 +215,6 @@ export function handleExternalOptionsRequest(origin: string | undefined) {
 	return {
 		statusCode: 200,
 		headers: getExternalCorsHeaders(origin),
-		body: "",
-	};
-}
-
-export function handleOpenOptionsRequest() {
-	return {
-		statusCode: 200,
-		headers: getOpenCorsHeaders(),
 		body: "",
 	};
 }

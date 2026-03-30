@@ -1,364 +1,125 @@
 # RailBranch Backend
 
-> Production-grade serverless REST API built with AWS Lambda, TypeScript, and WorkOS authentication.
+Production-grade serverless API built with AWS Lambda, TypeScript, and WorkOS authentication.
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-24.x-green)](https://nodejs.org/)
-[![AWS Lambda](https://img.shields.io/badge/AWS-Lambda-orange)](https://aws.amazon.com/lambda/)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](./tests/)
+## Stack
 
-**Tech Stack:** AWS Lambda + API Gateway v2 + PostgreSQL (Neon) + Drizzle ORM + WorkOS Auth + TypeScript
+- **Runtime:** Node.js 24 / TypeScript 5 / pnpm
+- **API:** AWS Lambda + API Gateway HTTP v2 + GraphQL (Apollo Server)
+- **Database:** PostgreSQL on Neon (`drizzle-orm/neon-http`)
+- **Auth:** WorkOS JWT (custom Lambda authorizer)
+- **Infra:** AWS CDK v2 (CloudFront + WAF + S3 + CodeDeploy blue-green)
+- **Observability:** CloudWatch + X-Ray + Sentry + structured logging (Powertools)
+- **Validation:** Zod | **Linter:** Biome | **Tests:** Vitest
+
+## Quick Start
+
+```bash
+pnpm install
+# Create .env.local with your credentials — see docs/ENVIRONMENT_VARIABLES.md
+pnpm migrate
+pnpm dev                            # http://localhost:3000
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Start local Express server (Lambda parity) |
+| `pnpm check` | Lint + typecheck + unit tests |
+| `pnpm test:run` | Unit tests only |
+| `pnpm lint:fix` | Auto-fix lint issues |
+| `pnpm typecheck` | TypeScript check |
+| `pnpm migrate` | Run Drizzle migrations |
+| `pnpm deploy:staging` | Deploy to staging |
+| `pnpm build` | TypeScript compile + generate docs |
+| `pnpm deploy:production` | Deploy to production |
+| `pnpm sync-secrets <stage>` | Sync env vars to AWS (e.g. `pnpm sync-secrets staging`) |
+
+## Project Structure
+
+```
+src/node/
+  handlers/              Lambda handlers — one per file
+    users/               me.ts, update.ts
+    media/               upload-image.ts, upload-image-direct.ts, list-images.ts
+    webhooks/            workos.ts
+    graphql/             handler.ts, context.ts, resolvers/, schema/
+    utils/               health.ts, health-detailed.ts, janitor.ts, options.ts
+  lib/                   Shared libraries
+    validation/          Zod schemas by domain
+    services/            Business logic (user-provisioning.ts)
+    middleware.ts        withAuth wrapper
+    cors.ts              Dynamic CORS
+    db.ts                Neon connection with retry + TTL rotation
+    errors.ts            Error factory
+    audit.ts             Audit logging
+    sanitize.ts          Input sanitization
+    sentry.ts            Error tracking
+    idempotency.ts       Request deduplication
+  authorizers/           workos-jwt.ts (Lambda authorizer)
+  db/schema/             Drizzle schema (8 tables, 3 enums)
+
+infrastructure/          CDK stacks (security, database, media, api, monitoring, pipeline)
+local-dev/server.ts      Express dev server mimicking Lambda
+templates/               Handler templates (.ts.template)
+tests/                   Unit + integration tests
+```
 
 ## Architecture
 
-- **API Gateway v2** with custom Lambda authorizer validating WorkOS JWTs
-- **Lambdas**: Node.js 24.x, bundled as CommonJS (esbuild) to avoid dynamic require issues
-- **DB**: Neon serverless Postgres using `@neondatabase/serverless` + `drizzle-orm`
-- **Secrets**: AWS Secrets Manager (WorkOS + DB)
-- **Observability**: CloudWatch + AWS X-Ray + Lambda Powertools
-
-## 📚 Documentation
-
-### For Developers
-- **[Getting Started](#quick-start)** - Set up your local environment
-- **[Quick Reference](./docs/QUICK_REFERENCE.md)** - Essential daily commands
-- **[Testing Guide](./docs/guides/TESTING.md)** - How to test (local, staging, production)
-- **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute
-- **[Creating Handlers](./templates/README.md)** - Step-by-step guide
-- **[Code Patterns](./.ai/PATTERNS.md)** - Standards and best practices
-
-### For AI Assistants
-- **[AI Context](./.ai/CONTEXT.md)** - Project overview for AI
-- **[AI Patterns](./.ai/PATTERNS.md)** - Code patterns to follow
-- **[Handler Templates](./templates/README.md)** - How to use templates
-
-### Architecture
-- **[Architecture Guide](./docs/architecture/README.md)** - Complete architecture overview
-- **[API Documentation](./docs/api/)** - OpenAPI/Swagger specification
-
----
-
-## 📁 Project Structure
-
 ```
-RailBranchBackend/
-├── .ai/                      # 🤖 AI assistant guides
-│   ├── PATTERNS.md          # Code patterns
-│   └── CONTEXT.md           # Project context
-│
-├── templates/               # 📝 Handler templates
-│   ├── user-scoped.ts.template
-│   ├── org-scoped.ts.template
-│   ├── public.ts.template
-│   └── README.md
-│
-├── src/node/
-│   ├── handlers/           # 🎯 API endpoint handlers
-│   │   ├── users/         # User management
-│   │   ├── media/         # Image uploads
-│   │   ├── webhooks/      # Webhook handlers
-│   │   ├── test/          # Test endpoints
-│   │   └── utils/         # Utility handlers
-│   ├── lib/               # 🔧 Shared libraries
-│   │   ├── validation/    # Domain-organized Zod schemas
-│   │   │   ├── users.ts
-│   │   │   ├── media.ts
-│   │   │   ├── organizations.ts
-│   │   │   ├── webhooks.ts
-│   │   │   ├── common.ts
-│   │   │   └── index.ts
-│   │   ├── response.ts    # Response helpers
-│   │   ├── update-helper.ts # Update helpers
-│   │   ├── middleware.ts  # Auth & error handling
-│   │   ├── cors.ts        # CORS handling
-│   │   ├── db.ts          # Database connection
-│   │   └── errors.ts      # Error helpers
-│   └── db/
-│       └── schema/         # Drizzle schema (8 tables, 3 enums)
-│
-├── tests/                  # ✅ Test scripts
-│   ├── integration/       # Integration tests
-│   └── README.md          # Testing guide
-│
-├── docs/                   # 📖 Documentation
-│   ├── api/               # API docs (OpenAPI)
-│   ├── architecture/      # Architecture docs
-│   └── guides/            # How-to guides
-│
-├── infrastructure/         # ☁️ AWS CDK stacks
-├── local-dev/             # 🔨 Local development server
-├── scripts/               # 🚀 Build & deploy scripts
-└── CONTRIBUTING.md        # Contributing guide
+Client → CloudFront (WAF) → API Gateway HTTP v2 → Lambda Authorizer (JWT)
+                                                  → Lambda Handlers → Neon Postgres
+                                                                    → S3 (presigned URLs)
 ```
 
-## Environment
+- **Auth:** WorkOS JWT verified by Lambda authorizer → claims forwarded to handlers
+- **REST:** `withAuth` middleware wraps handlers, validates claims, adds CORS/security headers
+- **GraphQL:** Apollo Server with depth limiting, complexity analysis, mutation limits
+- **Deploys:** Blue-green via CodeDeploy (canary 10%/5min in prod, all-at-once in staging)
+- **Idempotency:** Hash-based dedup with TTL for webhooks and critical mutations
 
-### Staging: `.env.staging`
+## Auth Flow
 
-Required:
-- `AWS_REGION=us-east-1`
-- `STAGE=staging`
-- `WORKOS_CLIENT_ID=...`
-- `DATABASE_URL=postgresql://...` (Neon)
-- `CORS_ORIGIN=https://*.postway.co`
-- `API_DOMAIN=api-staging.postway.services`
+1. Client sends `Authorization: Bearer <JWT>`
+2. Lambda authorizer verifies RS256 signature via WorkOS JWKS
+3. Claims forwarded to handler via `event.requestContext.authorizer.lambda`
+4. `getUserIdFromClaims(event)` resolves `authIdentity → userId` (JIT creates user on first login)
 
-Custom domain options:
-- `HOSTED_ZONE_NAME=postway.services` (Route 53 managed)
-- `API_CERT_ARN=arn:aws:acm:us-east-1:...` (use existing ACM cert; omit if using HOSTED_ZONE_NAME)
-
-Notes:
-- If DB TLS fails, try removing `channel_binding=require` from `DATABASE_URL`.
-- `SKIP_DB=true` can bypass DB in handlers for auth-only checks.
-
-### Local: `.env.local`
-
-- `STAGE=local`
-- `AWS_REGION=us-east-1`
-- `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/serverless_db?sslmode=disable`
-- `WORKOS_CLIENT_ID=...` (used to fetch JWKS for local JWT verification)
-- `SKIP_DB=false` (set true for auth-only testing)
-- `PORT=3000`
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Node.js 24.x or higher
-- pnpm 8.x or higher
-- PostgreSQL 14.x or higher
-- AWS CLI configured
-- WorkOS account
-
-### Installation
+## Creating a New Handler
 
 ```bash
-# 1. Install dependencies
-pnpm install
-
-# 2. Set up environment
-cp .env.local.example .env.local
-# Edit .env.local with your credentials
-
-# 3. Start local database
-pnpm local:db
-
-# 4. Run migrations
-pnpm migrate
-
-# 5. Start development server
-pnpm dev
+cp templates/user-scoped.ts.template src/node/handlers/{domain}/{action}.ts
 ```
 
-### Testing
+Then: add Zod schema in `lib/validation/`, register route in `infrastructure/lib/routes/` and `local-dev/server.ts`, run `pnpm check`.
 
-```bash
-pnpm test:run             # Unit tests (Vitest)
-pnpm check                # Lint + typecheck + unit tests
+See [templates/README.md](./templates/README.md) for detailed guide.
 
-# Integration tests (requires local server running)
-./tests/integration/test-handlers.sh "YOUR_JWT_TOKEN"
+## Documentation
 
-# Test specific endpoint
-curl -H "Authorization: Bearer $TOKEN" http://localhost:3000/v1/users/me
-```
+| Doc | Purpose |
+|-----|---------|
+| [Setup Guide](./docs/BOILERPLATE_SETUP.md) | First-time project setup from zero |
+| [Environment Variables](./docs/ENVIRONMENT_VARIABLES.md) | All env vars, secrets, SSM params |
+| [Security Model](./docs/SECURITY.md) | Auth, CORS, WAF, input validation, error masking |
+| [Audit Logging](./docs/AUDIT_LOGGING_GUIDE.md) | How audit trail works, integration patterns |
+| [Testing Guide](./docs/guides/TESTING.md) | Unit + integration testing |
+| [CDK Teardown](./docs/guides/CDK_TEARDOWN.md) | How to destroy AWS stacks |
+| [Lambda & DLQ](./docs/LAMBDA_CONCURRENCY_DLQ.md) | Concurrency settings, dead letter queues |
+| [Data Retention](./docs/DATA_RETENTION_POLICY.md) | Retention policies per data type |
+| [SOC 2 Checklist](./docs/SOC2_READINESS_CHECKLIST.md) | Compliance readiness tracker |
 
-### Creating Your First Handler
+## AI Coding Rules
 
-```bash
-# 1. Copy template (note: .ts.template → .ts)
-cp templates/user-scoped.ts.template src/node/handlers/resource/action.ts
+This project uses `.cursor/rules/` for AI pattern enforcement:
 
-# 2. Follow the guide
-# See templates/README.md for detailed instructions
-```
-
-## Deployment (staging)
-
-1) Ensure `.env.staging` contains required variables above
-2) Deploy:
-```bash
-pnpm deploy:staging
-```
-3) After deploy, check stack outputs:
-- `ApiEndpoint` (execute-api URL)
-- `CustomDomain` (if configured)
-- If using external DNS: `ApiCustomDomainRegionalDomainName` and `ApiCustomDomainRegionalHostedZoneId`
-
-4) DNS:
-- Route 53: created automatically when `HOSTED_ZONE_NAME` is set
-- External DNS: create a CNAME from `API_DOMAIN` to `ApiCustomDomainRegionalDomainName`
-
-## 🎯 Key Features
-
-### ✅ Production-Ready
-- **Type-Safe** - Full TypeScript with Zod validation
-- **Tested** - Comprehensive integration tests
-- **Documented** - OpenAPI/Swagger specs
-- **Monitored** - CloudWatch + X-Ray tracing
-- **Secure** - JWT authentication + input validation
-
-### 🚀 Developer Experience
-- **Templates** - Quick-start templates for new handlers
-- **Patterns** - Consistent code patterns
-- **Local Dev** - Full Lambda parity locally
-- **Hot Reload** - Fast development cycle
-- **AI-Friendly** - Guides for AI code assistants
-
-### 🏗️ Architecture
-- **Serverless** - AWS Lambda + API Gateway
-- **Database** - PostgreSQL (Neon) + Drizzle ORM
-- **Auth** - WorkOS JWT authentication
-- **Storage** - S3 + CloudFront CDN
-- **IaC** - AWS CDK for infrastructure
-
-## WorkOS Auth (JWT)
-
-- API Gateway uses a custom Lambda authorizer (`src/node/authorizers/workos-jwt.ts`)
-- Verifies RS256 signature via WorkOS JWKS for `WORKOS_CLIENT_ID`
-- Required claims: `sub` (user), `aud` (client), `iss=https://api.workos.com`
-- Handlers access claims using `getClaims()` in `src/node/lib/auth.ts`
-- Local server validates tokens the same way
-
-
-## API Response Standards
-
-All API endpoints follow a consistent response structure:
-
-### Success Responses
-```json
-{
-  "success": true,
-  "data": {
-    // Response payload here
-  }
-}
-```
-
-### Error Responses
-```json
-{
-  "success": false,
-  "error": "Human readable error message",
-  "details": {
-    "code": "ERROR_CODE",
-    "requestId": "uuid",
-    "timestamp": "2025-08-27T09:54:18.000Z"
-  }
-}
-```
-
-### Headers
-All responses include:
-- `Content-Type: application/json`
-- `Access-Control-Allow-Origin: <matched origin>` (dynamic, per-request)
-
-### Examples
-
-**Organizations List:**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "org_123",
-      "name": "Acme Corp",
-      "createdAt": "2025-01-01T00:00:00.000Z"
-    }
-  ]
-}
-```
-
-**Analytics Data:**
-```json
-{
-  "success": true,
-  "data": {
-    "segments": [
-      {"id": "seg_1", "name": "Engineering", "memberCount": 25}
-    ],
-    "totalMembers": 25,
-    "totalSessions": 150
-  }
-}
-```
-
-**Error Example:**
-```json
-{
-  "success": false,
-  "error": "Organization not found",
-  "details": {
-    "code": "NOT_FOUND",
-    "requestId": "req_abc123",
-    "timestamp": "2025-08-27T09:54:18.000Z"
-  }
-}
-```
-
-## Error Handling & Observability
-
-- Structured logs via Lambda Powertools
-- Tracing enabled; disabled in local to reduce noise
-- Consistent JSON response structure across all endpoints
-
-## Performance Notes
-
-- ARM64 Lambdas (better price/perform.)
-- CommonJS bundles for stability with Node.js 24
-- 256–512MB memory, 5–15s timeouts depending on handler
-
-## 📊 Current Status
-
-### Implemented
-- ✅ User authentication (WorkOS JWT)
-- ✅ User profile management
-- ✅ Organization management (GraphQL)
-- ✅ Image upload (S3 + CloudFront)
-- ✅ Health check endpoint
-- ✅ Webhook handling (WorkOS events)
-- ✅ Middleware variants (auth, API key, webhook, public CORS)
-- ✅ Comprehensive validation (Zod)
-- ✅ Structured logging (Lambda Powertools + Sentry)
-- ✅ Error handling (structured GraphQL errors, REST error factory)
-- ✅ Unit tests (Vitest) + integration tests
-- ✅ CI/CD pipeline (CodePipeline/CodeBuild)
-
-### In Progress
-- 🚧 Journey management
-- 🚧 Campaign management
-- 🚧 Contact management
-
-### Planned
-- 📋 Analytics
-- 📋 Email integration
-- 📋 SMS integration
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](./CONTRIBUTING.md) for details.
-
-### Quick Links
-- [Code Patterns](./.ai/PATTERNS.md)
-- [Template Usage](./templates/README.md)
-- [Testing Guide](./tests/README.md)
-
----
-
-## 📝 License
-
-MIT License - see LICENSE file for details
-
----
-
-## 🆘 Need Help?
-
-- **Documentation:** Check `.ai/` and `docs/` directories
-- **Examples:** Look at existing handlers in `src/node/handlers/`
-- **Issues:** Create an issue on GitHub
-- **Questions:** Ask in team chat
-
----
-
-**Built with ❤️ using AWS Lambda, TypeScript, and modern best practices.**
+| Rule | Scope | Purpose |
+|------|-------|---------|
+| `backend-core.mdc` | Always | Core invariants, directory layout |
+| `handlers.mdc` | `src/node/handlers/**` | REST handler patterns |
+| `graphql.mdc` | `src/node/handlers/graphql/**` | GraphQL resolver patterns |
+| `validation-security.mdc` | `src/node/lib/**` | Validation, sanitization, security |
+| `infrastructure.mdc` | `infrastructure/**` | CDK patterns |
+| `testing.mdc` | `tests/**` | Test patterns, mock conventions |

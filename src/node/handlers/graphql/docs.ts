@@ -47,21 +47,24 @@ export const handler = async (
       --color-primary: 40, 167, 69;
     }
   </style>
-  <link rel="stylesheet" href="https://unpkg.com/graphiql@3.0.0/graphiql.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/graphiql@3.0.0/graphiql.min.css" integrity="sha384-8D+CgOsXwzp5mBEyn+QlSFCghSG2zOx6Twnssnq6J81f12aHtpeNU6r2e/+yMxDX" crossorigin="anonymous" />
 </head>
 <body>
   <div id="graphiql">Loading...</div>
   
   <script
-    crossorigin
-    src="https://unpkg.com/react@18/umd/react.production.min.js"
+    crossorigin="anonymous"
+    integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+    src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
   ></script>
   <script
-    crossorigin
-    src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+    crossorigin="anonymous"
+    integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+    src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
   ></script>
   <script
-    crossorigin
+    crossorigin="anonymous"
+    integrity="sha384-Eqxb3y1DI7Ndw2RMd4uMbXrtm6NoEW7ru9Y0D8xr+MEPgEZm74pT38DWgdoLlVNx"
     src="https://unpkg.com/graphiql@3.0.0/graphiql.min.js"
   ></script>
 
@@ -146,7 +149,8 @@ query Me {
 #       lastModified
 #       category
 #     }
-#     total
+#     count
+#     hasMore
 #   }
 # }
 \`;

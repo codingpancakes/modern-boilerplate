@@ -1,30 +1,38 @@
 # Lambda Concurrency & Dead Letter Queues
 
-**Implemented:** December 9, 2025  
+**Last Updated:** March 2026  
 **Status:** Production-Ready
 
 ---
 
-## 🎯 **Reserved Concurrency Limits**
+## Lambda Concurrency
 
-### **What It Does**
-Limits how many instances of each Lambda function can run simultaneously, protecting your database from connection exhaustion and preventing runaway costs.
+### **Current Approach: Unreserved Pool**
 
-### **Implementation**
+All Lambda handlers use the **unreserved concurrency pool** (no `reservedConcurrentExecutions` set). This means Lambda automatically allocates concurrency from the account-wide pool as needed.
 
-| Handler Type | Concurrency | Rationale |
-|-------------|-------------|-----------|
-| **GraphQL** | 30 | Primary API, high traffic expected |
-| **User Endpoints** (`/v1/users/me`) | 30 | User-facing, high traffic |
-| **Media Operations** (`/v1/media/*`) | 20 | Moderate traffic, S3 operations |
-| **Webhooks** (`/v1/webhooks/*`) | 10 | Background processing, can queue |
-| **CORS Preflight** (`OPTIONS`) | 10 | Utility endpoint |
-| **Health Checks** (`/v1/health`) | 5 | Low traffic, monitoring only |
-| **GraphQL Docs** (`/graphql/docs`) | 5 | Low traffic, developer tool |
+**AWS Account Limit:** 1,000 concurrent executions (default, adjustable via support)
 
-**Total Reserved:** ~140 concurrent executions  
-**AWS Account Limit:** 1,000 concurrent executions (default)  
-**Remaining Capacity:** 860 for future handlers
+**Why unreserved:**
+- Simpler to manage — no risk of one handler starving another
+- AWS Lambda handles burst scaling automatically
+- Reserved concurrency can be re-introduced per-handler if traffic patterns require it
+
+### **When to Add Reserved Concurrency**
+
+Consider adding `reservedConcurrentExecutions` to a handler if:
+- Database connection exhaustion occurs (`too many connections`)
+- A single handler is consuming all account concurrency
+- You need guaranteed capacity for a critical handler
+
+```typescript
+// In route-builder.ts or specific route files
+const handler = routeBuilder.createHandler({
+  name: "HandlerName",
+  path: "handlers/path.ts",
+  reservedConcurrentExecutions: 50,
+});
+```
 
 ---
 
@@ -61,8 +69,8 @@ aws cloudwatch get-metric-statistics \
   --namespace AWS/Lambda \
   --metric-name Throttles \
   --dimensions Name=FunctionName,Value=your-function-name \
-  --start-time 2025-12-09T00:00:00Z \
-  --end-time 2025-12-09T23:59:59Z \
+  --start-time $(date -u -v-1d '+%Y-%m-%dT00:00:00Z') \
+  --end-time $(date -u '+%Y-%m-%dT23:59:59Z') \
   --period 3600 \
   --statistics Sum
 
@@ -80,36 +88,19 @@ aws sqs get-queue-attributes \
 
 ---
 
-## 🔧 **Adjusting Limits**
+## Monitoring Concurrency
 
-### **When to Increase Concurrency**
+### **Key CloudWatch Metrics**
 
-- **Throttles metric > 0** in CloudWatch
-- **API latency increasing** during peak traffic
-- **User complaints** about slow responses
+- **ConcurrentExecutions** — how many Lambda instances are running simultaneously
+- **Throttles** — requests that were rejected due to concurrency limits
+- **Duration** — if increasing, may indicate concurrency pressure
 
-### **When to Decrease Concurrency**
+### **When to Act**
 
-- **Database connection errors** (`too many connections`)
-- **Cost concerns** (more concurrency = more cost)
-- **Downstream service rate limits** being hit
-
-### **How to Adjust**
-
-```typescript
-// In route-builder.ts or specific route files
-const handler = routeBuilder.createHandler({
-  name: "HandlerName",
-  path: "handlers/path.ts",
-  reservedConcurrentExecutions: 50, // Increase from 30
-});
-```
-
-Then redeploy:
-```bash
-pnpm deploy:staging  # Test first
-pnpm deploy:production  # After validation
-```
+- **Throttles > 0** — consider reserved concurrency or requesting a higher account limit
+- **Database connection errors** — add reserved concurrency to limit concurrent DB connections
+- **Cost concerns** — reserved concurrency caps the maximum spend for a handler
 
 ---
 
@@ -157,9 +148,9 @@ aws sqs purge-queue \
 
 ## 💰 **Cost Impact**
 
-### **Reserved Concurrency**
-- **No additional cost** - you're just limiting what you already pay for
-- **Benefit:** Prevents runaway costs from infinite loops or DDoS
+### **Concurrency (Unreserved)**
+- **No additional cost** — Lambda scales from the shared pool
+- **Benefit:** Simplest approach; handlers share account-wide capacity
 
 ### **DLQ (SQS)**
 - **Free Tier:** 1 million requests/month
@@ -171,11 +162,10 @@ aws sqs purge-queue \
 
 ## ✅ **Benefits**
 
-### **Reserved Concurrency**
-- ✅ **Database Protection** - Prevents connection exhaustion
-- ✅ **Cost Control** - Limits maximum spend
-- ✅ **Fair Allocation** - Critical handlers get priority
-- ✅ **Predictable Performance** - No sudden spikes
+### **Concurrency**
+- Auto-scales from shared account pool (current approach)
+- Reserved concurrency available as a knob if needed
+- API Gateway throttling provides the first line of defense
 
 ### **Dead Letter Queue**
 - ✅ **Zero Data Loss** - Failed events are captured
@@ -193,4 +183,4 @@ aws sqs purge-queue \
 
 ---
 
-**Status:** Implemented and production-ready! 🚀
+**Status:** Production-ready

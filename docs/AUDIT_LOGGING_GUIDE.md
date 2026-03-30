@@ -18,12 +18,15 @@ The audit logging system tracks all user actions in the platform for:
 
 ## 📊 What Gets Logged
 
-### Automatically Logged
-- User authentication (login, logout, failures)
-- All CRUD operations (create, update, delete)
-- Permission changes
+### Currently Logged (Phase 1)
+- User profile updates (REST + GraphQL)
+- Organization changes
+- Webhook-triggered user creation/updates
+- Permission/membership changes
+
+### Planned (Phase 2)
+- Media uploads
 - Data exports
-- Webhook events
 - API key operations
 
 ### Logged Information
@@ -39,111 +42,62 @@ The audit logging system tracks all user actions in the platform for:
 
 ## 🔧 Usage
 
-### Option 1: Direct Logging (Simple)
+### Option 1: Direct Logging — REST Handlers (Recommended)
 
 ```typescript
-import { logAudit, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES, AUDIT_STATUS } from "../lib/audit";
+import { logAudit, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES, AUDIT_STATUS, extractRequestContext } from "../../lib/audit";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { getUserIdFromClaims } from "../../lib/auth";
+import { createSuccessResponse } from "../../lib/response";
+import { getDb } from "../../lib/db";
 
-export const handler = async (event: APIGatewayProxyEvent, context: any) => {
-  const contact = await createContact(data);
-  
-  // Log the audit event
-  await logAudit({
-    userId: context.userId,
-    organizationId: context.organizationId,
+const handlerFn = async (event: AuthenticatedEvent, context: Context) => {  // Context from "aws-lambda"
+  const userId = await getUserIdFromClaims(event);
+  const db = await getDb();
+  const [result] = await db.insert(table).values({ userId, ...data }).returning();
+
+  void logAudit({
+    userId,
     action: AUDIT_ACTIONS.CREATE,
-    resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
-    resourceId: contact.id,
-    changes: { after: contact },
-    ipAddress: event.requestContext.identity.sourceIp,
-    userAgent: event.headers["User-Agent"],
-    requestId: event.requestContext.requestId,
+    resourceType: AUDIT_RESOURCE_TYPES.USER,
+    resourceId: result.id,
+    changes: { after: result },
+    ...extractRequestContext(event),
     status: AUDIT_STATUS.SUCCESS,
   });
-  
-  return { statusCode: 200, body: JSON.stringify(contact) };
+
+  return createSuccessResponse(result);
 };
+
+export const handler = withAuth(handlerFn);
 ```
 
 ---
 
-### Option 2: Middleware (Recommended for Lambda)
+### Option 2: GraphQL Resolver Decorator (`auditResolver`)
 
 ```typescript
-import { withAudit, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES } from "../lib/audit";
-
-export const handler = withAudit(
-  async (event, context, auditLog) => {
-    const contact = await createContact(data);
-    
-    // auditLog automatically includes request context
-    await auditLog({
-      action: AUDIT_ACTIONS.CREATE,
-      resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
-      resourceId: contact.id,
-      changes: { after: contact },
-    });
-    
-    return { statusCode: 200, body: JSON.stringify(contact) };
-  }
-);
-```
-
-**Benefits:**
-- Automatically extracts IP, user agent, request ID
-- Pre-fills userId and organizationId from context
-- Cleaner code
-
----
-
-### Option 3: GraphQL Resolver Decorator (Recommended for GraphQL)
-
-```typescript
-import { auditResolver, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES } from "../lib/audit";
+// Import path varies by file depth, e.g. from a resolver:
+import { auditResolver, AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES } from "../../../lib/audit";
 
 const resolvers = {
   Mutation: {
-    createContact: auditResolver(
+    updateProfile: auditResolver(
       async (parent, args, context) => {
-        const contact = await createContact(args.input);
-        return contact;
-      },
-      {
-        action: AUDIT_ACTIONS.CREATE,
-        resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
-        getResourceId: (result) => result.id,
-        getChanges: (result) => ({ after: result }),
-      }
-    ),
-    
-    updateContact: auditResolver(
-      async (parent, args, context) => {
-        const before = await getContact(args.id);
-        const after = await updateContact(args.id, args.input);
-        return after;
+        const validated = profileUpdateSchema.parse(args.input);
+        const sanitized = sanitizeObject(validated);
+        const [updated] = await context.db
+          .update(profiles)
+          .set(sanitized)
+          .where(eq(profiles.userId, context.userId))
+          .returning();
+        return updated;
       },
       {
         action: AUDIT_ACTIONS.UPDATE,
-        resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
+        resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
         getResourceId: (result) => result.id,
-        getChanges: (result, args) => ({
-          before: args.before, // You'd need to pass this through
-          after: result,
-        }),
-      }
-    ),
-    
-    deleteContact: auditResolver(
-      async (parent, args, context) => {
-        const contact = await getContact(args.id);
-        await deleteContact(args.id);
-        return contact;
-      },
-      {
-        action: AUDIT_ACTIONS.DELETE,
-        resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
-        getResourceId: (result) => result.id,
-        getChanges: (result) => ({ before: result }),
+        getChanges: (result) => ({ after: result }),
       }
     ),
   },
@@ -155,6 +109,8 @@ const resolvers = {
 - Handles errors gracefully
 - Consistent logging across all resolvers
 - Less boilerplate
+
+**Note:** For complex multi-step mutations (e.g. `updateMyAccount` which updates both users and profiles in a transaction), use `void logAudit()` directly instead of `auditResolver`.
 
 ---
 
@@ -208,12 +164,6 @@ AUDIT_RESOURCE_TYPES = {
   PROFILE: "PROFILE",
   ORGANIZATION: "ORGANIZATION",
   ORGANIZATION_MEMBER: "ORGANIZATION_MEMBER",
-  CONTACT: "CONTACT",
-  CONTACT_LIST: "CONTACT_LIST",
-  JOURNEY: "JOURNEY",
-  CAMPAIGN: "CAMPAIGN",
-  MESSAGE: "MESSAGE",
-  MESSAGE_TEMPLATE: "MESSAGE_TEMPLATE",
   MEDIA: "MEDIA",
   WEBHOOK: "WEBHOOK",
   API_KEY: "API_KEY",
@@ -228,11 +178,12 @@ AUDIT_RESOURCE_TYPES = {
 ### Get User Activity
 
 ```typescript
-import { db } from "../db";
-import { auditLogs } from "../db/schema";
+import { getDb } from "../../lib/db";
+import { auditLogs } from "../../db/schema";
 import { eq, desc } from "drizzle-orm";
 
 // Get all actions by a user
+const db = await getDb();
 const userActivity = await db
   .select()
   .from(auditLogs)
@@ -244,14 +195,14 @@ const userActivity = await db
 ### Get Resource History
 
 ```typescript
-// Get all changes to a specific contact
-const contactHistory = await db
+// Get all changes to a specific user
+const userHistory = await db
   .select()
   .from(auditLogs)
   .where(
     and(
-      eq(auditLogs.resourceType, "CONTACT"),
-      eq(auditLogs.resourceId, contactId)
+      eq(auditLogs.resourceType, "USER"),
+      eq(auditLogs.resourceId, userId)
     )
   )
   .orderBy(desc(auditLogs.timestamp));
@@ -339,16 +290,14 @@ const orgActivity = await db
   "userId": "123e4567-e89b-12d3-a456-426614174000",
   "organizationId": "789e0123-e89b-12d3-a456-426614174000",
   "action": "UPDATE",
-  "resourceType": "CONTACT",
-  "resourceId": "456e7890-e89b-12d3-a456-426614174000",
+  "resourceType": "USER",
+  "resourceId": "123e4567-e89b-12d3-a456-426614174000",
   "changes": {
     "before": {
-      "firstName": "John",
-      "email": "john@example.com"
+      "firstName": "John"
     },
     "after": {
-      "firstName": "Johnny",
-      "email": "johnny@example.com"
+      "firstName": "Johnny"
     }
   },
   "ipAddress": "203.0.113.42",
@@ -356,8 +305,8 @@ const orgActivity = await db
   "requestId": "1-5f8a1234-abcdef1234567890",
   "timestamp": "2025-12-11T08:30:00.000Z",
   "metadata": {
-    "source": "graphql",
-    "mutation": "updateContact"
+    "source": "rest",
+    "handler": "users/update"
   },
   "status": "SUCCESS",
   "errorMessage": null
@@ -372,7 +321,7 @@ const orgActivity = await db
 
 ```bash
 # Local development
-pnpm db:migrate
+pnpm migrate
 
 # Production (via CDK)
 pnpm deploy:production
@@ -393,8 +342,8 @@ psql $DATABASE_URL -c "SELECT COUNT(*) FROM audit_logs;"
 await logAudit({
   userId: "test-user-id",
   action: AUDIT_ACTIONS.CREATE,
-  resourceType: AUDIT_RESOURCE_TYPES.CONTACT,
-  resourceId: "test-contact-id",
+  resourceType: AUDIT_RESOURCE_TYPES.USER,
+  resourceId: "test-user-id",
   status: AUDIT_STATUS.SUCCESS,
 });
 ```
@@ -445,10 +394,10 @@ For questions about audit logging:
 - **Documentation:** This file
 - **Schema:** `src/node/db/schema/audit.ts`
 - **Utilities:** `src/node/lib/audit.ts`
-- **Migration:** `src/node/db/migrations/0003_shallow_joystick.sql`
+- **Migration:** `src/node/db/migrations/` (audit logs migration)
 
 ---
 
-**Last Updated:** December 11, 2025  
-**Status:** ✅ Implemented (Phase 1)  
-**SOC 2 Requirement:** ✅ Met
+**Last Updated:** March 2026  
+**Status:** Implemented (Phase 1)  
+**SOC 2 Requirement:** Met

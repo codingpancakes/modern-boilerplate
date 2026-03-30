@@ -1,24 +1,28 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { userResolvers as resolvers } from "@/handlers/graphql/resolvers/users";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
+import { userResolvers as resolvers } from "@/handlers/graphql/resolvers/users";
 
 // Mock database with Drizzle query API structure
-const createMockDb = () => ({
-	query: {
-		users: {
-			findFirst: vi.fn(),
+const createMockDb = () => {
+	const db: Record<string, any> = {
+		query: {
+			users: {
+				findFirst: vi.fn(),
+			},
+			profiles: {
+				findFirst: vi.fn(),
+			},
+			organizationMembers: {
+				findFirst: vi.fn(),
+				findMany: vi.fn(),
+			},
 		},
-		profiles: {
-			findFirst: vi.fn(),
-		},
-		organizationMembers: {
-			findFirst: vi.fn(),
-			findMany: vi.fn(),
-		},
-	},
-	select: vi.fn(),
-	update: vi.fn(),
-});
+		select: vi.fn(),
+		update: vi.fn(),
+	};
+	db.transaction = vi.fn(async (fn: (tx: any) => Promise<any>) => fn(db));
+	return db;
+};
 
 // Mock loaders
 const createMockLoaders = () => ({
@@ -34,11 +38,12 @@ const createMockContext = (overrides = {}): GraphQLContext => {
 	const mockDb = createMockDb();
 	return {
 		userId: "test-user-id",
-		orgId: "test-org-id",
+		organizationId: "test-org-id",
 		role: "MEMBER",
 		email: "test@example.com",
 		providerSubject: "workos-123",
 		claims: {},
+		requestId: "test-request-id",
 		db: mockDb as any,
 		loaders: createMockLoaders() as any,
 		...overrides,
@@ -97,7 +102,12 @@ describe("User Resolvers", () => {
 
 			const input = { firstName: "Updated" };
 
-			const result = await resolvers.Mutation.updateMe(null, { input }, context, {} as any);
+			const result = await resolvers.Mutation.updateMe(
+				null,
+				{ input },
+				context,
+				{} as any,
+			);
 
 			expect(result.firstName).toBe("Updated");
 			expect(context.db.update).toHaveBeenCalled();
@@ -122,7 +132,6 @@ describe("User Resolvers", () => {
 
 			const input = {
 				firstName: "Clean",
-				// @ts-ignore - testing sanitization
 				__proto__: { malicious: true },
 			};
 
@@ -166,7 +175,10 @@ describe("User Resolvers", () => {
 	describe("Mutation.updateMyAccount", () => {
 		it("should update both user and profile", async () => {
 			const existingUser = { id: "test-user-id", firstName: "OldFirst" };
-			const existingProfile = { userId: "test-user-id", preferredName: "OldNick" };
+			const existingProfile = {
+				userId: "test-user-id",
+				preferredName: "OldNick",
+			};
 
 			const updatedUser = {
 				id: "test-user-id",
@@ -188,7 +200,7 @@ describe("User Resolvers", () => {
 				then: vi.fn(),
 			};
 			selectChain.then
-				.mockResolvedValueOnce(existingUser)   // beforeUser
+				.mockResolvedValueOnce(existingUser) // beforeUser
 				.mockResolvedValueOnce(existingProfile); // beforeProfile
 			(context.db.select as any).mockReturnValue(selectChain);
 
@@ -225,6 +237,11 @@ describe("User Resolvers", () => {
 		});
 
 		it("should update only user if profile not provided", async () => {
+			const existingUser = {
+				id: "test-user-id",
+				firstName: "OldFirst",
+			};
+
 			const updatedUser = {
 				id: "test-user-id",
 				firstName: "UpdatedFirst",
@@ -237,7 +254,19 @@ describe("User Resolvers", () => {
 
 			const context = createMockContext();
 
-			// Mock user update
+			// Transaction calls tx.select() twice (users + profiles), then tx.update() once
+			const selectChain = {
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi
+							.fn()
+							.mockResolvedValueOnce([existingUser])
+							.mockResolvedValueOnce([existingProfile]),
+					}),
+				}),
+			};
+			(context.db.select as any).mockReturnValue(selectChain);
+
 			(context.db.update as any).mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
@@ -246,18 +275,6 @@ describe("User Resolvers", () => {
 				}),
 			});
 
-			// Mock profile fetch (not update)
-			(context.db.query.profiles.findFirst as any).mockResolvedValue(existingProfile);
-			
-			// Mock db.select() for profile fetch when not updated
-			(context.db.select as any).mockReturnValue({
-				from: vi.fn().mockReturnValue({
-					where: vi.fn().mockReturnValue({
-						limit: vi.fn().mockResolvedValue([existingProfile]),
-					}),
-				}),
-			});
-			
 			const args = {
 				user: { firstName: "UpdatedFirst" },
 			};
@@ -283,7 +300,9 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.loaders.profileByUserId.load as any).mockResolvedValue(mockProfile);
+			(context.loaders.profileByUserId.load as any).mockResolvedValue(
+				mockProfile,
+			);
 
 			const result = await resolvers.User.profile(parent, {}, context);
 
@@ -308,7 +327,9 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.loaders.membershipsByUserId.load as any).mockResolvedValue(mockOrgs);
+			(context.loaders.membershipsByUserId.load as any).mockResolvedValue(
+				mockOrgs,
+			);
 
 			const result = await resolvers.User.organizations(parent, {}, context);
 

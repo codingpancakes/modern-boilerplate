@@ -85,4 +85,6 @@ input UpdateProfileInput {
 	ethnicity: String
 	languages: [String!]
 	onboardingCompleted: Boolean
+	persona: JSON
+	snapshot: JSON
 }

@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { uploadImageRequest, uploadImageDirectRequest, listImagesQuery } from "@/lib/validation/media";
+import {
+	listImagesQuery,
+	uploadImageDirectRequest,
+	uploadImageRequest,
+} from "@/lib/validation/media";
 
 describe("Media Validation Schemas", () => {
 	describe("uploadImageRequest", () => {
@@ -53,7 +57,8 @@ describe("Media Validation Schemas", () => {
 			const validData = {
 				filename: "avatar.png",
 				contentType: "image/png",
-				imageData: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+				imageData:
+					"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
 				category: "profiles",
 			};
 

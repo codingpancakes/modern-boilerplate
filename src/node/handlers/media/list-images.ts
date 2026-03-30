@@ -1,8 +1,7 @@
 import { Logger } from "@aws-lambda-powertools/logger";
-import { type _Object, ListObjectsV2Command } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
-import { buildImageUrl, getMediaConfig, getS3Client } from "../../lib/media";
+import { listUserImages } from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
 import { createSuccessResponse } from "../../lib/response";
 import { mediaSchemas, parseQuery } from "../../lib/validation";
@@ -84,57 +83,26 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
 
-	const config = getMediaConfig();
-
-	// Parse and validate query parameters
 	const query = parseQuery(event, mediaSchemas.listImages);
-	const category = query.prefix;
-	const limit = query.limit;
-	const continuationToken = query.continuationToken;
 
-	// Build S3 prefix based on parameters
-	let prefix = `users/${userId}/`;
-	if (category) {
-		prefix += `${category}/`;
-	}
-
-	logger.info("Listing user images", { category, limit, prefix });
-
-	const command = new ListObjectsV2Command({
-		Bucket: config.bucketName,
-		Prefix: prefix,
-		MaxKeys: limit,
-		ContinuationToken: continuationToken,
+	logger.info("Listing user images", {
+		category: query.prefix,
+		limit: query.limit,
 	});
 
-	const response = await getS3Client().send(command);
-
-	const images = (response.Contents || []).map((obj: _Object) => {
-		const key = obj.Key || "";
-		const parts = key.split("/");
-		const categoryFromPath = parts.length > 2 ? parts[2] : "general";
-
-		return {
-			key,
-			url: buildImageUrl(key, config),
-			size: obj.Size,
-			lastModified: obj.LastModified?.toISOString(),
-			category: categoryFromPath,
-			filename: parts[parts.length - 1],
-		};
-	});
+	const result = await listUserImages(
+		userId,
+		query.prefix,
+		query.limit,
+		query.continuationToken,
+	);
 
 	logger.info("Images listed successfully", {
-		imageCount: images.length,
-		hasMore: response.IsTruncated,
+		imageCount: result.count,
+		hasMore: result.hasMore,
 	});
 
-	return createSuccessResponse({
-		images,
-		count: images.length,
-		continuationToken: response.NextContinuationToken,
-		hasMore: response.IsTruncated || false,
-	});
+	return createSuccessResponse(result);
 };
 
 export const handler = withAuth(handlerFn);

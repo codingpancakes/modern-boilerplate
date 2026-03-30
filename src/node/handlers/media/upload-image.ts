@@ -1,14 +1,9 @@
 import { Logger } from "@aws-lambda-powertools/logger";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import type { Context } from "aws-lambda";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
 import {
-	buildImageKey,
-	buildImageUrl,
-	getMediaConfig,
-	getS3Client,
+	generatePresignedUploadUrl,
 	validateContentTypeExtension,
 } from "../../lib/media";
 import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
@@ -17,8 +12,6 @@ import { parseBody } from "../../lib/validation/helpers";
 import { uploadImageRequest } from "../../lib/validation/media";
 
 const logger = new Logger({ serviceName: "media-upload-image" });
-
-const UPLOAD_EXPIRY_SECONDS = 300; // 5 minutes
 
 /**
  * @swagger
@@ -92,8 +85,6 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	// Add persistent context to all logs
 	logger.appendKeys({ userId });
 
-	const config = getMediaConfig();
-
 	const input = parseBody(event, uploadImageRequest);
 
 	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
@@ -103,37 +94,25 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 		);
 	}
 
-	const key = buildImageKey(userId, input.category, input.filename);
-
 	logger.info("Generating presigned URL for image upload", {
 		userId,
-		key,
 		contentType: input.contentType,
 	});
 
-	const command = new PutObjectCommand({
-		Bucket: config.bucketName,
-		Key: key,
-		ContentType: input.contentType,
-		ContentLength: input.fileSize,
-		ServerSideEncryption: "AES256",
-		Metadata: {
-			userId,
-			originalFilename: input.filename,
-			uploadedAt: new Date().toISOString(),
-		},
-	});
+	const result = await generatePresignedUploadUrl(
+		userId,
+		input.filename,
+		input.contentType,
+		input.fileSize,
+		input.category,
+	);
 
-	const uploadUrl = await getSignedUrl(getS3Client(), command, {
-		expiresIn: UPLOAD_EXPIRY_SECONDS,
-	});
-
-	logger.info("Presigned URL generated successfully", { key });
+	logger.info("Presigned URL generated successfully", { key: result.key });
 
 	return createSuccessResponse({
-		uploadUrl,
-		imageUrl: buildImageUrl(key, config),
-		key,
+		uploadUrl: result.uploadUrl,
+		imageUrl: result.imageUrl,
+		key: result.key,
 	});
 };
 

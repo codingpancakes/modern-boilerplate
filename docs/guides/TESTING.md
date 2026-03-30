@@ -28,10 +28,8 @@ tests/
 │   ├── test-api-auth.sh            ✅ Auth
 │   ├── test-health-checks.sh       ✅ Health
 │   ├── test-middleware.sh          ✅ Middleware
-│   ├── test-image-upload.ts        ✅ Image upload
+│   ├── test-image-upload.ts        ✅ Image upload (TypeScript)
 │   └── test-throttling.sh          ✅ Rate limiting
-│
-└── README.md                       # Test documentation
 ```
 
 ---
@@ -59,7 +57,7 @@ pnpm test:ui       # Open visual test UI in browser
 ```bash
 pnpm test:run      # Run tests once (for CI pipelines)
 pnpm check         # Run lint + typecheck + tests
-pnpm build         # Full build: check + test + compile + docs
+pnpm build         # TypeScript compile + generate docs
 ```
 
 ### Test Coverage
@@ -259,7 +257,7 @@ Wait for deployment to complete (~5-10 minutes).
 
 **Quick Health Check:**
 ```bash
-curl https://api-staging.postway.services/v1/health | jq .
+curl https://api-staging.yourdomain.com/v1/health | jq .
 ```
 
 **Run Full Test Suite:**
@@ -277,21 +275,21 @@ chmod +x test-api.sh
 ```bash
 # Get current user
 curl -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
-  https://api-staging.postway.services/v1/users/me | jq .
+  https://api-staging.yourdomain.com/v1/users/me | jq .
 
 # Update user
 curl -X PATCH \
   -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user":{"firstName":"Test","lastName":"User"}}' \
-  https://api-staging.postway.services/v1/users/me | jq .
+  https://api-staging.yourdomain.com/v1/users/me | jq .
 
 # Upload image
 curl -X POST \
   -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"filename":"test.jpg","contentType":"image/jpeg"}' \
-  https://api-staging.postway.services/v1/media/upload-image | jq .
+  https://api-staging.yourdomain.com/v1/media/upload-image | jq .
 ```
 
 ### Expected Staging Results
@@ -318,7 +316,7 @@ pnpm deploy:production
 
 **Quick Health Check:**
 ```bash
-curl https://api.postway.services/v1/health | jq .
+curl https://api.yourdomain.com/v1/health | jq .
 ```
 
 **Run Full Test Suite:**
@@ -335,14 +333,14 @@ cd tests/integration
 ```bash
 # Get current user
 curl -H "Authorization: Bearer YOUR_PROD_TOKEN" \
-  https://api.postway.services/v1/users/me | jq .
+  https://api.yourdomain.com/v1/users/me | jq .
 
 # Update user
 curl -X PATCH \
   -H "Authorization: Bearer YOUR_PROD_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"user":{"firstName":"Test","lastName":"User"}}' \
-  https://api.postway.services/v1/users/me | jq .
+  https://api.yourdomain.com/v1/users/me | jq .
 ```
 
 ### Expected Production Results
@@ -388,7 +386,7 @@ curl -X PATCH \
 
 **Issue: "CORS errors in browser"**
 - **Solution:** Check CORS_ORIGIN in environment variables
-- Verify origin is in allowed list in `lib/cors.ts`
+- Verify origin is in allowed list in `src/node/lib/cors.ts`
 
 **Issue: "502 Bad Gateway"**
 - **Solution:** Check Lambda function logs in CloudWatch
@@ -408,6 +406,9 @@ curl -X PATCH \
 | `/v1/media/upload-image` | POST | Yes | ✅ | ✅ | ✅ |
 | `/v1/media/images` | GET | Yes | ✅ | ✅ | ✅ |
 | `/v1/media/upload-image-direct` | POST | Yes | ✅ | ✅ | ✅ |
+| `/v1/health/detailed` | GET | No | ✅ | ✅ | ✅ |
+| `/v1/webhooks/workos` | POST | Signature | — | ✅ | ✅ |
+| `/v1/graphql` | POST | Yes | ✅ | ✅ | ✅ |
 
 ### What's Tested
 
@@ -443,7 +444,7 @@ pnpm deploy:staging
 
 # Test with auth
 curl -H "Authorization: Bearer TOKEN" \
-  https://api-staging.postway.services/v1/users/me | jq .
+  https://api-staging.yourdomain.com/v1/users/me | jq .
 ```
 
 ### Production
@@ -456,7 +457,7 @@ pnpm deploy:production
 
 # Test with auth
 curl -H "Authorization: Bearer TOKEN" \
-  https://api.postway.services/v1/users/me | jq .
+  https://api.yourdomain.com/v1/users/me | jq .
 ```
 
 ---
@@ -560,8 +561,8 @@ test('User can upload and retrieve images', async () => {
 ## 🔗 Useful Links
 
 - **Local API:** http://localhost:3000
-- **Staging API:** https://api-staging.postway.services
-- **Production API:** https://api.postway.services
+- **Staging API:** https://api-staging.yourdomain.com
+- **Production API:** https://api.yourdomain.com
 - **API Docs:** Run `pnpm docs:serve`
 - **CloudWatch Logs:** AWS Console → CloudWatch → Log Groups
 

@@ -1,36 +1,45 @@
-# 🔒 Security Architecture
+# Security Architecture
 
 This document explains how the backend protects against common attacks.
 
 ---
 
-## 🛡️ Protection Layers
+## Protection Layers
 
-### 1. **API Gateway Throttling** ⚡
+### 1. API Gateway Throttling
 
 **Location:** `infrastructure/lib/api-stack.ts`
 
 **What it does:**
-- Rate limiting: 2000 requests per second per route
-- Burst limit: 1000 concurrent requests
+- Rate limiting and burst limits at the API Gateway level
+- Production: 1000 requests/sec, 2000 burst
+- Non-production: 500 requests/sec, 1000 burst
 - Prevents API abuse and DDoS attacks
 
-**Configuration:**
-```typescript
-throttle: {
-  rateLimit: 2000,  // requests per second
-  burstLimit: 1000, // concurrent requests
-}
-```
-
 **Protection against:**
-- ✅ DDoS attacks (rate limiting)
-- ✅ API abuse (prevents overwhelming Lambdas)
-- ✅ Cost control (limits excessive usage)
+- DDoS attacks (rate limiting)
+- API abuse (prevents overwhelming Lambdas)
+- Cost control (limits excessive usage)
 
 ---
 
-### 2. **Input Validation (Zod)** 🔍
+### 2. AWS WAF v2
+
+**Location:** `infrastructure/lib/api-stack.ts`
+
+**What it does:**
+- WAFv2 WebACL attached to CloudFront distributions (scope: CLOUDFRONT)
+- Path-scoped body size limits (e.g. different max for media uploads vs API requests)
+- Rate-based rules
+
+**Protection against:**
+- Oversized request payloads
+- Request flooding beyond API Gateway throttle
+- Known malicious patterns
+
+---
+
+### 3. Input Validation (Zod)
 
 **Location:** `src/node/lib/validation/`
 
@@ -38,217 +47,186 @@ throttle: {
 - Validates all request bodies, query params, and path params
 - Type-safe validation with TypeScript
 - Rejects malformed or malicious input BEFORE it reaches business logic
+- Object depth limiting (max 10 levels) prevents deeply nested payload DoS
 
 **Example:**
 ```typescript
-// src/node/handlers/media/upload-image.ts
 const input = parseBody(event, uploadImageRequest);
-// If validation fails, throws BadRequest error
-// Malicious input never reaches S3 or database
 ```
 
 **Protection against:**
-- ✅ **SQL Injection** - Invalid input rejected before DB query
-- ✅ **XSS** - Malicious scripts rejected at validation
-- ✅ **Path Traversal** - Invalid file paths rejected
-- ✅ **Type Confusion** - Wrong data types rejected
+- SQL Injection — invalid input rejected before DB query
+- XSS — malicious scripts rejected at validation
+- Path Traversal — invalid file paths rejected
+- Type Confusion — wrong data types rejected
+- Nested payload DoS — object depth capped at 10
 
 **Validation schemas:**
-- `validation/media.ts` - File uploads, content types
-- `validation/users.ts` - User profile updates
-- `validation/webhooks.ts` - Webhook payloads
-- `validation/common.ts` - Pagination, IDs
+- `validation/media.ts` — file uploads, content types, magic byte checks
+- `validation/users.ts` — user profile updates
+- `validation/webhooks.ts` — webhook payloads
+- `validation/organizations.ts` — organization updates
+- `validation/common.ts` — pagination, IDs
 
 ---
 
-### 3. **Drizzle ORM (Parameterized Queries)** 💉
+### 4. Drizzle ORM (Parameterized Queries)
 
-**Location:** `src/node/db/schema.ts`
+**Location:** `src/node/db/schema/` (multiple files + barrel export)
 
 **What it does:**
 - All database queries use parameterized statements
-- SQL injection is IMPOSSIBLE by design
+- SQL injection is impossible by design
 - No raw SQL strings
 
 **Example:**
 ```typescript
-// SAFE - Parameterized query
 await db.select().from(users).where(eq(users.id, userId));
-
-// NEVER do this (we don't):
-// await db.execute(`SELECT * FROM users WHERE id = '${userId}'`); // ❌ SQL injection!
 ```
 
 **Protection against:**
-- ✅ **SQL Injection** - Completely prevented by ORM
-- ✅ **Database attacks** - No raw SQL execution
+- SQL Injection — completely prevented by ORM
+- Database attacks — no raw SQL execution
 
 ---
 
-### 4. **JWT Authentication (WorkOS)** 🔐
+### 5. JWT Authentication (WorkOS)
 
 **Location:** `src/node/authorizers/workos-jwt.ts`
 
 **What it does:**
-- Validates JWT tokens via API Gateway authorizer
-- Verifies signature, expiration, issuer
-- Extracts user claims (user ID, org ID, email)
+- Validates JWT tokens via API Gateway Lambda authorizer
+- RS256 algorithm pinning (rejects other algorithms)
+- Verifies signature, expiration, issuer, and audience
+- JWKS caching with TTL for performance
+- CLIENT_ID validated at startup (fail-fast)
 
 **Flow:**
 ```
 1. User sends request with Authorization: Bearer <token>
 2. API Gateway calls Lambda authorizer
 3. Authorizer validates JWT with WorkOS JWKS
-4. If valid, request proceeds to handler
+4. If valid, claims forwarded to handler
 5. If invalid, returns 401 Unauthorized
 ```
 
 **Protection against:**
-- ✅ **Unauthorized access** - No token = no access
-- ✅ **Token tampering** - Invalid signature rejected
-- ✅ **Expired tokens** - Old tokens rejected
-- ✅ **Token replay** - Expiration prevents reuse
+- Unauthorized access — no token = no access
+- Token tampering — invalid signature rejected
+- Algorithm confusion — only RS256 accepted
+- Expired tokens — old tokens rejected
 
 ---
 
-### 5. **CORS (Strict Origin Validation)** 🌐
+### 6. CORS (Dynamic Origin Validation)
 
 **Location:** `src/node/lib/cors.ts`
 
 **What it does:**
-- Validates request origin against allowlist
-- Only allows requests from approved domains
-- Prevents cross-origin attacks
-
-**Allowed origins:**
-```typescript
-const ALLOWED_ORIGINS = [
-  'https://app.postway.ai',
-  'https://postway.ai',
-  'http://localhost:3000', // Development only
-];
-```
+- Validates request origin against environment-driven configuration
+- Three layers: exact origins (`CORS_EXACT_ORIGINS`), parent domains (`CORS_PARENT_DOMAINS`), and regex patterns (`CORS_DOMAIN_PATTERNS`)
+- HTTPS enforcement in production (no http origins accepted)
+- Subdomain matching with parent domain min-segment validation
+- No header name leakage in rejection responses
+- Dev/local origins only accepted when `DEV` scope is active
 
 **Protection against:**
-- ✅ **CSRF attacks** - Only allowed origins can make requests
-- ✅ **XSS attacks** - Malicious sites can't call API
-- ✅ **Data theft** - Unauthorized domains blocked
+- CSRF attacks — only allowed origins can make requests
+- XSS attacks — malicious sites can't call API
+- Data theft — unauthorized domains blocked
 
 ---
 
-### 6. **Security Headers** 🛡️
+### 7. Security Headers
 
-**Location:** `src/node/lib/middleware.ts`
+**Location:** `src/node/lib/cors.ts` (`securityHeaders()` function)
 
 **What it does:**
 - Adds security headers to all responses
 - Prevents common browser-based attacks
 
 **Headers:**
-```typescript
-{
-  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
-  'Referrer-Policy': 'strict-origin-when-cross-origin',
-  'Permissions-Policy': 'geolocation=(), microphone=(), camera=()'
-}
+```
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: geolocation=(), microphone=(), camera=()
 ```
 
 **Protection against:**
-- ✅ **Clickjacking** - X-Frame-Options: DENY
-- ✅ **MIME sniffing** - X-Content-Type-Options: nosniff
-- ✅ **Man-in-the-middle** - HSTS forces HTTPS
-- ✅ **Content injection** - CSP restricts resources
+- Clickjacking — X-Frame-Options: DENY
+- MIME sniffing — X-Content-Type-Options: nosniff
+- Man-in-the-middle — HSTS forces HTTPS
+- Content injection — CSP restricts resources
 
 ---
 
-### 7. **Secrets Management** 🔑
+### 8. Secrets Management
 
 **Location:** `infrastructure/lib/security-stack.ts`
 
 **What it does:**
-- Stores sensitive data in AWS Secrets Manager
+- Stores sensitive data in AWS Secrets Manager as JSON
+- Secret paths: `/{PROJECT_NAME}/{STAGE}/workos` and `/{PROJECT_NAME}/{STAGE}/database`
+- JSON shape validated at fetch time (rejects malformed secrets)
+- WorkOS webhook secret shape validated and cached
+- DB password URL-encoded automatically
 - Encrypted at rest with AWS KMS
-- Automatic rotation support
-
-**Secrets:**
-- `WORKOS_CLIENT_ID` - WorkOS API credentials
-- `DATABASE_URL` - Database connection string
-- Never hardcoded in code
 
 **Protection against:**
-- ✅ **Credential exposure** - Secrets encrypted
-- ✅ **Code leaks** - No secrets in git
-- ✅ **Unauthorized access** - IAM controls access
+- Credential exposure — secrets encrypted
+- Code leaks — no secrets in git
+- Unauthorized access — IAM controls access
+- Malformed secrets — shape validation at runtime
 
 ---
 
-### 8. **Error Handling (No Information Leakage)** 🚫
+### 9. Error Handling (No Information Leakage)
 
-**Location:** `src/node/lib/errors.ts`
+**Location:** `src/node/lib/errors.ts` (REST), `src/node/handlers/graphql/handler.ts` (GraphQL)
 
 **What it does:**
 - Catches all errors in middleware
-- Returns generic error messages to clients
-- Logs detailed errors to Sentry (internal only)
-
-**Example:**
-```typescript
-// Internal error (logged to Sentry):
-Error: Database connection failed: invalid password
-
-// Client sees:
-{
-  "error": "Internal server error",
-  "code": "INTERNAL_ERROR",
-  "requestId": "abc123"
-}
-```
+- REST: generic error messages to clients, detailed errors logged to Sentry
+- GraphQL: `formatError` masks internal errors; only whitelisted codes (`BAD_USER_INPUT`, `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, `FORBIDDEN`, `UNAUTHENTICATED`, `NOT_FOUND`, `CONFLICT`) pass through
+- Local dev server mirrors the same masking behavior
 
 **Protection against:**
-- ✅ **Information disclosure** - No stack traces to clients
-- ✅ **Attack reconnaissance** - Attackers can't learn system details
-- ✅ **Database schema leaks** - No SQL errors exposed
+- Information disclosure — no stack traces to clients
+- Attack reconnaissance — attackers can't learn system details
+- Database schema leaks — no SQL errors exposed
 
 ---
 
-## 🌐 Cloudflare Integration
+### 10. Input Sanitization
 
-We use Cloudflare instead of AWS WAF for several reasons:
+**Location:** `src/node/lib/sanitize.ts`
 
-**Why Cloudflare:**
-- ✅ Works with HTTP API v2 (AWS WAF doesn't)
-- ✅ Free tier includes DDoS protection, bot detection, and WAF
-- ✅ Simpler setup (10 minutes vs 2-3 hours)
-- ✅ Lower cost ($0-20/month vs $50-100/month)
-- ✅ Better DDoS protection than AWS WAF
-- ✅ No need for CloudFront complexity
-
-**What Cloudflare provides:**
-- Unlimited DDoS protection
-- Bot detection and blocking
-- Rate limiting
-- WAF rules (OWASP protection)
-- CDN caching
-- SSL/TLS
+**What it does:**
+- `sanitizeObject()` applies HTML escaping via character whitelist
+- Blocks dangerous URL schemes (javascript:, data:, vbscript:)
+- Blocks protocol-relative URLs (`//host/path`)
+- Sanitizes filenames (strips path separators, null bytes)
+- Category and string field character validation
+- Applied after Zod validation, before DB write
 
 ---
 
-## 🎯 Attack Scenarios & Defenses
+## Attack Scenarios & Defenses
 
 ### SQL Injection Attack
 ```bash
 # Attacker tries:
-POST /v1/users/update
-{"name": "'; DROP TABLE users; --"}
+PATCH /v1/users/me
+{"user":{"firstName": "'; DROP TABLE users; --"}}
 ```
 
 **Defense:**
-1. ✅ Zod validation rejects invalid characters
-2. ✅ Drizzle ORM uses parameterized queries
-3. ✅ Even if validation bypassed, ORM prevents injection
+1. Zod validation rejects invalid characters
+2. `sanitizeObject` strips dangerous content
+3. Drizzle ORM uses parameterized queries
 
 **Result:** Attack fails at validation layer
 
@@ -257,30 +235,28 @@ POST /v1/users/update
 ### XSS Attack
 ```bash
 # Attacker tries:
-POST /v1/posts
-{"content": "<script>alert('hacked')</script>"}
+POST /v1/media/upload-image
+{"filename": "<script>alert('hacked')</script>.jpg"}
 ```
 
 **Defense:**
-1. ✅ API returns JSON, not HTML (XSS doesn't work)
-2. ✅ Zod validation can reject script tags if needed
-3. ✅ Frontend should sanitize before rendering
+1. API returns JSON, not HTML (XSS doesn't work)
+2. Zod validation rejects invalid filenames
+3. `sanitizeObject` escapes HTML entities
+4. Frontend should sanitize before rendering
 
 **Result:** Attack ineffective (API doesn't render HTML)
 
 ---
 
 ### DDoS Attack
-```bash
-# Attacker sends 10,000 requests per second
-```
 
 **Defense:**
-1. ✅ API Gateway throttling: 2000 req/sec limit
-2. ✅ Burst limit: 1000 concurrent requests
-3. ✅ Excess requests return 429 Too Many Requests
+1. CloudFront + WAF: edge-level protection
+2. API Gateway throttling: request rate limits
+3. Excess requests return 429 Too Many Requests
 
-**Result:** Attack limited to 2000 req/sec, Lambda protected
+**Result:** Attack mitigated at multiple layers
 
 ---
 
@@ -291,85 +267,56 @@ GET /v1/users/me
 ```
 
 **Defense:**
-1. ✅ API Gateway authorizer validates JWT
-2. ✅ No token = 401 Unauthorized
-3. ✅ Invalid token = 401 Unauthorized
+1. API Gateway authorizer validates JWT
+2. No token = 401 Unauthorized
+3. Invalid token = 401 Unauthorized
 
 **Result:** Request rejected at API Gateway
 
 ---
 
 ### CSRF Attack
-```bash
-# Malicious site tries to call API:
-fetch('https://api.postway.services/v1/users/delete', {
-  method: 'DELETE',
-  credentials: 'include'
-})
-```
 
 **Defense:**
-1. ✅ CORS validation checks origin
-2. ✅ Malicious origin not in allowlist
-3. ✅ Request blocked by browser
+1. CORS validation checks origin against environment-configured allowlist
+2. Malicious origin not in allowlist
+3. Request blocked by browser
 
 **Result:** Browser blocks cross-origin request
 
 ---
 
-## 📊 Security Checklist
+## Security Checklist
 
-- ✅ **Authentication** - JWT with WorkOS
-- ✅ **Authorization** - Role-based access control
-- ✅ **Input Validation** - Zod schemas on all endpoints
-- ✅ **SQL Injection** - Drizzle ORM (parameterized queries)
-- ✅ **XSS** - API returns JSON, not HTML
-- ✅ **CSRF** - CORS validation
-- ✅ **Rate Limiting** - API Gateway throttling
-- ✅ **Secrets** - AWS Secrets Manager
-- ✅ **HTTPS** - Enforced via HSTS header
-- ✅ **Error Handling** - No information leakage
-- ✅ **Logging** - Sentry for error tracking
-- ✅ **Monitoring** - CloudWatch alarms
+- **Authentication** — JWT with WorkOS (RS256, algorithm pinning, JWKS caching)
+- **Authorization** — Role-based access control, org membership checks
+- **Input Validation** — Zod schemas + sanitization on all endpoints
+- **SQL Injection** — Drizzle ORM (parameterized queries)
+- **XSS** — sanitizeObject + JSON API
+- **CSRF** — Dynamic CORS validation
+- **Rate Limiting** — API Gateway throttling + WAF rate rules
+- **Secrets** — AWS Secrets Manager with shape validation
+- **HTTPS** — Enforced via HSTS header
+- **Error Handling** — No information leakage (both REST and GraphQL)
+- **Audit Logging** — All mutations logged with `logAudit` / `auditResolver`
+- **Monitoring** — CloudWatch alarms + X-Ray tracing + Sentry error tracking
 
 ---
 
-## 🚀 Future Enhancements
+## Future Enhancements
 
 ### Consider Adding:
-1. **Cloudflare** (Free)
-   - Advanced DDoS protection
-   - Bot detection
-   - Geographic blocking
-   - CDN caching
-
-2. **Rate Limiting Per User** (Medium Priority)
+1. **Rate Limiting Per User** (Medium Priority)
    - Currently: Per IP via API Gateway
    - Future: Per user ID in application code
 
-3. **Audit Logging** (Compliance)
-   - Track who did what when
-   - Required for SOC2/GDPR
-
-4. **Secrets Rotation** (Operational)
+2. **Secrets Rotation** (Operational)
    - Automatic rotation every 90 days
    - Already supported by Secrets Manager
 
 ---
 
-## 📞 Security Contacts
-
-**Report vulnerabilities:**
-- Email: security@postway.services
-- Response time: 24 hours
-
-**Security incidents:**
-- On-call: [PagerDuty/OpsGenie]
-- Escalation: [CTO contact]
-
----
-
-## 🎓 Resources
+## Resources
 
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [AWS Security Best Practices](https://docs.aws.amazon.com/wellarchitected/latest/security-pillar/welcome.html)

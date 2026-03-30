@@ -1,0 +1,50 @@
+---
+description: REST Lambda handler patterns and conventions
+globs: src/node/handlers/**/*.ts
+alwaysApply: false
+---
+
+# REST Handler Pattern
+
+Every REST handler follows this exact shape:
+
+```typescript
+import { Logger } from "@aws-lambda-powertools/logger";
+import type { Context } from "aws-lambda";
+import { getUserIdFromClaims } from "../../lib/auth";
+import { getDb } from "../../lib/db";
+import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
+import { createSuccessResponse } from "../../lib/response";
+import { sanitizeObject } from "../../lib/sanitize";
+import { parseBody } from "../../lib/validation/helpers";
+import { resourceSchemas } from "../../lib/validation";
+
+const logger = new Logger({ serviceName: "resource-action" });
+
+const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
+  logger.addContext(context);
+  const userId = await getUserIdFromClaims(event);  // async — resolves authIdentity → userId
+  const input = parseBody(event, resourceSchemas.create);
+  const sanitized = sanitizeObject(input);
+  const db = await getDb();
+  const [result] = await db.insert(table).values({ ...sanitized, userId }).returning();
+  if (!result) throw Errors.InternalServerError();
+  void logAudit({ userId, action: AUDIT_ACTIONS.CREATE, resourceType: AUDIT_RESOURCE_TYPES.RESOURCE, resourceId: result.id, status: AUDIT_STATUS.SUCCESS });
+  return createSuccessResponse(result);
+};
+
+export const handler = withAuth(handlerFn);
+```
+
+## Rules
+- One handler per file, named by action: `create.ts`, `update.ts`, `list.ts`, `me.ts`
+- `withAuth` wraps authenticated handlers, `withPublicCors` wraps public/webhook
+- Never try-catch — middleware handles errors
+- Always `sanitizeObject()` before DB write
+- Always `logAudit()` on mutations
+- Add `@swagger` JSDoc for REST endpoint documentation
+- Guard null results: `if (!result) throw Errors.NotFound("Resource")`
+- Use `withIdempotency(event, async () => { ... })` for non-idempotent mutations
+- For updates: wrap multi-step reads + writes in `db.transaction()`
+- Import validation schemas directly: `import { resourceSchemas } from "../../lib/validation"`
+- `getUserIdFromClaims` is **async** — always `await` it

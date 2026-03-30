@@ -1,0 +1,63 @@
+---
+description: Testing patterns and conventions
+globs: tests/**/*.ts
+alwaysApply: false
+---
+
+# Testing Patterns
+
+## Framework
+Vitest for unit tests. Integration tests use bash scripts with curl and TypeScript scripts.
+
+## Unit Test Structure
+```typescript
+import { describe, expect, it, vi, beforeEach } from "vitest";
+
+describe("Feature", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it("should do something", async () => {
+    // Arrange → Act → Assert
+  });
+});
+```
+
+## Mocking the Database
+```typescript
+const createMockDb = () => {
+  const db: Record<string, any> = {
+    query: {
+      users: { findFirst: vi.fn() },
+      profiles: { findFirst: vi.fn() },
+      organizationMembers: { findFirst: vi.fn(), findMany: vi.fn() },
+    },
+    select: vi.fn(),
+    update: vi.fn(),
+  };
+  db.transaction = vi.fn(async (fn: (tx: any) => Promise<any>) => fn(db));
+  return db;
+};
+```
+
+## Mock GraphQL Context
+```typescript
+const createMockContext = (): GraphQLContext => ({
+  userId: "test-user-id",
+  organizationId: "test-org-id",  // NOT orgId
+  role: "MEMBER",
+  email: "test@example.com",
+  providerSubject: "workos-123",
+  claims: {},
+  requestId: "test-request-id",
+  db: createMockDb() as any,
+  loaders: createMockLoaders() as any,
+});
+```
+
+## Rules
+- Test files: `tests/unit/{domain}/{feature}.test.ts`
+- Mock external services (DB, S3, Sentry) — never hit real infra in unit tests
+- `transaction` mock must pass the same mock object as `tx` to the callback
+- `auditResolver`-wrapped resolvers take 4 args: `(parent, args, context, info)` — pass `{} as any` for `info` in tests
+- `createMockContext` should accept optional overrides for flexible test setup
+- Run `pnpm check` before committing (lint + typecheck + tests)

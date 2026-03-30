@@ -7,6 +7,29 @@
 import { z } from "zod";
 import { FILE_SIZE_LIMITS } from "../sanitize";
 
+const CATEGORY_MAX_LENGTH = 50;
+const CATEGORY_REGEX = /^[a-zA-Z0-9_-]+$/;
+const CATEGORY_REGEX_MSG =
+	"Category may only contain letters, numbers, hyphens, and underscores";
+
+export const categoryField = z
+	.string()
+	.max(CATEGORY_MAX_LENGTH)
+	.regex(CATEGORY_REGEX, CATEGORY_REGEX_MSG);
+
+/**
+ * Validate a category string (for use in non-Zod contexts like GraphQL resolvers).
+ * Throws a descriptive error if invalid.
+ */
+export function validateCategory(category: string): void {
+	if (category.length > CATEGORY_MAX_LENGTH) {
+		throw new Error("Category must be 50 characters or less");
+	}
+	if (!CATEGORY_REGEX.test(category)) {
+		throw new Error(CATEGORY_REGEX_MSG);
+	}
+}
+
 /**
  * Allowed image content types
  */
@@ -23,7 +46,7 @@ const imageContentTypes = [
 export const uploadImageRequest = z.object({
 	filename: z.string().min(1).max(255),
 	contentType: z.enum(imageContentTypes),
-	category: z.string().max(50).optional(),
+	category: categoryField.optional(),
 	fileSize: z.number().min(1).max(FILE_SIZE_LIMITS.IMAGE),
 });
 
@@ -36,11 +59,12 @@ export const uploadImageDirectRequest = z.object({
 	imageData: z
 		.string()
 		.min(1)
+		.max(Math.ceil(FILE_SIZE_LIMITS.IMAGE * 1.37) + 100) // base64 overhead (~37%) + data URI prefix
 		.regex(
 			/^(?:data:[^;]*;base64,)?[A-Za-z0-9+/\n\r]+=*$/,
 			"Invalid base64 format",
 		),
-	category: z.string().max(50).optional(),
+	category: categoryField.optional(),
 });
 
 /**

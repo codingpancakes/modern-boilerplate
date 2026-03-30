@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import { describe, expect, it } from "vitest";
 import { getClaims } from "@/lib/auth";
 
 describe("Auth Helpers - Claims Extraction", () => {

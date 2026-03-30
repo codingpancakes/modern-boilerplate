@@ -3,13 +3,7 @@
  */
 
 import { z } from "zod";
-
-const jsonObject = z
-	.record(z.unknown())
-	.refine(
-		(obj) => JSON.stringify(obj).length <= 10_000,
-		"Object too large (max 10KB serialized)",
-	);
+import { jsonObject } from "./helpers";
 
 export const createOrganization = z.object({
 	name: z.string().min(1).max(200),

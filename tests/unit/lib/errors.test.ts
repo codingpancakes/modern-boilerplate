@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { ApiError, Errors, formatError } from "@/lib/errors";
 
 describe("Error Handling", () => {
@@ -14,7 +14,12 @@ describe("Error Handling", () => {
 
 		it("should include optional details", () => {
 			const details = { field: "email", issue: "invalid format" };
-			const error = new ApiError(400, "VALIDATION_ERROR", "Invalid input", details);
+			const error = new ApiError(
+				400,
+				"VALIDATION_ERROR",
+				"Invalid input",
+				details,
+			);
 
 			expect(error.details).toEqual(details);
 		});

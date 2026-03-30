@@ -1,8 +1,8 @@
-import type { IAspect } from 'aws-cdk-lib';
-import type { IConstruct } from 'constructs';
-import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
-import * as logs from 'aws-cdk-lib/aws-logs';
+import type { IAspect } from "aws-cdk-lib";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as lambdaNodejs from "aws-cdk-lib/aws-lambda-nodejs";
+import * as logs from "aws-cdk-lib/aws-logs";
+import type { IConstruct } from "constructs";
 
 /**
  * CDK Aspect to set CloudWatch log retention on all Lambda functions.
@@ -18,24 +18,24 @@ import * as logs from 'aws-cdk-lib/aws-logs';
  * ```
  */
 export class LogRetentionAspect implements IAspect {
-  private readonly retention: logs.RetentionDays;
+	private readonly retention: logs.RetentionDays;
 
-  constructor(stage: string) {
-    this.retention =
-      stage === 'production'
-        ? logs.RetentionDays.ONE_MONTH
-        : logs.RetentionDays.ONE_WEEK;
-  }
+	constructor(stage: string) {
+		this.retention =
+			stage === "production"
+				? logs.RetentionDays.ONE_MONTH
+				: logs.RetentionDays.ONE_WEEK;
+	}
 
-  visit(node: IConstruct): void {
-    if (
-      node instanceof lambdaNodejs.NodejsFunction ||
-      node instanceof lambda.Function
-    ) {
-      new logs.LogRetention(node, 'LogRetention', {
-        logGroupName: `/aws/lambda/${node.functionName}`,
-        retention: this.retention,
-      });
-    }
-  }
+	visit(node: IConstruct): void {
+		if (
+			node instanceof lambdaNodejs.NodejsFunction ||
+			node instanceof lambda.Function
+		) {
+			new logs.LogRetention(node, "LogRetention", {
+				logGroupName: `/aws/lambda/${node.functionName}`,
+				retention: this.retention,
+			});
+		}
+	}
 }

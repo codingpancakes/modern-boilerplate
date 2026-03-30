@@ -4,7 +4,7 @@ import { withPublicCors } from "../../lib/withPublicCors";
 
 /**
  * @swagger
- * /v1/utils/health:
+ * /v1/health:
  *   get:
  *     tags: [Utils]
  *     summary: Health check endpoint

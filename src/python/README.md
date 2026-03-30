@@ -101,7 +101,7 @@ The included `handlers/test/hello.py` demonstrates:
 - ✅ JSON response formatting
 - ✅ CORS headers
 
-Test it:
+Test it (staging/dev only — Python test handler is not deployed in production):
 ```bash
 curl https://api-staging.yourdomain.com/v1/test/python
 ```

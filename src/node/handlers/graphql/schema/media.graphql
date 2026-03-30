@@ -17,7 +17,8 @@ type ImageUploadUrl {
 
 type ImageList {
 	images: [Image!]!
-	total: Int!
+	count: Int!
+	hasMore: Boolean!
 	continuationToken: String
 }
 
@@ -31,6 +32,7 @@ extend type Mutation {
 	generateImageUploadUrl(
 		filename: String!
 		contentType: String!
+		fileSize: Int!
 		category: String
 	): ImageUploadUrl!
 }

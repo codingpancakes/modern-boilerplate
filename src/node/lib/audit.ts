@@ -1,3 +1,4 @@
+import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import {
 	AUDIT_ACTIONS,
@@ -9,7 +10,10 @@ import {
 	auditLogs,
 } from "../db/schema";
 import { getDb } from "./db";
+import { errorMessage, toError } from "./error-utils";
 import { captureException } from "./sentry";
+
+const logger = new Logger({ serviceName: "audit" });
 
 /**
  * Context with audit fields
@@ -46,7 +50,7 @@ export interface AuditLogEntry {
  *
  * @example
  * ```typescript
- * await logAudit({
+ * void logAudit({
  *   userId: user.id,
  *   organizationId: org.id,
  *   action: AUDIT_ACTIONS.CREATE,
@@ -77,11 +81,26 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 			errorMessage: entry.errorMessage,
 		});
 	} catch (error) {
-		// Don't throw - audit logging should never break the main flow
-		if (process.env.NODE_ENV !== "test") {
-			console.error("Failed to log audit event:", error);
-			const err = error instanceof Error ? error : new Error(String(error));
-			captureException(err);
+		// Don't throw — audit logging should never break the main flow.
+		// Log the full entry to CloudWatch as fallback so it can be backfilled.
+		const auditEntry = {
+			action: entry.action,
+			resourceType: entry.resourceType,
+			resourceId: entry.resourceId,
+			userId: entry.userId,
+			organizationId: entry.organizationId,
+			status: entry.status,
+			metadata: entry.metadata,
+		};
+
+		if (process.env.NODE_ENV === "test") {
+			console.warn("Audit insert failed in test:", errorMessage(error));
+		} else {
+			logger.error("Failed to log audit event — fallback to CloudWatch", {
+				error: errorMessage(error),
+				auditEntry,
+			});
+			captureException(toError(error));
 		}
 	}
 }
@@ -140,7 +159,7 @@ export function auditResolver<
 			args: TArgs,
 		) => { before?: unknown; after?: unknown } | undefined;
 		getMetadata?: (
-			result: TResult,
+			result: TResult | null,
 			args: TArgs,
 		) => Record<string, unknown> | undefined;
 	},
@@ -152,32 +171,24 @@ export function auditResolver<
 		info: unknown,
 	): Promise<TResult> => {
 		let result: TResult;
-		let status: AuditStatus = AUDIT_STATUS.SUCCESS;
-		let errorMessage: string | undefined;
 
 		try {
 			result = await resolver(parent, args, context, info);
 		} catch (error) {
-			status = AUDIT_STATUS.FAILURE;
-			errorMessage = error instanceof Error ? error.message : String(error);
-
-			// Log the failure
-			await logAudit({
+			void logAudit({
 				userId: context.userId,
 				organizationId: context.organizationId,
 				action: options.action,
 				resourceType: options.resourceType,
-				status,
-				errorMessage,
-				metadata: options.getMetadata?.(undefined as TResult, args),
+				status: AUDIT_STATUS.FAILURE,
+				errorMessage: errorMessage(error),
+				metadata: options.getMetadata?.(null, args),
 			});
 
-			// Re-throw the error
 			throw error;
 		}
 
-		// Log the success
-		await logAudit({
+		void logAudit({
 			userId: context.userId,
 			organizationId: context.organizationId,
 			action: options.action,
@@ -185,7 +196,7 @@ export function auditResolver<
 			resourceId: options.getResourceId?.(result, args),
 			changes: options.getChanges?.(result, args),
 			metadata: options.getMetadata?.(result, args),
-			status,
+			status: AUDIT_STATUS.SUCCESS,
 		});
 
 		return result;

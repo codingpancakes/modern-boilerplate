@@ -1,0 +1,5 @@
+# Prevent AI tools from reading secrets
+.env*
+.env.local
+.env.staging
+.env.production

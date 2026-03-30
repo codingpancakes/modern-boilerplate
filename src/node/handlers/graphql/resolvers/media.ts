@@ -1,17 +1,23 @@
-import { ListObjectsV2Command, PutObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { GraphQLError } from "graphql";
 import {
-	buildImageKey,
-	buildImageUrl,
-	getMediaConfig,
-	getS3Client,
+	generatePresignedUploadUrl,
+	listUserImages,
 	validateContentTypeExtension,
 } from "../../../lib/media";
-import { validateFileExtension } from "../../../lib/sanitize";
+import { FILE_SIZE_LIMITS, validateFileExtension } from "../../../lib/sanitize";
+import { validateCategory } from "../../../lib/validation/media";
 import type { GraphQLContext } from "../context";
 
-const UPLOAD_EXPIRY_SECONDS = 300;
+function validateCategoryGraphQL(category: string): void {
+	try {
+		validateCategory(category);
+	} catch (err) {
+		throw new GraphQLError(
+			err instanceof Error ? err.message : "Invalid category",
+			{ extensions: { code: "BAD_USER_INPUT" } },
+		);
+	}
+}
 
 export const mediaResolvers = {
 	Query: {
@@ -24,36 +30,9 @@ export const mediaResolvers = {
 			}: { category?: string; limit?: number; continuationToken?: string },
 			context: GraphQLContext,
 		) => {
-			const config = getMediaConfig();
-			const safeLimit = Math.min(Math.max(limit ?? 20, 1), 100);
+			if (category) validateCategoryGraphQL(category);
 
-			const prefix = category
-				? `users/${context.userId}/${category}/`
-				: `users/${context.userId}/`;
-
-			const command = new ListObjectsV2Command({
-				Bucket: config.bucketName,
-				Prefix: prefix,
-				MaxKeys: safeLimit,
-				ContinuationToken: continuationToken,
-			});
-
-			const response = await getS3Client().send(command);
-
-			const images = (response.Contents || []).map((item) => ({
-				key: item.Key ?? "",
-				url: buildImageUrl(item.Key ?? "", config),
-				size: item.Size || 0,
-				lastModified:
-					item.LastModified?.toISOString() || new Date().toISOString(),
-				category: item.Key?.split("/")[2] || null,
-			}));
-
-			return {
-				images,
-				total: images.length,
-				continuationToken: response.NextContinuationToken || null,
-			};
+			return listUserImages(context.userId, category, limit, continuationToken);
 		},
 	},
 
@@ -63,8 +42,14 @@ export const mediaResolvers = {
 			{
 				filename,
 				contentType,
+				fileSize,
 				category,
-			}: { filename: string; contentType: string; category?: string },
+			}: {
+				filename: string;
+				contentType: string;
+				fileSize: number;
+				category?: string;
+			},
 			context: GraphQLContext,
 		) => {
 			if (!filename || filename.length > 255) {
@@ -72,10 +57,17 @@ export const mediaResolvers = {
 					extensions: { code: "BAD_USER_INPUT" },
 				});
 			}
-			if (category && category.length > 50) {
-				throw new GraphQLError("Category must be 50 characters or less", {
-					extensions: { code: "BAD_USER_INPUT" },
-				});
+			if (category) validateCategoryGraphQL(category);
+
+			if (
+				!Number.isInteger(fileSize) ||
+				fileSize < 1 ||
+				fileSize > FILE_SIZE_LIMITS.IMAGE
+			) {
+				throw new GraphQLError(
+					`fileSize must be between 1 and ${FILE_SIZE_LIMITS.IMAGE} bytes`,
+					{ extensions: { code: "BAD_USER_INPUT" } },
+				);
 			}
 
 			if (!validateFileExtension(filename, "IMAGE")) {
@@ -93,31 +85,13 @@ export const mediaResolvers = {
 				);
 			}
 
-			const config = getMediaConfig();
-			const key = buildImageKey(context.userId, category, filename);
-
-			const command = new PutObjectCommand({
-				Bucket: config.bucketName,
-				Key: key,
-				ContentType: contentType,
-				ServerSideEncryption: "AES256",
-				Metadata: {
-					userId: context.userId,
-					originalFilename: filename,
-					uploadedAt: new Date().toISOString(),
-				},
-			});
-
-			const uploadUrl = await getSignedUrl(getS3Client(), command, {
-				expiresIn: UPLOAD_EXPIRY_SECONDS,
-			});
-
-			return {
-				uploadUrl,
-				imageUrl: buildImageUrl(key, config),
-				key,
-				expiresIn: UPLOAD_EXPIRY_SECONDS,
-			};
+			return generatePresignedUploadUrl(
+				context.userId,
+				filename,
+				contentType,
+				fileSize,
+				category,
+			);
 		},
 	},
 };

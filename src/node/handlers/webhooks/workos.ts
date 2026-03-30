@@ -1,29 +1,23 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
-
 import {
 	GetSecretValueCommand,
 	SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { and, eq, lt } from "drizzle-orm";
-import {
-	authIdentities,
-	idempotencyKeys,
-	organizationMembers,
-	organizations,
-	profiles,
-	users,
-} from "../../db/schema/index";
-import {
-	AUDIT_ACTIONS,
-	AUDIT_RESOURCE_TYPES,
-	AUDIT_STATUS,
-	logAudit,
-} from "../../lib/audit";
+import { idempotencyKeys } from "../../db/schema/index";
 import { getDb } from "../../lib/db";
+import { errorMessage } from "../../lib/error-utils";
 import { Errors, formatError } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";
+import * as Sentry from "../../lib/sentry";
+import {
+	deleteOrgFromWorkOS,
+	deleteUserFromWorkOS,
+	upsertOrgFromWorkOS,
+	upsertUserFromWorkOS,
+} from "../../lib/services/user-provisioning";
 import { validate, webhookSchemas } from "../../lib/validation";
 import {
 	parseWorkOSOrgData,
@@ -97,29 +91,43 @@ const logger = new Logger({ serviceName: "workos-webhook" });
 
 // WorkOS webhook data types are now validated via Zod in validation/webhooks.ts
 
+let _cachedWebhookSecret: string | null = null;
+let _secretCachedAt = 0;
+const SECRET_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 async function getWebhookSecret(): Promise<string> {
 	if (process.env.WORKOS_WEBHOOK_SECRET) {
 		return process.env.WORKOS_WEBHOOK_SECRET;
 	}
 
-	// For deployed environments, fetch from Secrets Manager
+	if (_cachedWebhookSecret && Date.now() - _secretCachedAt < SECRET_TTL_MS) {
+		return _cachedWebhookSecret;
+	}
+
 	const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
 	const command = new GetSecretValueCommand({
 		SecretId: process.env.WORKOS_SECRET_ARN,
 	});
 
 	const response = await client.send(command);
-	if (response.SecretString) {
-		const secret = JSON.parse(response.SecretString);
-		const webhookSecret = secret.webhookSecret;
-		if (!webhookSecret) {
-			throw new Error("WORKOS_WEBHOOK_SECRET not found in secrets");
-		}
-
-		return webhookSecret;
+	if (!response.SecretString) {
+		throw new Error("Failed to retrieve webhook secret");
 	}
 
-	throw new Error("Failed to retrieve webhook secret");
+	const secret: unknown = JSON.parse(response.SecretString);
+	if (
+		typeof secret !== "object" ||
+		secret === null ||
+		typeof (secret as Record<string, unknown>).webhookSecret !== "string"
+	) {
+		throw new Error(
+			"Webhook secret JSON missing required 'webhookSecret' string field",
+		);
+	}
+
+	_cachedWebhookSecret = (secret as Record<string, string>).webhookSecret;
+	_secretCachedAt = Date.now();
+	return _cachedWebhookSecret;
 }
 
 // Reject webhook payloads older than 5 minutes to prevent replay attacks
@@ -280,113 +288,14 @@ const webhookHandler = async (
 		}
 		logger.info("Processing event", { idempotencyKey });
 
-		// Process based on event type
+		// Delegate to service-layer functions for each event type
 		switch (webhookEvent.event) {
 			case "user.created":
 			case "user.updated": {
 				const userData = parseWorkOSUserData(
 					webhookEvent.data as Record<string, unknown>,
 				);
-
-				// First, check if user exists via auth_identities
-				const [existingAuth] = await db
-					.select({ userId: authIdentities.userId })
-					.from(authIdentities)
-					.where(
-						and(
-							eq(authIdentities.providerType, "workos"),
-							eq(authIdentities.providerSubject, userData.id),
-						),
-					)
-					.limit(1);
-
-				if (existingAuth?.userId) {
-					logger.info("User exists, updating", {
-						userId: existingAuth.userId,
-					});
-					// Update existing user
-					await db
-						.update(users)
-						.set({
-							email: userData.email,
-							firstName: userData.first_name,
-							lastName: userData.last_name,
-							updatedAt: new Date().toISOString(),
-						})
-						.where(eq(users.id, existingAuth.userId));
-
-					// Audit log: Track user update from WorkOS
-					await logAudit({
-						userId: existingAuth.userId,
-						action: AUDIT_ACTIONS.UPDATE,
-						resourceType: AUDIT_RESOURCE_TYPES.USER,
-						resourceId: existingAuth.userId,
-						status: AUDIT_STATUS.SUCCESS,
-						metadata: {
-							source: "workos_webhook",
-							eventType: webhookEvent.event,
-							providerSubject: userData.id,
-						},
-					});
-				} else {
-					logger.info("Creating new user", { providerSubject: userData.id });
-
-					// neon-http driver doesn't support multi-statement transactions.
-					// Use compensating delete if downstream inserts fail to prevent orphaned rows.
-					const [newUser] = await db
-						.insert(users)
-						.values({
-							email: userData.email,
-							firstName: userData.first_name,
-							lastName: userData.last_name,
-							type: "MEMBER",
-						})
-						.returning({ id: users.id });
-
-					try {
-						await db.insert(profiles).values({
-							userId: newUser.id,
-						});
-
-						await db.insert(authIdentities).values({
-							userId: newUser.id,
-							providerType: "workos",
-							providerSubject: userData.id,
-							emailAtProvider: userData.email,
-						});
-					} catch (insertError) {
-						logger.error(
-							"Failed to create profile/authIdentity, rolling back user",
-							{
-								userId: newUser.id,
-								error:
-									insertError instanceof Error
-										? insertError.message
-										: String(insertError),
-							},
-						);
-						await db.delete(users).where(eq(users.id, newUser.id));
-						throw insertError;
-					}
-
-					await logAudit({
-						userId: newUser.id,
-						action: AUDIT_ACTIONS.CREATE,
-						resourceType: AUDIT_RESOURCE_TYPES.USER,
-						resourceId: newUser.id,
-						status: AUDIT_STATUS.SUCCESS,
-						metadata: {
-							source: "workos_webhook",
-							eventType: webhookEvent.event,
-							providerSubject: userData.id,
-						},
-					});
-
-					logger.info("User created successfully", {
-						userId: newUser.id,
-						providerSubject: userData.id,
-					});
-				}
+				await upsertUserFromWorkOS(db, userData, webhookEvent.event);
 				break;
 			}
 
@@ -394,51 +303,7 @@ const webhookHandler = async (
 				const userData = parseWorkOSUserData(
 					webhookEvent.data as Record<string, unknown>,
 				);
-
-				// Find user via auth_identities and delete
-				const [authIdentity] = await db
-					.select({ userId: authIdentities.userId })
-					.from(authIdentities)
-					.where(
-						and(
-							eq(authIdentities.providerType, "workos"),
-							eq(authIdentities.providerSubject, userData.id),
-						),
-					)
-					.limit(1);
-
-				if (authIdentity?.userId) {
-					// Soft-delete: anonymize PII and retain row for audit trail
-					await db
-						.update(users)
-						.set({
-							status: "deleted",
-							email: null,
-							firstName: null,
-							lastName: null,
-							phone: null,
-							updatedAt: new Date().toISOString(),
-						})
-						.where(eq(users.id, authIdentity.userId));
-
-					// Remove auth identity so the account cannot be re-authenticated
-					await db
-						.delete(authIdentities)
-						.where(eq(authIdentities.userId, authIdentity.userId));
-
-					await logAudit({
-						userId: authIdentity.userId,
-						action: AUDIT_ACTIONS.DELETE,
-						resourceType: AUDIT_RESOURCE_TYPES.USER,
-						resourceId: authIdentity.userId,
-						status: AUDIT_STATUS.SUCCESS,
-						metadata: {
-							source: "workos_webhook",
-							eventType: webhookEvent.event,
-							providerSubject: userData.id,
-						},
-					});
-				}
+				await deleteUserFromWorkOS(db, userData, webhookEvent.event);
 				break;
 			}
 
@@ -447,37 +312,7 @@ const webhookHandler = async (
 				const orgData = parseWorkOSOrgData(
 					webhookEvent.data as Record<string, unknown>,
 				);
-
-				const [org] = await db
-					.insert(organizations)
-					.values({
-						workosOrgId: orgData.id,
-						name: orgData.name,
-					})
-					.onConflictDoUpdate({
-						target: organizations.workosOrgId,
-						set: {
-							name: orgData.name,
-							updatedAt: new Date().toISOString(),
-						},
-					})
-					.returning({ id: organizations.id });
-
-				await logAudit({
-					organizationId: org?.id,
-					action:
-						webhookEvent.event === "organization.created"
-							? AUDIT_ACTIONS.CREATE
-							: AUDIT_ACTIONS.UPDATE,
-					resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
-					resourceId: org?.id,
-					status: AUDIT_STATUS.SUCCESS,
-					metadata: {
-						source: "workos_webhook",
-						eventType: webhookEvent.event,
-						workosOrgId: orgData.id,
-					},
-				});
+				await upsertOrgFromWorkOS(db, orgData, webhookEvent.event);
 				break;
 			}
 
@@ -485,36 +320,7 @@ const webhookHandler = async (
 				const orgData = parseWorkOSOrgData(
 					webhookEvent.data as Record<string, unknown>,
 				);
-
-				// Soft-delete: consistent with GraphQL deleteOrganization mutation
-				const [deleted] = await db
-					.update(organizations)
-					.set({ status: "DELETED", updatedAt: new Date().toISOString() })
-					.where(eq(organizations.workosOrgId, orgData.id))
-					.returning({ id: organizations.id });
-
-				if (deleted) {
-					await db
-						.update(organizationMembers)
-						.set({
-							status: "INACTIVE",
-							updatedAt: new Date().toISOString(),
-						})
-						.where(eq(organizationMembers.organizationId, deleted.id));
-
-					await logAudit({
-						organizationId: deleted.id,
-						action: AUDIT_ACTIONS.DELETE,
-						resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
-						resourceId: deleted.id,
-						status: AUDIT_STATUS.SUCCESS,
-						metadata: {
-							source: "workos_webhook",
-							eventType: webhookEvent.event,
-							workosOrgId: orgData.id,
-						},
-					});
-				}
+				await deleteOrgFromWorkOS(db, orgData, webhookEvent.event);
 				break;
 			}
 		}
@@ -532,7 +338,13 @@ const webhookHandler = async (
 
 		return createSuccessResponse({ status: "processed" });
 	} catch (error) {
-		logger.error("Error processing webhook", { error });
+		logger.error("Error processing webhook", {
+			error: errorMessage(error),
+		});
+		Sentry.captureException(
+			error instanceof Error ? error : new Error(String(error)),
+		);
+		await Sentry.flush();
 		return formatError(error, requestId);
 	}
 };
