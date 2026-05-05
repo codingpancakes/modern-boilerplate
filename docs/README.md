@@ -7,7 +7,7 @@
 - [Lambda & DLQ](./LAMBDA_CONCURRENCY_DLQ.md) — Concurrency settings, dead letter queues
 
 ## Security & Compliance
-- [Security Model](./SECURITY.md) — Auth, CORS, WAF, validation, error masking
+- [Security Model](./SECURITY.md) — Auth, CORS, WAF, origin verification, blue-green deploys, error masking
 - [Audit Logging](./AUDIT_LOGGING_GUIDE.md) — Audit trail patterns and integration
 - [Data Retention](./DATA_RETENTION_POLICY.md) — Retention policies per data type
 - [SOC 2 Checklist](./SOC2_READINESS_CHECKLIST.md) — Compliance readiness tracker

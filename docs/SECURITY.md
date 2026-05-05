@@ -23,23 +23,63 @@ This document explains how the backend protects against common attacks.
 
 ---
 
-### 2. AWS WAF v2
+### 2. AWS WAF v2 (Production Only)
 
 **Location:** `infrastructure/lib/api-stack.ts`
 
+**Enabled by:** `ENABLE_WAF=true` in your env file. Off by default — flip it on when you're ready. Saves ~$10/month when disabled. Staging relies on API Gateway throttling, Lambda-level validation, JWT auth, and CloudFront origin verification without it.
+
 **What it does:**
-- WAFv2 WebACL attached to CloudFront distributions (scope: CLOUDFRONT)
-- Path-scoped body size limits (e.g. different max for media uploads vs API requests)
-- Rate-based rules
+- WAFv2 WebACL attached to the API CloudFront distribution (scope: CLOUDFRONT)
+- Inspects every request before it reaches Lambda
+
+**Rules (5 total):**
+
+| # | Rule | Action | What It Catches |
+|---|------|--------|-----------------|
+| 0 | Body size limit | Block >8KB bodies (exempts GraphQL, media, webhooks) | Oversized payloads on non-upload paths |
+| 1 | AWS Common Rules | AWS-managed: XSS, LFI, path traversal, etc. | OWASP Top 10 attack patterns |
+| 2 | Known Bad Inputs | AWS-managed: Log4j, Java deser, etc. | Known exploit payloads |
+| 3 | SQL Injection | AWS-managed: SQLi patterns in body/query/headers | SQL injection attempts |
+| 4 | Rate limit per IP | Block IPs exceeding 2000 requests/5min | DDoS and credential stuffing |
+
+**Cost:** ~$10-11/month fixed ($5 web ACL + $1/rule + $0.60/million requests)
 
 **Protection against:**
 - Oversized request payloads
 - Request flooding beyond API Gateway throttle
-- Known malicious patterns
+- Known malicious patterns (OWASP Top 10)
+- SQL injection at the edge (before Lambda executes)
+- DDoS and brute-force attacks
 
 ---
 
-### 3. Input Validation (Zod)
+### 3. CloudFront Origin Verification
+
+**Location:** `src/node/lib/origin-verify.ts`, `infrastructure/lib/api-stack.ts`
+
+**Problem:** HTTP API v2 does not support resource policies, so the raw `execute-api` URL is publicly accessible and bypasses CloudFront (and therefore WAF).
+
+**Solution:** CloudFront adds a shared secret header (`X-Origin-Verify`) to every origin request. The Lambda authorizer and public-route middleware reject requests missing or mismatching this header using timing-safe comparison.
+
+**Flow:**
+```
+CloudFront → adds X-Origin-Verify header → API Gateway → Lambda checks header → proceeds
+Direct hit → no header → Lambda rejects with 403
+```
+
+**Configuration:**
+- Set `ORIGIN_VERIFY_SECRET` in `.env.staging` and `.env.production`
+- Generate with: `openssl rand -hex 32`
+- The check is skipped in local development and when the secret is not configured (gradual rollout)
+
+**Protection against:**
+- Direct API Gateway access bypassing WAF
+- Direct API Gateway access bypassing CloudFront rate limiting
+
+---
+
+### 4. Input Validation (Zod)
 
 **Location:** `src/node/lib/validation/`
 
@@ -70,7 +110,7 @@ const input = parseBody(event, uploadImageRequest);
 
 ---
 
-### 4. Drizzle ORM (Parameterized Queries)
+### 5. Drizzle ORM (Parameterized Queries)
 
 **Location:** `src/node/db/schema/` (multiple files + barrel export)
 
@@ -90,7 +130,7 @@ await db.select().from(users).where(eq(users.id, userId));
 
 ---
 
-### 5. JWT Authentication (WorkOS)
+### 6. JWT Authentication (WorkOS)
 
 **Location:** `src/node/authorizers/workos-jwt.ts`
 
@@ -118,7 +158,7 @@ await db.select().from(users).where(eq(users.id, userId));
 
 ---
 
-### 6. CORS (Dynamic Origin Validation)
+### 7. CORS (Dynamic Origin Validation)
 
 **Location:** `src/node/lib/cors.ts`
 
@@ -137,7 +177,7 @@ await db.select().from(users).where(eq(users.id, userId));
 
 ---
 
-### 7. Security Headers
+### 8. Security Headers
 
 **Location:** `src/node/lib/cors.ts` (`securityHeaders()` function)
 
@@ -163,7 +203,7 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ---
 
-### 8. Secrets Management
+### 9. Secrets Management
 
 **Location:** `infrastructure/lib/security-stack.ts`
 
@@ -183,7 +223,7 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ---
 
-### 9. Error Handling (No Information Leakage)
+### 10. Error Handling (No Information Leakage)
 
 **Location:** `src/node/lib/errors.ts` (REST), `src/node/handlers/graphql/handler.ts` (GraphQL)
 
@@ -200,7 +240,7 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 ---
 
-### 10. Input Sanitization
+### 11. Input Sanitization
 
 **Location:** `src/node/lib/sanitize.ts`
 
@@ -294,12 +334,51 @@ GET /v1/users/me
 - **SQL Injection** — Drizzle ORM (parameterized queries)
 - **XSS** — sanitizeObject + JSON API
 - **CSRF** — Dynamic CORS validation
-- **Rate Limiting** — API Gateway throttling + WAF rate rules
+- **Rate Limiting** — API Gateway throttling + WAF rate rules (production)
+- **WAF** — AWS Managed Rules for XSS, SQLi, bad inputs, body size (production only)
+- **Origin Verification** — CloudFront shared secret header blocks direct execute-api access
 - **Secrets** — AWS Secrets Manager with shape validation
 - **HTTPS** — Enforced via HSTS header
 - **Error Handling** — No information leakage (both REST and GraphQL)
 - **Audit Logging** — All mutations logged with `logAudit` / `auditResolver`
 - **Monitoring** — CloudWatch alarms + X-Ray tracing + Sentry error tracking
+- **Deployments** — Blue-green canary (10%/5min) in production with automatic rollback
+
+---
+
+## Blue-Green Deployments (Canary)
+
+**Location:** `infrastructure/lib/routes/route-builder.ts`, `infrastructure/lib/api-stack.ts`
+
+Every Lambda handler is deployed via CodeDeploy blue-green with automatic rollback.
+
+### How It Works
+
+1. CDK publishes a new Lambda version on each deploy
+2. CodeDeploy intercepts the alias update (all handlers use a `"live"` alias)
+3. Traffic is shifted according to the deployment config
+4. If the error alarm fires during the shift, CodeDeploy reverts the alias immediately
+
+### Deployment Strategies by Stage
+
+| Stage | Strategy | Behavior |
+|---|---|---|
+| **Production** | `CANARY_10PERCENT_5MINUTES` | 10% of traffic goes to the new version for 5 minutes. If the error alarm stays green, the remaining 90% shifts over. If it fires, instant rollback. |
+| **Staging** | `ALL_AT_ONCE` | 100% cutover immediately. Faster iteration, still has alarm-based rollback. |
+
+### Rollback Trigger
+
+Each handler gets a CloudWatch alarm: **> 3 Lambda errors in any 1-minute window**. If this fires during the deployment window, CodeDeploy automatically reverts the alias to the previous version. The alarm also notifies the SNS alarm topic (email).
+
+### What Gets Blue-Green Wrapped
+
+- All Node.js REST handlers (created via `RouteBuilder.createHandler()`)
+- GraphQL handler
+- WorkOS authorizer
+- Python handlers
+- Scheduled handlers (janitor)
+
+All API Gateway integrations point at the `"live"` alias, not the raw function — this is what enables CodeDeploy to control traffic shifting.
 
 ---
 

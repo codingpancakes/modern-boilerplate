@@ -9,6 +9,7 @@
 
 import { execSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 const stage = process.argv[2];
@@ -140,19 +141,24 @@ for (const mapping of secretMappings) {
 // Sync SSM parameters (non-sensitive config)
 console.log('📝 Syncing SSM Parameters...');
 
-// Helper: put SSM parameter safely via --cli-input-json to avoid shell injection
+// Helper: put SSM parameter safely via a temp file to avoid shell injection
 function putSsmParameter(name: string, value: string, description: string) {
-  const jsonInput = JSON.stringify({
-    Name: name,
-    Value: value,
-    Type: 'String',
-    Description: description,
-    Overwrite: true,
-  });
-  execSync(
-    `aws ssm put-parameter --cli-input-json file:///dev/stdin --region ${awsRegion}`,
-    { input: jsonInput, stdio: ['pipe', 'pipe', 'pipe'] }
-  );
+  const tmpFile = path.join(os.tmpdir(), `ssm-param-${Date.now()}.json`);
+  try {
+    fs.writeFileSync(tmpFile, JSON.stringify({
+      Name: name,
+      Value: value,
+      Type: 'String',
+      Description: description,
+      Overwrite: true,
+    }));
+    execSync(
+      `aws ssm put-parameter --cli-input-json file://${tmpFile} --region ${awsRegion}`,
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch {}
+  }
 }
 
 // First, sync PROJECT_NAME to a global parameter (used by CI/CD pipeline)
@@ -186,6 +192,12 @@ const ssmMappings = [
   
   // Monitoring (optional)
   { name: 'Alert Email', key: 'ALERT_EMAIL', paramName: `/${projectName}/${stage}/alert-email`, required: false },
+
+  // Security — CloudFront origin verification
+  { name: 'Origin Verify Secret', key: 'ORIGIN_VERIFY_SECRET', paramName: `/${projectName}/${stage}/origin-verify-secret`, required: false },
+
+  // WAF toggle
+  { name: 'Enable WAF', key: 'ENABLE_WAF', paramName: `/${projectName}/${stage}/enable-waf`, required: false },
 ];
 
 for (const mapping of ssmMappings) {

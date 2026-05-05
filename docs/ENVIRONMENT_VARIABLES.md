@@ -39,6 +39,8 @@ All files share the same variable schema. None are committed to git.
 - `CORS_EXACT_ORIGINS` - Exact CORS origins (comma-separated)
 - `CORS_PARENT_DOMAINS` - Parent domains for CORS (comma-separated)
 - `ALERT_EMAIL` - Email for monitoring alerts
+- `ORIGIN_VERIFY_SECRET` - Shared secret between CloudFront and Lambda to block direct execute-api access. Generate with `openssl rand -hex 32`. Leave empty to disable (gradual rollout).
+- `ENABLE_WAF` - Set to `"true"` to deploy AWS WAF v2 in front of CloudFront (~$10/month). Any other value or omission disables WAF.
 
 ---
 
@@ -75,6 +77,9 @@ Non-sensitive configuration stored in SSM Parameter Store.
 
 #### Monitoring
 - `/{PROJECT_NAME}/{STAGE}/alert-email`
+
+#### Security
+- `/{PROJECT_NAME}/{STAGE}/origin-verify-secret`
 
 ---
 
@@ -131,6 +136,9 @@ Environment variables injected into Lambda functions at runtime.
 - `CORS_EXACT_ORIGINS` - Exact origin URLs
 - `CORS_PARENT_DOMAINS` - Parent domain names
 
+### Security
+- `ORIGIN_VERIFY_SECRET` - CloudFront origin verification header secret
+
 ---
 
 ## 🔄 Syncing Process
@@ -165,6 +173,8 @@ pnpm sync-secrets production
 | `CORS_EXACT_ORIGINS` | SSM: `/{PROJECT_NAME}/{STAGE}/cors-exact-origins` | String |
 | `CORS_PARENT_DOMAINS` | SSM: `/{PROJECT_NAME}/{STAGE}/cors-parent-domains` | String |
 | `ALERT_EMAIL` | SSM: `/{PROJECT_NAME}/{STAGE}/alert-email` | String |
+| `ORIGIN_VERIFY_SECRET` | SSM: `/{PROJECT_NAME}/{STAGE}/origin-verify-secret` | String |
+| `ENABLE_WAF` | SSM: `/{PROJECT_NAME}/{STAGE}/enable-waf` | String |
 | `WORKOS_CLIENT_ID` | Secrets Manager: `/{PROJECT_NAME}/{STAGE}/workos` | JSON |
 | `DATABASE_URL` | Secrets Manager: `/{PROJECT_NAME}/{STAGE}/database` | JSON |
 

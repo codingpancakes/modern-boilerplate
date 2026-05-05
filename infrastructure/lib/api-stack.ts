@@ -123,157 +123,160 @@ export class ApiStack extends cdk.Stack {
 
 		// ============================================
 		// WAF v2 — AWS Managed Rules for common threats
+		// Controlled by ENABLE_WAF env var. Off by default in staging to
+		// save ~$10/month. Staging still has API Gateway throttling,
+		// Lambda-level validation, JWT auth, and origin verification.
 		// ============================================
-		const webAcl = new wafv2.CfnWebACL(this, "ApiWebAcl", {
-			name: `${projectName}-${props.stage}-api-waf`,
-			scope: "CLOUDFRONT",
-			defaultAction: { allow: {} },
-			visibilityConfig: {
-				cloudWatchMetricsEnabled: true,
-				metricName: `${projectName}-${props.stage}-waf`,
-				sampledRequestsEnabled: true,
-			},
-			rules: [
-				// Block oversized request bodies on paths that don't need large payloads
-				{
-					name: "BodySizeLimitNonExemptPaths",
-					priority: 0,
-					action: { block: {} },
-					statement: {
-						andStatement: {
-							statements: [
-								{
-									sizeConstraintStatement: {
-										fieldToMatch: {
-											body: { oversizeHandling: "MATCH" },
+		let webAcl: wafv2.CfnWebACL | undefined;
+		const enableWaf = process.env.ENABLE_WAF === "true";
+
+		if (enableWaf) {
+			webAcl = new wafv2.CfnWebACL(this, "ApiWebAcl", {
+				name: `${projectName}-${props.stage}-api-waf`,
+				scope: "CLOUDFRONT",
+				defaultAction: { allow: {} },
+				visibilityConfig: {
+					cloudWatchMetricsEnabled: true,
+					metricName: `${projectName}-${props.stage}-waf`,
+					sampledRequestsEnabled: true,
+				},
+				rules: [
+					{
+						name: "BodySizeLimitNonExemptPaths",
+						priority: 0,
+						action: { block: {} },
+						statement: {
+							andStatement: {
+								statements: [
+									{
+										sizeConstraintStatement: {
+											fieldToMatch: {
+												body: { oversizeHandling: "MATCH" },
+											},
+											comparisonOperator: "GT",
+											size: 8192,
+											textTransformations: [{ priority: 0, type: "NONE" }],
 										},
-										comparisonOperator: "GT",
-										size: 8192,
-										textTransformations: [{ priority: 0, type: "NONE" }],
 									},
-								},
-								{
-									notStatement: {
-										statement: {
-											orStatement: {
-												statements: [
-													{
-														byteMatchStatement: {
-															fieldToMatch: { uriPath: {} },
-															positionalConstraint: "STARTS_WITH",
-															searchString: "/v1/graphql",
-															textTransformations: [
-																{ priority: 0, type: "LOWERCASE" },
-															],
+									{
+										notStatement: {
+											statement: {
+												orStatement: {
+													statements: [
+														{
+															byteMatchStatement: {
+																fieldToMatch: { uriPath: {} },
+																positionalConstraint: "STARTS_WITH",
+																searchString: "/v1/graphql",
+																textTransformations: [
+																	{ priority: 0, type: "LOWERCASE" },
+																],
+															},
 														},
-													},
-													{
-														byteMatchStatement: {
-															fieldToMatch: { uriPath: {} },
-															positionalConstraint: "STARTS_WITH",
-															searchString: "/v1/media/",
-															textTransformations: [
-																{ priority: 0, type: "LOWERCASE" },
-															],
+														{
+															byteMatchStatement: {
+																fieldToMatch: { uriPath: {} },
+																positionalConstraint: "STARTS_WITH",
+																searchString: "/v1/media/",
+																textTransformations: [
+																	{ priority: 0, type: "LOWERCASE" },
+																],
+															},
 														},
-													},
-													{
-														byteMatchStatement: {
-															fieldToMatch: { uriPath: {} },
-															positionalConstraint: "STARTS_WITH",
-															searchString: "/v1/webhooks/",
-															textTransformations: [
-																{ priority: 0, type: "LOWERCASE" },
-															],
+														{
+															byteMatchStatement: {
+																fieldToMatch: { uriPath: {} },
+																positionalConstraint: "STARTS_WITH",
+																searchString: "/v1/webhooks/",
+																textTransformations: [
+																	{ priority: 0, type: "LOWERCASE" },
+																],
+															},
 														},
-													},
-												],
+													],
+												},
 											},
 										},
 									},
-								},
-							],
+								],
+							},
+						},
+						visibilityConfig: {
+							cloudWatchMetricsEnabled: true,
+							metricName: "BodySizeLimitNonExempt",
+							sampledRequestsEnabled: true,
 						},
 					},
-					visibilityConfig: {
-						cloudWatchMetricsEnabled: true,
-						metricName: "BodySizeLimitNonExempt",
-						sampledRequestsEnabled: true,
-					},
-				},
-				{
-					name: "AWSManagedRulesCommonRuleSet",
-					priority: 1,
-					overrideAction: { none: {} },
-					statement: {
-						managedRuleGroupStatement: {
-							vendorName: "AWS",
-							name: "AWSManagedRulesCommonRuleSet",
-							excludedRules: [
-								// Globally excluded — the custom rule above enforces body-size limits on non-exempt paths
-								{ name: "SizeRestrictions_BODY" },
-							],
+					{
+						name: "AWSManagedRulesCommonRuleSet",
+						priority: 1,
+						overrideAction: { none: {} },
+						statement: {
+							managedRuleGroupStatement: {
+								vendorName: "AWS",
+								name: "AWSManagedRulesCommonRuleSet",
+								excludedRules: [
+									{ name: "SizeRestrictions_BODY" },
+								],
+							},
+						},
+						visibilityConfig: {
+							cloudWatchMetricsEnabled: true,
+							metricName: "AWSCommonRules",
+							sampledRequestsEnabled: true,
 						},
 					},
-					visibilityConfig: {
-						cloudWatchMetricsEnabled: true,
-						metricName: "AWSCommonRules",
-						sampledRequestsEnabled: true,
-					},
-				},
-				{
-					name: "AWSManagedRulesKnownBadInputsRuleSet",
-					priority: 2,
-					overrideAction: { none: {} },
-					statement: {
-						managedRuleGroupStatement: {
-							vendorName: "AWS",
-							name: "AWSManagedRulesKnownBadInputsRuleSet",
+					{
+						name: "AWSManagedRulesKnownBadInputsRuleSet",
+						priority: 2,
+						overrideAction: { none: {} },
+						statement: {
+							managedRuleGroupStatement: {
+								vendorName: "AWS",
+								name: "AWSManagedRulesKnownBadInputsRuleSet",
+							},
+						},
+						visibilityConfig: {
+							cloudWatchMetricsEnabled: true,
+							metricName: "AWSKnownBadInputs",
+							sampledRequestsEnabled: true,
 						},
 					},
-					visibilityConfig: {
-						cloudWatchMetricsEnabled: true,
-						metricName: "AWSKnownBadInputs",
-						sampledRequestsEnabled: true,
-					},
-				},
-				{
-					name: "AWSManagedRulesSQLiRuleSet",
-					priority: 3,
-					overrideAction: { none: {} },
-					statement: {
-						managedRuleGroupStatement: {
-							vendorName: "AWS",
-							name: "AWSManagedRulesSQLiRuleSet",
+					{
+						name: "AWSManagedRulesSQLiRuleSet",
+						priority: 3,
+						overrideAction: { none: {} },
+						statement: {
+							managedRuleGroupStatement: {
+								vendorName: "AWS",
+								name: "AWSManagedRulesSQLiRuleSet",
+							},
+						},
+						visibilityConfig: {
+							cloudWatchMetricsEnabled: true,
+							metricName: "AWSSQLInjection",
+							sampledRequestsEnabled: true,
 						},
 					},
-					visibilityConfig: {
-						cloudWatchMetricsEnabled: true,
-						metricName: "AWSSQLInjection",
-						sampledRequestsEnabled: true,
-					},
-				},
-				{
-					name: "RateLimitPerIP",
-					priority: 4,
-					action: { block: {} },
-					statement: {
-						rateBasedStatement: {
-							limit: props.stage === "production" ? 2000 : 500,
-							aggregateKeyType: "IP",
+					{
+						name: "RateLimitPerIP",
+						priority: 4,
+						action: { block: {} },
+						statement: {
+							rateBasedStatement: {
+								limit: 2000,
+								aggregateKeyType: "IP",
+							},
+						},
+						visibilityConfig: {
+							cloudWatchMetricsEnabled: true,
+							metricName: "RateLimitPerIP",
+							sampledRequestsEnabled: true,
 						},
 					},
-					visibilityConfig: {
-						cloudWatchMetricsEnabled: true,
-						metricName: "RateLimitPerIP",
-						sampledRequestsEnabled: true,
-					},
-				},
-			],
-		});
-
-		// WAF will be associated with CloudFront below — CfnWebACLAssociation is not used
-		// because WAFv2 REGIONAL scope does not support HTTP API v2 directly.
+				],
+			});
+		}
 
 		// Common Lambda environment variables
 		const commonEnv = {
@@ -295,6 +298,8 @@ export class ApiStack extends cdk.Stack {
 			// Sentry Error Monitoring
 			SENTRY_DSN: process.env.SENTRY_DSN || "",
 			SENTRY_ENVIRONMENT: props.stage,
+			// CloudFront origin verification (rejects direct execute-api access)
+			ORIGIN_VERIFY_SECRET: process.env.ORIGIN_VERIFY_SECRET || "",
 		};
 
 		// Exact bucket name used for scoped IAM permissions (same logic as bucketName below)
@@ -726,11 +731,18 @@ export class ApiStack extends cdk.Stack {
 		// Origin: HTTP API execute-api URL (not the custom domain)
 		const apiOriginDomain = `${this.httpApi.apiId}.execute-api.${this.region}.amazonaws.com`;
 
+		// Shared secret header so Lambdas can reject requests that bypass CloudFront.
+		// HTTP API v2 has no resource policies; this is the standard workaround.
+		const originVerifySecret = process.env.ORIGIN_VERIFY_SECRET || "";
+
 		const distribution = new cloudfront.Distribution(this, "ApiDistribution", {
 			comment: `${projectName}-${props.stage} API`,
 			defaultBehavior: {
 				origin: new origins.HttpOrigin(apiOriginDomain, {
 					protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+					customHeaders: originVerifySecret
+						? { "X-Origin-Verify": originVerifySecret }
+						: undefined,
 				}),
 				// Forward all methods (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS)
 				allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
@@ -741,8 +753,8 @@ export class ApiStack extends cdk.Stack {
 					cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
 				viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
 			},
-			// Attach WAF (CLOUDFRONT scope) to this distribution
-			webAclId: webAcl.attrArn,
+			// Attach WAF in production only (CLOUDFRONT scope)
+			...(webAcl ? { webAclId: webAcl.attrArn } : {}),
 			// Only serve from US/Canada/Europe edge nodes (cheapest tier)
 			priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
 			// Custom domain + cert (only set when API_DOMAIN is configured)

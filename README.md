@@ -103,7 +103,7 @@ See [templates/README.md](./templates/README.md) for detailed guide.
 |-----|---------|
 | [Setup Guide](./docs/BOILERPLATE_SETUP.md) | First-time project setup from zero |
 | [Environment Variables](./docs/ENVIRONMENT_VARIABLES.md) | All env vars, secrets, SSM params |
-| [Security Model](./docs/SECURITY.md) | Auth, CORS, WAF, input validation, error masking |
+| [Security Model](./docs/SECURITY.md) | Auth, CORS, WAF, origin verification, blue-green deploys, error masking |
 | [Audit Logging](./docs/AUDIT_LOGGING_GUIDE.md) | How audit trail works, integration patterns |
 | [Testing Guide](./docs/guides/TESTING.md) | Unit + integration testing |
 | [CDK Teardown](./docs/guides/CDK_TEARDOWN.md) | How to destroy AWS stacks |

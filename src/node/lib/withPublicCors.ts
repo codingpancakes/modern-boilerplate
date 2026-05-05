@@ -4,7 +4,8 @@ import type {
 	Context,
 } from "aws-lambda";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
-import { formatError } from "./errors";
+import { Errors, formatError } from "./errors";
+import { verifyOriginHeader } from "./origin-verify";
 import type { SuccessResponse } from "./response";
 
 /**
@@ -28,6 +29,10 @@ export const withPublicCors = (
 		}
 
 		try {
+			if (!verifyOriginHeader(event.headers)) {
+				throw Errors.Forbidden();
+			}
+
 			const response = await handlerFn(event, context);
 			const corsHeaders = securityHeaders(getCorsHeaders(origin));
 			return {

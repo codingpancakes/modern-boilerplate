@@ -7,6 +7,7 @@ import {
 	jwtVerify,
 } from "jose";
 import { errorMessage } from "../lib/error-utils";
+import { verifyOriginHeader } from "../lib/origin-verify";
 
 const logger = new Logger({ serviceName: "workos-authorizer" });
 
@@ -45,6 +46,11 @@ export const handler = async (
 	event: APIGatewayRequestAuthorizerEvent,
 ): Promise<SimpleAuthorizerResult> => {
 	try {
+		if (!verifyOriginHeader(event.headers ?? {})) {
+			logger.warn("Rejected request — missing or invalid origin verify header");
+			return { isAuthorized: false };
+		}
+
 		const auth =
 			event.headers?.authorization ?? event.headers?.Authorization ?? "";
 

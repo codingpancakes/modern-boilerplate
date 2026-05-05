@@ -6,6 +6,7 @@ import type {
 } from "aws-lambda";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { Errors, formatError } from "./errors";
+import { verifyOriginHeader } from "./origin-verify";
 import type { SuccessResponse } from "./response";
 
 export interface CustomHeaderConfig {
@@ -117,6 +118,10 @@ export const withCustomHeader = (
 		}
 
 		try {
+			if (!verifyOriginHeader(event.headers)) {
+				throw Errors.Forbidden();
+			}
+
 			validateHeader(event, config);
 			const response = await handlerFn(event, context);
 			return wrapResponse(response, securityHeaders(getCorsHeaders(origin)));
