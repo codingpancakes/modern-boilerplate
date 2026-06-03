@@ -128,6 +128,19 @@ function redactChanges(
 }
 
 /**
+ * Scrub secrets from free-form metadata before persisting. Mirrors the
+ * treatment of `changes` so the redaction contract is uniform: every value
+ * written to the (immutable, 7-year) audit trail passes through the same
+ * key-based filter, regardless of which field carries it.
+ */
+function redactMetadata(
+	metadata: AuditLogEntry["metadata"],
+): AuditLogEntry["metadata"] {
+	if (!metadata) return metadata;
+	return redactSensitive(metadata) as Record<string, unknown>;
+}
+
+/**
  * Log an audit event
  *
  * @example
@@ -158,7 +171,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 			ipAddress: entry.ipAddress,
 			userAgent: entry.userAgent,
 			requestId: entry.requestId,
-			metadata: entry.metadata,
+			metadata: redactMetadata(entry.metadata),
 			status: entry.status || AUDIT_STATUS.SUCCESS,
 			errorMessage: entry.errorMessage,
 		});
@@ -180,7 +193,7 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 			requestId: entry.requestId,
 			status: entry.status ?? AUDIT_STATUS.SUCCESS,
 			errorMessage: entry.errorMessage,
-			metadata: entry.metadata,
+			metadata: redactMetadata(entry.metadata),
 		};
 
 		if (process.env.NODE_ENV === "test") {
