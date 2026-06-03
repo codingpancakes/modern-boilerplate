@@ -72,21 +72,15 @@ export class ApiStack extends cdk.Stack {
 							"CORS_EXACT_ORIGINS environment variable is required",
 						);
 					}
-					const origins = process.env.CORS_EXACT_ORIGINS.split(",")
+					// API Gateway v2 only accepts exact origins (or a single "*") here — it
+					// rejects wildcard subdomains like https://*.example.com at deploy time
+					// ("allow-origin ... can not have wildcards"). Multi-tenant wildcard
+					// subdomain CORS is handled at the Lambda layer (see src/node/lib/cors.ts).
+					// This gateway-level list only needs exact origins so that gateway-generated
+					// responses (authorizer 401/403, throttle 429, gateway 5xx) carry CORS headers.
+					return process.env.CORS_EXACT_ORIGINS.split(",")
 						.map((o) => o.trim())
 						.filter(Boolean);
-
-					// Add wildcard subdomain patterns from CORS_PARENT_DOMAINS
-					// so API Gateway preflight matches the same origins as Lambda CORS
-					const parentDomains = (process.env.CORS_PARENT_DOMAINS || "")
-						.split(",")
-						.map((s) => s.trim())
-						.filter((s) => s.includes("."));
-					for (const pd of parentDomains) {
-						origins.push(`https://*.${pd}`);
-					}
-
-					return origins;
 				})(),
 				allowMethods: [
 					apigwv2.CorsHttpMethod.GET,
