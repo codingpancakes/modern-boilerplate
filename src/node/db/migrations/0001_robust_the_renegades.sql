@@ -1,33 +1,33 @@
-DROP TABLE "contact_channels";--> statement-breakpoint
-DROP TABLE "contact_list_members";--> statement-breakpoint
-DROP TABLE "contact_lists";--> statement-breakpoint
-DROP TABLE "contact_segment_members";--> statement-breakpoint
-DROP TABLE "contact_segments";--> statement-breakpoint
-DROP TABLE "contact_subscriptions";--> statement-breakpoint
-DROP TABLE "contacts";--> statement-breakpoint
-DROP TABLE "events";--> statement-breakpoint
-DROP TABLE "global_unsubscribes";--> statement-breakpoint
-DROP TABLE "campaign_runs";--> statement-breakpoint
-DROP TABLE "campaigns";--> statement-breakpoint
-DROP TABLE "journey_runs";--> statement-breakpoint
-DROP TABLE "journey_step_runs";--> statement-breakpoint
-DROP TABLE "journeys";--> statement-breakpoint
-DROP TABLE "experiments";--> statement-breakpoint
-DROP TABLE "message_channels";--> statement-breakpoint
-DROP TABLE "message_events";--> statement-breakpoint
-DROP TABLE "messages";--> statement-breakpoint
-DROP TABLE "subscription_topics";--> statement-breakpoint
-DROP TABLE "template_versions";--> statement-breakpoint
-DROP TABLE "templates";--> statement-breakpoint
-DROP TABLE "webhook_deliveries";--> statement-breakpoint
-DROP TABLE "webhooks";--> statement-breakpoint
-DROP TABLE "entity_properties";--> statement-breakpoint
-DROP TABLE "group_memberships";--> statement-breakpoint
-DROP TABLE "groups";--> statement-breakpoint
-DROP TABLE "property_definitions";--> statement-breakpoint
-DROP TABLE "property_facets";--> statement-breakpoint
-DROP TABLE "resource_owners";--> statement-breakpoint
-ALTER TABLE "organization_members" DROP CONSTRAINT "organization_members_org_unit_id_org_units_id_fk";
+DROP TABLE IF EXISTS "contact_channels" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contact_list_members" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contact_lists" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contact_segment_members" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contact_segments" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contact_subscriptions" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "contacts" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "events" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "global_unsubscribes" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "campaign_runs" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "campaigns" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "journey_runs" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "journey_step_runs" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "journeys" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "experiments" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "message_channels" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "message_events" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "messages" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "subscription_topics" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "template_versions" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "templates" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "webhook_deliveries" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "webhooks" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "entity_properties" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "group_memberships" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "groups" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "property_definitions" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "property_facets" CASCADE;--> statement-breakpoint
+DROP TABLE IF EXISTS "resource_owners" CASCADE;--> statement-breakpoint
+ALTER TABLE "organization_members" DROP CONSTRAINT IF EXISTS "organization_members_org_unit_id_org_units_id_fk";
 --> statement-breakpoint
 DROP INDEX IF EXISTS "ix_org_slug";--> statement-breakpoint
 ALTER TABLE "organization_members" ALTER COLUMN "org_unit_id" DROP NOT NULL;--> statement-breakpoint
