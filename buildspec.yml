@@ -41,7 +41,7 @@ phases:
       - export CORS_EXACT_ORIGINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-exact-origins" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
       - export CORS_PARENT_DOMAINS=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/cors-parent-domains" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "")
       - export ENABLE_WAF=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/enable-waf" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "false")
-      - echo "WAF enabled for ${STAGE}: ${ENABLE_WAF}"
+      - echo "WAF enabled for stage ${STAGE} is ${ENABLE_WAF}"
       - echo "Loading GitHub configuration..."
       - export GITHUB_OWNER=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-owner" --query 'Parameter.Value' --output text --region $AWS_REGION)
       - export GITHUB_REPO=$(aws ssm get-parameter --name "/${PROJECT_NAME}/${STAGE}/github-repo" --query 'Parameter.Value' --output text --region $AWS_REGION)
