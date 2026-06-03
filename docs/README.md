@@ -17,5 +17,6 @@
 - [Handler Templates](../templates/README.md) — How to create new handlers
 - [Python Handlers](../src/python/README.md) — Python Lambda guide
 
-## AI Rules
-Pattern enforcement for AI coding assistants lives in `../.cursor/rules/`.
+## For AI Agents
+- [AGENTS.md](../AGENTS.md) — **start here.** Canonical guide: architecture, non-negotiable invariants, Definition of Done, and scaling patterns for building on top of this backend.
+- Per-domain pattern enforcement lives in `../.cursor/rules/` (`backend-core`, `handlers`, `graphql`, `infrastructure`, `validation-security`, `testing`, `scaling-quality`).
