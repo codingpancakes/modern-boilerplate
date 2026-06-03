@@ -5,6 +5,7 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
+	auditRequestContext,
 	auditResolver,
 	logAudit,
 } from "../../../lib/audit";
@@ -101,8 +102,12 @@ export const userResolvers = {
 			{
 				action: AUDIT_ACTIONS.UPDATE,
 				resourceType: AUDIT_RESOURCE_TYPES.USER,
+				getBefore: (_args, context) =>
+					context.db.query.users.findFirst({
+						where: eq(users.id, context.userId),
+					}),
 				getResourceId: (result) => result.id,
-				getChanges: (result) => ({ after: result }),
+				getChanges: (result, _args, before) => ({ before, after: result }),
 				getMetadata: (_result, args) => ({
 					updatedFields: Object.keys(args.input),
 				}),
@@ -139,8 +144,12 @@ export const userResolvers = {
 			{
 				action: AUDIT_ACTIONS.UPDATE,
 				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
+				getBefore: (_args, context) =>
+					context.db.query.profiles.findFirst({
+						where: eq(profiles.userId, context.userId),
+					}),
 				getResourceId: (result) => result.userId,
-				getChanges: (result) => ({ after: result }),
+				getChanges: (result, _args, before) => ({ before, after: result }),
 				getMetadata: (_result, args) => ({
 					updatedFields: Object.keys(args.input),
 					...(args.input.onboardingCompleted !== undefined && {
@@ -251,6 +260,7 @@ export const userResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId: context.organizationId,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.UPDATE,
 				resourceType,
 				resourceId: context.userId,

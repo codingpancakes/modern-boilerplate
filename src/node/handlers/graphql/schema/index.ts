@@ -13,4 +13,5 @@ export const typeDefs = `
   ${loadSchema("users.graphql")}
   ${loadSchema("organizations.graphql")}
   ${loadSchema("media.graphql")}
+  ${loadSchema("audit.graphql")}
 `;

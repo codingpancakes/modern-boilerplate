@@ -5,6 +5,7 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
+	auditRequestContext,
 	logAudit,
 } from "../../../lib/audit";
 import { createPaginatedResponse, decodeCursor } from "../../../lib/pagination";
@@ -205,6 +206,7 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId: org.id,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.CREATE,
 				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
 				resourceId: org.id,
@@ -259,6 +261,7 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId: id,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.UPDATE,
 				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
 				resourceId: id,
@@ -312,6 +315,7 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId: id,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.DELETE,
 				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
 				resourceId: id,
@@ -372,8 +376,9 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.CREATE,
-				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
 				resourceId: membership.id,
 				status: AUDIT_STATUS.SUCCESS,
 				metadata: {
@@ -452,8 +457,9 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.UPDATE,
-				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
 				resourceId: validated.memberId,
 				changes: {
 					before: { role: target.role },
@@ -532,8 +538,9 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.DELETE,
-				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
 				resourceId: memberId,
 				status: AUDIT_STATUS.SUCCESS,
 				metadata: {
@@ -583,8 +590,9 @@ export const organizationResolvers = {
 			void logAudit({
 				userId: context.userId,
 				organizationId,
+				...auditRequestContext(context),
 				action: AUDIT_ACTIONS.DELETE,
-				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
 				resourceId: membership.id,
 				status: AUDIT_STATUS.SUCCESS,
 				metadata: { source: "graphql", action: "leave_organization" },

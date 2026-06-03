@@ -1,6 +1,13 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import type { Context } from "aws-lambda";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	extractRequestContext,
+	logAudit,
+} from "../../lib/audit";
 import { getUserIdFromClaims } from "../../lib/auth";
 import { Errors } from "../../lib/errors";
 import {
@@ -153,6 +160,22 @@ const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
 	const imageUrl = buildImageUrl(key, config);
 
 	logger.info("Image uploaded successfully", { key, imageUrl });
+
+	void logAudit({
+		userId,
+		action: AUDIT_ACTIONS.CREATE,
+		resourceType: AUDIT_RESOURCE_TYPES.MEDIA,
+		resourceId: key,
+		...extractRequestContext(event),
+		status: AUDIT_STATUS.SUCCESS,
+		metadata: {
+			source: "rest",
+			handler: "media/upload-image-direct",
+			contentType: input.contentType,
+			size: imageBuffer.length,
+			category: input.category,
+		},
+	});
 
 	return createSuccessResponse({
 		imageUrl,

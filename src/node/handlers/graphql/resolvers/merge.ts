@@ -1,3 +1,4 @@
+import { auditResolvers } from "./audit";
 import { mediaResolvers } from "./media";
 import { organizationResolvers } from "./organizations";
 import { userResolvers } from "./users";
@@ -30,6 +31,7 @@ export const resolvers = {
 		userResolvers.Query,
 		mediaResolvers.Query,
 		organizationResolvers.Query,
+		auditResolvers.Query,
 	),
 	Mutation: mergeResolverMaps(
 		"Mutation",

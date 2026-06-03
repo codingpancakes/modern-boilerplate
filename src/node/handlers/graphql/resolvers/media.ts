@@ -1,5 +1,12 @@
 import { GraphQLError } from "graphql";
 import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	auditRequestContext,
+	logAudit,
+} from "../../../lib/audit";
+import {
 	generatePresignedUploadUrl,
 	listUserImages,
 	validateContentTypeExtension,
@@ -85,13 +92,33 @@ export const mediaResolvers = {
 				);
 			}
 
-			return generatePresignedUploadUrl(
+			const result = await generatePresignedUploadUrl(
 				context.userId,
 				filename,
 				contentType,
 				fileSize,
 				category,
 			);
+
+			void logAudit({
+				userId: context.userId,
+				organizationId: context.organizationId,
+				...auditRequestContext(context),
+				action: AUDIT_ACTIONS.CREATE,
+				resourceType: AUDIT_RESOURCE_TYPES.MEDIA,
+				resourceId: result.key,
+				status: AUDIT_STATUS.SUCCESS,
+				metadata: {
+					source: "graphql",
+					action: "generate_upload_url",
+					filename,
+					contentType,
+					fileSize,
+					category,
+				},
+			});
+
+			return result;
 		},
 	},
 };

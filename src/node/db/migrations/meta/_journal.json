@@ -29,6 +29,13 @@
 			"when": 1774405380988,
 			"tag": "0003_brainy_the_professor",
 			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "5",
+			"when": 1774500000000,
+			"tag": "0004_audit_hardening",
+			"breakpoints": true
 		}
 	]
 }

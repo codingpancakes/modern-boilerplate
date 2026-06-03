@@ -15,11 +15,14 @@ import * as Sentry from "../../lib/sentry";
 import {
 	deleteOrgFromWorkOS,
 	deleteUserFromWorkOS,
+	recordAuthEventFromWorkOS,
 	upsertOrgFromWorkOS,
 	upsertUserFromWorkOS,
 } from "../../lib/services/user-provisioning";
 import { validate, webhookSchemas } from "../../lib/validation";
 import {
+	isWorkOSAuthEvent,
+	parseWorkOSAuthData,
 	parseWorkOSOrgData,
 	parseWorkOSUserData,
 } from "../../lib/validation/webhooks";
@@ -287,6 +290,15 @@ const webhookHandler = async (
 			logger.warn("Reclaimed stale processing key", { idempotencyKey });
 		}
 		logger.info("Processing event", { idempotencyKey });
+
+		// Authentication-lifecycle events (login / failed login / session) are
+		// audited rather than mutating domain tables.
+		if (isWorkOSAuthEvent(webhookEvent.event)) {
+			const authData = parseWorkOSAuthData(
+				webhookEvent.data as Record<string, unknown>,
+			);
+			await recordAuthEventFromWorkOS(db, authData, webhookEvent.event);
+		}
 
 		// Delegate to service-layer functions for each event type
 		switch (webhookEvent.event) {

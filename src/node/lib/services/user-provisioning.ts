@@ -14,6 +14,10 @@ import {
 	logAudit,
 } from "../audit";
 import type { DbInstance } from "../db";
+import {
+	isWorkOSAuthFailure,
+	type WorkOSAuthData,
+} from "../validation/webhooks";
 
 const logger = new Logger({ serviceName: "user-provisioning" });
 
@@ -272,6 +276,52 @@ export async function deleteOrgFromWorkOS(
 			source: "workos_webhook",
 			eventType,
 			workosOrgId: orgData.id,
+		},
+	});
+}
+
+/**
+ * Record an authentication-lifecycle event (login / failed login) emitted by
+ * WorkOS into the audit trail. Resolves the internal user id from the provider
+ * subject when available; failed logins may have no resolvable user, which is
+ * expected and still logged for security forensics.
+ */
+export async function recordAuthEventFromWorkOS(
+	db: DbInstance,
+	authData: WorkOSAuthData,
+	eventType: string,
+): Promise<void> {
+	const failed = isWorkOSAuthFailure(eventType);
+
+	let userId: string | undefined;
+	if (authData.user_id) {
+		const [identity] = await db
+			.select({ userId: authIdentities.userId })
+			.from(authIdentities)
+			.where(
+				and(
+					eq(authIdentities.providerType, "workos"),
+					eq(authIdentities.providerSubject, authData.user_id),
+				),
+			)
+			.limit(1);
+		userId = identity?.userId ?? undefined;
+	}
+
+	void logAudit({
+		userId,
+		action: failed ? AUDIT_ACTIONS.LOGIN_FAILED : AUDIT_ACTIONS.LOGIN,
+		resourceType: AUDIT_RESOURCE_TYPES.USER,
+		resourceId: userId,
+		ipAddress: authData.ip_address ?? undefined,
+		userAgent: authData.user_agent ?? undefined,
+		status: failed ? AUDIT_STATUS.FAILURE : AUDIT_STATUS.SUCCESS,
+		metadata: {
+			source: "workos_webhook",
+			eventType,
+			providerSubject: authData.user_id,
+			email: authData.email,
+			authType: authData.type,
 		},
 	});
 }

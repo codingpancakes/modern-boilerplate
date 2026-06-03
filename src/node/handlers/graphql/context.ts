@@ -18,6 +18,8 @@ export interface GraphQLContext extends AuditContext {
 	providerSubject: string;
 	claims: Record<string, unknown>;
 	requestId: string;
+	ipAddress?: string;
+	userAgent?: string;
 	db: Awaited<ReturnType<typeof getDb>>;
 	organizationId?: string;
 	loaders: ReturnType<typeof createLoaders>;
@@ -123,6 +125,8 @@ export async function createContext({
 
 	const organizationId = (claims.org_id as string) || undefined;
 	const requestId = event.requestContext.requestId;
+	const ipAddress = event.requestContext?.http?.sourceIp;
+	const userAgent = event.headers?.["user-agent"];
 	const sub = claims.sub;
 	if (typeof sub !== "string" || sub.length === 0) {
 		throw new Error("JWT missing required 'sub' claim");
@@ -136,6 +140,8 @@ export async function createContext({
 		providerSubject: sub,
 		claims,
 		requestId,
+		ipAddress,
+		userAgent,
 		db,
 		loaders: createLoaders(db),
 	};

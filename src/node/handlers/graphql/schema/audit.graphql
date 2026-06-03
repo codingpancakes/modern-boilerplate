@@ -1,0 +1,30 @@
+# Audit log read API (admin/owner only)
+
+type AuditLog {
+	id: ID!
+	userId: ID
+	organizationId: ID
+	orgUnitId: ID
+	action: String!
+	resourceType: String!
+	resourceId: ID
+	changes: JSON
+	ipAddress: String
+	userAgent: String
+	requestId: String
+	metadata: JSON
+	status: String
+	errorMessage: String
+	timestamp: DateTime!
+}
+
+extend type Query {
+	# Returns audit logs for an organization the caller administers.
+	# Requires ADMIN role or higher in the target organization.
+	auditLogs(
+		organizationId: ID!
+		limit: Int
+		action: String
+		resourceType: String
+	): [AuditLog!]!
+}

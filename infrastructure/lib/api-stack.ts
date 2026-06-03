@@ -810,6 +810,23 @@ export class ApiStack extends cdk.Stack {
 			targets: [new eventsTargets.LambdaFunction(janitorHandler)],
 		});
 
+		// ============================================
+		// SCHEDULED MAINTENANCE — Audit Log Retention
+		// Runs daily to prune audit logs past the 7-year SOC 2 retention window
+		// ============================================
+		const auditRetentionHandler = routeBuilder.createHandler({
+			name: "AuditRetention",
+			path: "handlers/utils/audit-retention.ts",
+			memorySize: 256,
+			timeout: cdk.Duration.minutes(5),
+		});
+
+		new events.Rule(this, "AuditRetentionSchedule", {
+			ruleName: `${projectName}-${stage}-audit-retention-daily`,
+			schedule: events.Schedule.rate(cdk.Duration.days(1)),
+			targets: [new eventsTargets.LambdaFunction(auditRetentionHandler)],
+		});
+
 		// Apply LogRetention aspect -- visit() applies retention during the prepare phase
 		Aspects.of(this).add(new LogRetentionAspect(stage));
 	}

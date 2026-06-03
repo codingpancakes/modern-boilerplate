@@ -23,6 +23,20 @@ const WORKOS_EVENT_TYPES = [
 	...WORKOS_ORG_EVENT_TYPES,
 ] as const;
 
+/**
+ * Authentication-lifecycle events emitted by WorkOS. We don't enumerate every
+ * provider variant (`authentication.password_succeeded`,
+ * `authentication.sso_failed`, …); instead we match the `authentication.`
+ * prefix plus `session.created` and derive success/failure from the suffix.
+ */
+export function isWorkOSAuthEvent(event: string): boolean {
+	return event.startsWith("authentication.") || event === "session.created";
+}
+
+export function isWorkOSAuthFailure(event: string): boolean {
+	return event.endsWith("_failed");
+}
+
 const workosUserData = z
 	.object({
 		id: z.string().min(1),
@@ -47,15 +61,30 @@ const workosOrgData = z
 	})
 	.passthrough();
 
+const workosAuthData = z
+	.object({
+		user_id: z.string().min(1).optional(),
+		email: z.string().email().optional(),
+		ip_address: z.string().optional().nullable(),
+		user_agent: z.string().optional().nullable(),
+		type: z.string().optional(),
+	})
+	.passthrough();
+
+// `event` is accepted as a free-form string (not a strict enum) because the
+// payload is already authenticated via HMAC signature, and WorkOS emits a wide
+// and evolving catalog of `authentication.*` events we want to audit without
+// having to enumerate each one. Unknown events are ignored by the handler.
 export const workosWebhookEvent = z.object({
 	id: z.string(),
-	event: z.enum(WORKOS_EVENT_TYPES),
+	event: z.string().min(1),
 	data: z.record(z.unknown()),
 	created_at: z.string(),
 });
 
 export type WorkOSUserData = z.infer<typeof workosUserData>;
 export type WorkOSOrgData = z.infer<typeof workosOrgData>;
+export type WorkOSAuthData = z.infer<typeof workosAuthData>;
 
 export function parseWorkOSUserData(
 	data: Record<string, unknown>,
@@ -68,6 +97,15 @@ export function parseWorkOSOrgData(
 ): WorkOSOrgData {
 	return workosOrgData.parse(data);
 }
+
+export function parseWorkOSAuthData(
+	data: Record<string, unknown>,
+): WorkOSAuthData {
+	return workosAuthData.parse(data);
+}
+
+// Re-exported so the strict event list remains available for documentation/tests.
+export { WORKOS_EVENT_TYPES };
 
 /**
  * Webhook schemas object
