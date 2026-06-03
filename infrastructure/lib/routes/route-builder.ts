@@ -113,7 +113,14 @@ export class RouteBuilder {
 			version: fn.currentVersion,
 		});
 
-		if (this.codeDeployApp && this.deploymentConfig) {
+		// Escape hatch: when DISABLE_BLUE_GREEN=true, skip the CodeDeploy deployment
+		// group so the alias updates directly (plain CloudFormation cutover) instead of
+		// a canary shift. Needed for one-off migrations CodeDeploy can't perform — e.g.
+		// moving the live version to a new execution role (CodeDeploy refuses to shift
+		// between versions with different roles). Re-enable (unset/false) afterwards.
+		const blueGreenDisabled = process.env.DISABLE_BLUE_GREEN === "true";
+
+		if (this.codeDeployApp && this.deploymentConfig && !blueGreenDisabled) {
 			// Alarm: > 3 Lambda errors in any 1-minute window triggers rollback.
 			// treatMissingData = NOT_BREACHING so cold/idle functions don't self-rollback.
 			const errorAlarm = new cloudwatch.Alarm(this.scope, `${name}ErrorAlarm`, {
