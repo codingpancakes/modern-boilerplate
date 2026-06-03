@@ -1,7 +1,6 @@
 import * as cdk from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cloudwatchActions from "aws-cdk-lib/aws-cloudwatch-actions";
-import * as logs from "aws-cdk-lib/aws-logs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as snsSubscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import type { Construct } from "constructs";
@@ -35,22 +34,15 @@ export class MonitoringStack extends cdk.Stack {
 			);
 		}
 
-		// Log group for centralized logging with environment-specific retention
-		const retention =
-			props.stage === "production"
-				? logs.RetentionDays.ONE_MONTH
-				: logs.RetentionDays.ONE_WEEK; // staging
-
 		const graphqlFnName = `${projectName}-${props.stage}-graphql`;
 
-		const apiLogGroup = new logs.LogGroup(this, "ApiLogGroup", {
-			logGroupName: `/aws/lambda/${graphqlFnName}`,
-			retention: retention,
-			removalPolicy:
-				props.stage === "production"
-					? cdk.RemovalPolicy.RETAIN
-					: cdk.RemovalPolicy.DESTROY,
-		});
+		// Lambda log groups and their retention are owned by the stacks that create
+		// the functions, via LogRetentionAspect (see ApiStack/DatabaseStack). This
+		// stack must NOT create /aws/lambda/<fn> log groups itself: Lambda auto-creates
+		// that group on first invocation, so a CDK LogGroup with the same name collides
+		// ("AWS::Logs::LogGroup already exists") and blocks every deploy. We only need
+		// the name as a string for the dashboard widget below.
+		const apiLogGroupName = `/aws/lambda/${graphqlFnName}`;
 
 		// Dashboard for monitoring
 		const dashboard = new cloudwatch.Dashboard(this, "ApiDashboard", {
@@ -60,7 +52,7 @@ export class MonitoringStack extends cdk.Stack {
 		// Add text widget referencing the log group
 		dashboard.addWidgets(
 			new cloudwatch.TextWidget({
-				markdown: `## API Logs\n\nLog Group: ${apiLogGroup.logGroupName}\n\nUse CloudWatch Logs Insights to query this log group for errors and debugging.`,
+				markdown: `## API Logs\n\nLog Group: ${apiLogGroupName}\n\nUse CloudWatch Logs Insights to query this log group for errors and debugging.`,
 				width: 24,
 				height: 3,
 			}),
