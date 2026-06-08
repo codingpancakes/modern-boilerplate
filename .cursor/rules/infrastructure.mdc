@@ -30,7 +30,7 @@ alwaysApply: false
 - GraphiQL docs deployed when `stage` is `development`, `dev`, or `local`
 - API Gateway metrics use `ApiId` dimension (NOT `ApiName` — that's REST v1)
 - WAF scope is `CLOUDFRONT`, attached to distribution (not directly to HTTP API v2)
-- CDK alpha packages (`@aws-cdk/aws-apigatewayv2-alpha`) must match `aws-cdk-lib` version
+- apigatewayv2 L2 constructs come from **stable** `aws-cdk-lib/aws-apigatewayv2{,-integrations,-authorizers}` (HttpApi/HttpLambdaIntegration/HttpLambdaAuthorizer). Do NOT reintroduce the abandoned `@aws-cdk/aws-apigatewayv2-*-alpha` packages — they're frozen at 2.114.x.
 
 ## Environment
 - Secrets via AWS Secrets Manager (never plaintext env vars for credentials)

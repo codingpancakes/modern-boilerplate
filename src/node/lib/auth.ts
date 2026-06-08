@@ -24,16 +24,15 @@ export type Claims = {
 };
 
 export function getClaims(evt: APIGatewayProxyEventV2): Claims {
+	// Single source of trust: the API Gateway custom Lambda authorizer
+	// (SIMPLE response) populates `requestContext.authorizer.lambda`. We never
+	// read `authorizer.jwt` — no native JWT authorizer is configured, and
+	// re-parsing/falling back to anything else would violate invariant #10
+	// (auth comes ONLY from the authorizer). Mirrors middleware.ts / sentry.ts.
 	const rc = evt.requestContext as typeof evt.requestContext & {
-		authorizer?: {
-			jwt?: { claims: Record<string, unknown> };
-			lambda?: Record<string, unknown>;
-		};
+		authorizer?: { lambda?: Record<string, unknown> };
 	};
-	const authz = rc.authorizer || {};
-	const jwtClaims = authz.jwt?.claims;
-	const lambdaCtx = authz.lambda;
-	const claims = jwtClaims || lambdaCtx;
+	const claims = rc.authorizer?.lambda;
 
 	if (!claims?.sub || typeof claims.sub !== "string") {
 		throw Errors.Unauthorized();

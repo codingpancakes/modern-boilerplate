@@ -13,12 +13,12 @@ Node.js 24 / TypeScript 5 / pnpm / AWS Lambda + API Gateway HTTP v2 / Neon Postg
 - **Zod for all validation** — `parseBody(event, schema)` for POST/PATCH, `parseQuery(event, schema)` for GET
 - **Drizzle ORM only** — never raw SQL
 - **sanitizeObject()** on all user input before DB write
-- **logAudit()** on all mutations (fire-and-forget in GraphQL: `void logAudit(...)`)
+- **logAudit()** on all mutations (fire-and-forget: `void logAudit(...)`); the request wrappers call `flushAudits()` before returning so writes aren't lost when Lambda freezes
 - **ACTIVE filter** on all membership queries: `eq(organizationMembers.status, "ACTIVE")`
 - **Response helpers** — `createSuccessResponse(data)`, never raw `{ statusCode, body }`
 - **Errors factory** — `throw Errors.NotFound("User")`, never manual JSON error responses
 - **CDN URLs only** — `${IMAGES_CDN_URL}/${key}` for images, never raw S3 URLs
-- **Transactions** for multi-step writes — use `db.transaction(async (tx) => { ... })`
+- **Transactions** for multi-step writes — use `db.transaction(async (tx) => { ... })` (works because `lib/db.ts` uses the `neon-serverless` driver; `neon-http` throws on `.transaction()`)
 
 ## Directory Layout
 ```

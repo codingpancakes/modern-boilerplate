@@ -7,6 +7,7 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
+	flushAudits,
 	logAudit,
 } from "./audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
@@ -159,6 +160,10 @@ export const withAuth = (
 					...corsHeaders(origin),
 				}),
 			};
+		} finally {
+			// Drain fire-and-forget audit writes before the runtime can freeze, so
+			// a detached promise is never lost. No-op when nothing is pending.
+			await flushAudits();
 		}
 	};
 };

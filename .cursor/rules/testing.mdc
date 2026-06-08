@@ -34,6 +34,9 @@ const createMockDb = () => {
     select: vi.fn(),
     update: vi.fn(),
   };
+  // Faithfully models neon-serverless interactive transactions (callback runs
+  // against a tx handle). The driver choice itself is guarded separately in
+  // tests/unit/lib/db.test.ts so a regression to neon-http fails the build.
   db.transaction = vi.fn(async (fn: (tx: any) => Promise<any>) => fn(db));
   return db;
 };

@@ -206,14 +206,27 @@ function sanitizeUrlValue(value: string): string {
 	return value;
 }
 
+/**
+ * Maximum nesting depth `sanitizeObject` will descend into. Bounds the
+ * recursion so a pathological/deeply-nested payload can't blow the stack
+ * (mirrors `redactSensitive`'s depth guard in audit.ts). Beyond the cap we stop
+ * descending and return the sub-tree untouched rather than recursing further.
+ */
+const MAX_SANITIZE_DEPTH = 8;
+
+interface SanitizeOptions {
+	maxStringLength?: number;
+	allowHtml?: boolean;
+	rawKeys?: Set<string>;
+}
+
 export function sanitizeObject<T extends Record<string, unknown>>(
 	obj: T,
-	options: {
-		maxStringLength?: number;
-		allowHtml?: boolean;
-		rawKeys?: Set<string>;
-	} = {},
+	options: SanitizeOptions = {},
+	depth = 0,
 ): T {
+	if (depth >= MAX_SANITIZE_DEPTH) return obj;
+
 	const skipEscape = options.rawKeys ?? RAW_STRING_KEYS;
 	const sanitized: Record<string, unknown> = {};
 
@@ -232,26 +245,44 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 			sanitized[key] = sanitizeObject(
 				value as Record<string, unknown>,
 				options,
+				depth + 1,
 			);
 		} else if (Array.isArray(value)) {
-			sanitized[key] = value.map((item) => {
-				if (typeof item === "string") {
-					return sanitizeString(item, {
-						maxLength: options.maxStringLength,
-						allowHtml: options.allowHtml,
-					});
-				}
-				if (item && typeof item === "object") {
-					return sanitizeObject(item as Record<string, unknown>, options);
-				}
-				return item;
-			});
+			sanitized[key] = sanitizeArray(value, options, depth + 1);
 		} else {
 			sanitized[key] = value;
 		}
 	}
 
 	return sanitized as T;
+}
+
+function sanitizeArray(
+	arr: unknown[],
+	options: SanitizeOptions,
+	depth: number,
+): unknown[] {
+	if (depth >= MAX_SANITIZE_DEPTH) return arr;
+
+	return arr.map((item) => {
+		if (typeof item === "string") {
+			return sanitizeString(item, {
+				maxLength: options.maxStringLength,
+				allowHtml: options.allowHtml,
+			});
+		}
+		if (Array.isArray(item)) {
+			return sanitizeArray(item, options, depth + 1);
+		}
+		if (item && typeof item === "object") {
+			return sanitizeObject(
+				item as Record<string, unknown>,
+				options,
+				depth + 1,
+			);
+		}
+		return item;
+	});
 }
 
 /**

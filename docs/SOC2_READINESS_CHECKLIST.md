@@ -74,7 +74,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 #### ✅ Data Validation
 - [x] **Input Validation** - Zod schemas for all inputs
 - [x] **Error Handling** - Consistent error responses
-- [x] **Transaction Support** - Database transactions for data integrity
+- [x] **Transaction Support** - Interactive DB transactions via the `neon-serverless` (WebSocket) driver; multi-step writes (provisioning, profile/org mutations) commit atomically or roll back
 - [x] **Idempotency Keys** - (if implemented for critical operations)
 
 ---

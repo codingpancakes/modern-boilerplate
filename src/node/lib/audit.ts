@@ -141,6 +141,34 @@ function redactMetadata(
 }
 
 /**
+ * In-flight audit writes for the current Lambda invocation.
+ *
+ * Audit logging is intentionally called fire-and-forget (`void logAudit(...)`)
+ * so it never blocks the request hot path. But on AWS Lambda a detached promise
+ * is NOT guaranteed to finish: once the handler's returned promise resolves the
+ * execution environment is frozen, and an in-flight DB write can be dropped —
+ * unacceptable for an immutable, compliance-grade audit trail.
+ *
+ * So every `logAudit` registers its write here, and the request wrappers
+ * (`withAuth`, `withPublicCors`, the GraphQL handler) call {@link flushAudits}
+ * before returning. The hot path still never awaits an individual write; we just
+ * drain whatever is outstanding at the very end, before the runtime can freeze.
+ *
+ * Lambda processes one event per container at a time, so this module-level set
+ * never mixes audits from concurrent requests.
+ */
+const pendingAudits = new Set<Promise<void>>();
+
+/**
+ * Await all audit writes started during this invocation. Best-effort: failures
+ * are already swallowed inside {@link logAudit}, so this never rejects.
+ */
+export async function flushAudits(): Promise<void> {
+	if (pendingAudits.size === 0) return;
+	await Promise.allSettled([...pendingAudits]);
+}
+
+/**
  * Log an audit event
  *
  * @example
@@ -158,6 +186,16 @@ function redactMetadata(
  * ```
  */
 export async function logAudit(entry: AuditLogEntry): Promise<void> {
+	const write = persistAudit(entry);
+	pendingAudits.add(write);
+	try {
+		await write;
+	} finally {
+		pendingAudits.delete(write);
+	}
+}
+
+async function persistAudit(entry: AuditLogEntry): Promise<void> {
 	try {
 		const db = await getDb();
 		await db.insert(auditLogs).values({

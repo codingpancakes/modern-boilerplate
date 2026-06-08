@@ -1,4 +1,4 @@
-import type * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
+import type * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import type { Construct } from "constructs";
 import type { RouteBuilder } from "./route-builder";
 

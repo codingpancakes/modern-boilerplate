@@ -10,6 +10,7 @@ import type {
 	Context,
 } from "aws-lambda";
 import depthLimit from "graphql-depth-limit";
+import { flushAudits } from "../../lib/audit";
 import {
 	getCorsHeaders,
 	handleOptionsRequest,
@@ -102,18 +103,24 @@ export const handler = async (
 	Sentry.setRequestContext(event);
 	logger.appendKeys({ requestId: event.requestContext.requestId });
 
-	const result = (await apolloHandler(
-		event,
-		context,
-		// Required by @as-integrations/aws-lambda handler signature
-		() => {},
-	)) as APIGatewayProxyStructuredResultV2;
+	try {
+		const result = (await apolloHandler(
+			event,
+			context,
+			// Required by @as-integrations/aws-lambda handler signature
+			() => {},
+		)) as APIGatewayProxyStructuredResultV2;
 
-	return {
-		...result,
-		headers: securityHeaders({
-			...((result?.headers ?? {}) as Record<string, string>),
-			...getCorsHeaders(origin),
-		}),
-	};
+		return {
+			...result,
+			headers: securityHeaders({
+				...((result?.headers ?? {}) as Record<string, string>),
+				...getCorsHeaders(origin),
+			}),
+		};
+	} finally {
+		// Resolver audits are fire-and-forget (`void logAudit(...)`); drain them
+		// before returning so Lambda can't freeze with an audit write in flight.
+		await flushAudits();
+	}
 };

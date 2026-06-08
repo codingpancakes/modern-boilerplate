@@ -1,6 +1,6 @@
-import * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
-import type * as apigwv2Authorizers from "@aws-cdk/aws-apigatewayv2-authorizers-alpha";
-import * as apigwv2Integrations from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import type * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import type { Construct } from "constructs";
 import type { RouteBuilder } from "./route-builder";
 

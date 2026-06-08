@@ -45,12 +45,12 @@ These are enforced across the codebase. Breaking one is a regression, even if it
 1. **No try-catch in handlers.** Middleware (`withAuth` / `withPublicCors`) catches and formats all errors.
 2. **Zod-validate every input.** `parseBody(event, schema)` / `parseQuery(...)` for REST; `schema.parse(input)` in resolvers.
 3. **`sanitizeObject()` before every DB write.** No exceptions for "trusted" input.
-4. **`logAudit()` on every mutation.** Fire-and-forget in GraphQL (`void logAudit(...)`). Never `await` it on the hot path.
+4. **`logAudit()` on every mutation.** Call it fire-and-forget (`void logAudit(...)`); never `await` it on the hot path. The request wrappers (`withAuth` / `withPublicCors` / GraphQL handler) call `flushAudits()` before returning, which drains in-flight writes — an un-awaited promise alone is *not* guaranteed to finish before Lambda freezes.
 5. **Drizzle ORM only.** Never raw SQL in app code (migrations are the only SQL).
 6. **`ACTIVE` filter on all membership queries:** `eq(organizationMembers.status, "ACTIVE")`.
 7. **Response/error factories only.** REST: `createSuccessResponse(data)` / `throw Errors.NotFound("X")`.
    GraphQL: `throw new GraphQLError(msg, { extensions: { code } })`. Never hand-roll `{ statusCode, body }`.
-8. **Transactions for multi-step writes:** `db.transaction(async (tx) => { ... })`.
+8. **Transactions for multi-step writes:** `db.transaction(async (tx) => { ... })`. This relies on the WebSocket-capable `neon-serverless` driver wired in `lib/db.ts` — the `neon-http` driver throws `"No transactions support"` at runtime, so never switch the driver back (guarded by `tests/unit/lib/db.test.ts`).
 9. **Secrets via Secrets Manager**, config via `commonEnv`. Never plaintext credentials in env or code.
 10. **Auth comes only from the API Gateway authorizer.** No local JWT re-parsing/fallback in handlers.
 

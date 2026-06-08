@@ -5,7 +5,7 @@ import {
 	SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, or } from "drizzle-orm";
 import { idempotencyKeys } from "../../db/schema/index";
 import { getDb } from "../../lib/db";
 import { errorMessage } from "../../lib/error-utils";
@@ -190,6 +190,12 @@ const webhookHandler = async (
 	const requestId = context.awsRequestId;
 	logger.addContext(context);
 
+	// Tracked across the try/catch so a failed attempt releases its idempotency
+	// lock (status -> "failed") and WorkOS's retry can re-run the event instead
+	// of getting a spurious "already processing" 200 and dropping it.
+	let idempotencyKey: string | null = null;
+	let ownsKey = false;
+
 	try {
 		logger.info("Webhook received", {
 			hasSignature: !!(
@@ -234,7 +240,7 @@ const webhookHandler = async (
 		const db = await getDb();
 
 		// Atomic idempotency check using INSERT ON CONFLICT DO NOTHING
-		const idempotencyKey = `workos-webhook-${webhookEvent.id}`;
+		idempotencyKey = `workos-webhook-${webhookEvent.id}`;
 		const inserted = await db
 			.insert(idempotencyKeys)
 			.values({
@@ -247,7 +253,7 @@ const webhookHandler = async (
 			.returning({ key: idempotencyKeys.key });
 
 		if (inserted.length === 0) {
-			// Key already exists -- check if completed or stale processing
+			// Key already exists -- check if completed or reclaimable
 			const [existing] = await db
 				.select()
 				.from(idempotencyKeys)
@@ -259,14 +265,18 @@ const webhookHandler = async (
 				return createSuccessResponse({ message: "Event already processed" });
 			}
 
-			// Atomically reclaim a stale processing key (older than 5 min) via UPDATE.
-			// Using UPDATE instead of DELETE+INSERT prevents a race where two concurrent
-			// requests both see the stale key and both proceed.
+			// Atomically (re)claim the key via UPDATE. Reclaim when either:
+			//  - a previous attempt FAILED (so WorkOS's retry can re-run it), or
+			//  - a "processing" lock is stale (>5 min — the original invocation died).
+			// UPDATE-with-predicate (not DELETE+INSERT) keeps this race-free: only one
+			// concurrent request can flip the row, the rest get "already processing".
 			const staleThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 			const reclaimed = await db
 				.update(idempotencyKeys)
 				.set({
+					status: "processing",
 					requestHash: webhookEvent.id,
+					createdAt: new Date().toISOString(),
 					expiresAt: new Date(
 						Date.now() + 7 * 24 * 60 * 60 * 1000,
 					).toISOString(),
@@ -275,8 +285,13 @@ const webhookHandler = async (
 				.where(
 					and(
 						eq(idempotencyKeys.key, idempotencyKey),
-						eq(idempotencyKeys.status, "processing"),
-						lt(idempotencyKeys.createdAt, staleThreshold),
+						or(
+							eq(idempotencyKeys.status, "failed"),
+							and(
+								eq(idempotencyKeys.status, "processing"),
+								lt(idempotencyKeys.createdAt, staleThreshold),
+							),
+						),
 					),
 				)
 				.returning({ key: idempotencyKeys.key });
@@ -287,8 +302,10 @@ const webhookHandler = async (
 				return createSuccessResponse({ message: "Event already processing" });
 			}
 
-			logger.warn("Reclaimed stale processing key", { idempotencyKey });
+			logger.warn("Reclaimed idempotency key for retry", { idempotencyKey });
 		}
+		// We now own the lock; a failure past this point must release it (catch).
+		ownsKey = true;
 		logger.info("Processing event", { idempotencyKey });
 
 		// Authentication-lifecycle events (login / failed login / session) are
@@ -353,6 +370,25 @@ const webhookHandler = async (
 		logger.error("Error processing webhook", {
 			error: errorMessage(error),
 		});
+
+		// Release our idempotency lock so WorkOS's retry can re-run this event.
+		// Without this the key is stranded in "processing" and the retry returns
+		// a spurious "already processing" 200, silently dropping the event.
+		if (ownsKey && idempotencyKey) {
+			try {
+				const db = await getDb();
+				await db
+					.update(idempotencyKeys)
+					.set({ status: "failed", updatedAt: new Date().toISOString() })
+					.where(eq(idempotencyKeys.key, idempotencyKey));
+			} catch (releaseError) {
+				logger.error("Failed to release idempotency lock after error", {
+					idempotencyKey,
+					error: errorMessage(releaseError),
+				});
+			}
+		}
+
 		Sentry.captureException(
 			error instanceof Error ? error : new Error(String(error)),
 		);

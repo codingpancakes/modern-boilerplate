@@ -11,8 +11,8 @@ Full guide: `AGENTS.md` (root). Match the nearest sibling file over personal pre
 ## Definition of Done (every feature)
 - Zod-validated input (bounded arrays/strings) → `sanitizeObject()` → DB write.
 - Auth enforced + **org-scoped** for org-owned data; null-guard every DB result.
-- `logAudit()` on mutations (`void logAudit(...)` in GraphQL) with request context.
-- Multi-step writes in `db.transaction()`; errors via `Errors.*` / `GraphQLError` only.
+- `logAudit()` on mutations (`void logAudit(...)`) with request context; wrappers `flushAudits()` before returning so detached writes aren't dropped on Lambda freeze.
+- Multi-step writes in `db.transaction()` (needs the `neon-serverless` driver — `neon-http` can't do transactions); errors via `Errors.*` / `GraphQLError` only.
 - Route registered in `infrastructure/lib/routes/` AND `local-dev/server.ts`.
 - `pnpm check` passes (Biome + tsc + Vitest) before commit.
 

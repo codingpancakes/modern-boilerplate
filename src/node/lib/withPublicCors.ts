@@ -3,6 +3,7 @@ import type {
 	APIGatewayProxyHandlerV2,
 	Context,
 } from "aws-lambda";
+import { flushAudits } from "./audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "./cors";
 import { Errors, formatError } from "./errors";
 import { verifyOriginHeader } from "./origin-verify";
@@ -48,6 +49,10 @@ export const withPublicCors = (
 				headers: { ...(errorResponse.headers || {}), ...corsHeaders },
 				body: errorResponse.body,
 			};
+		} finally {
+			// Drain fire-and-forget audit writes (e.g. from webhook provisioning)
+			// before the runtime can freeze, so a detached promise is never lost.
+			await flushAudits();
 		}
 	};
 };

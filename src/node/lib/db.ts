@@ -3,23 +3,63 @@ import {
 	GetSecretValueCommand,
 	SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
-import { type NeonQueryFunction, neon } from "@neondatabase/serverless";
-import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
+import { neonConfig, Pool } from "@neondatabase/serverless";
+import { drizzle, type NeonDatabase } from "drizzle-orm/neon-serverless";
 import * as schema from "../db/schema/index";
 import { errorMessage } from "./error-utils";
 
 const logger = new Logger({ serviceName: "db" });
 
-export type DbInstance = NeonHttpDatabase<typeof schema>;
+// Neon serverless driver configuration.
+//
+// We use the WebSocket-capable `neon-serverless` driver (NOT `neon-http`)
+// because interactive transactions — `db.transaction(async (tx) => { ... })` —
+// are a hard requirement of this codebase (user provisioning, profile updates,
+// org mutations, webhook upserts). The `neon-http` driver throws
+// "No transactions support in neon-http driver" on any `.transaction()` call.
+//
+// To keep Lambda cold starts cheap we set `poolQueryViaFetch`: every ordinary
+// (non-transactional) query is sent over stateless HTTP fetch, exactly like the
+// http driver did. A WebSocket connection is only opened when an interactive
+// transaction actually runs (drizzle calls `pool.connect()` for BEGIN/COMMIT),
+// and is released back to the pool immediately afterwards.
+if (typeof WebSocket !== "undefined") {
+	// Node 24 (and the Lambda runtime) expose a global WebSocket; reuse it so we
+	// don't need to bundle the `ws` package.
+	neonConfig.webSocketConstructor = WebSocket;
+}
+neonConfig.poolQueryViaFetch = true;
+
+export type DbInstance = NeonDatabase<typeof schema>;
 
 let dbInstance: DbInstance | null = null;
+let poolInstance: Pool | null = null;
 let dbInitPromise: Promise<DbInstance> | null = null;
 let dbUrl: string | null = null;
 let dbUrlCachedAt: number | null = null;
 const DB_URL_TTL_MS = 15 * 60 * 1000;
-let connectionAttempts = 0;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 100;
+
+// Hard ceiling on a single statement (server-enforced via Postgres
+// `statement_timeout`) so a hung query can't pin a Lambda for its whole timeout.
+const STATEMENT_TIMEOUT_MS = 8000;
+
+/**
+ * Tear down the current pool + drizzle instance (e.g. when a rotated secret
+ * means we must reconnect with a new URL). Best-effort: a failure to drain the
+ * old pool must not block reconnection.
+ */
+function resetConnection(): void {
+	const pool = poolInstance;
+	poolInstance = null;
+	dbInstance = null;
+	if (pool) {
+		void pool.end().catch((error) => {
+			logger.warn("Failed to drain previous database pool", {
+				error: errorMessage(error),
+			});
+		});
+	}
+}
 
 async function getDbUrl(): Promise<string> {
 	// Option 1: Use DATABASE_URL from environment (no TTL — env vars don't rotate)
@@ -35,8 +75,8 @@ async function getDbUrl(): Promise<string> {
 
 		if (!expired && dbUrl) return dbUrl;
 
-		// Cache expired or missing — reset instance so it reconnects with new URL
-		dbInstance = null;
+		// Cache expired or missing — drop the pool so it reconnects with the new URL
+		resetConnection();
 		dbUrl = null;
 
 		const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
@@ -94,18 +134,23 @@ async function getDbUrl(): Promise<string> {
 	throw new Error("DATABASE_URL or DB_SECRET_ARN must be configured");
 }
 
-/**
- * Get database instance with connection pooling and retry logic
- *
- * @throws Error if connection fails after retries
- * @returns Drizzle database instance
- */
 function isDbUrlExpired(): boolean {
 	if (process.env.DATABASE_URL) return false;
 	if (!process.env.DB_SECRET_ARN) return false;
 	return !dbUrlCachedAt || Date.now() - dbUrlCachedAt >= DB_URL_TTL_MS;
 }
 
+/**
+ * Get the shared Drizzle database instance.
+ *
+ * Backed by a module-level Neon serverless pool that is reused across warm
+ * Lambda invocations. The pool is rebuilt when a rotated DB secret is detected
+ * (see {@link isDbUrlExpired}). Concurrent first-callers share a single
+ * in-flight init so we never construct duplicate pools.
+ *
+ * @throws Error if credentials cannot be resolved
+ * @returns Drizzle database instance
+ */
 export async function getDb(): Promise<DbInstance> {
 	// Check TTL even when dbInstance exists so secret rotation is picked up
 	if (dbInstance && !isDbUrlExpired()) return dbInstance;
@@ -114,7 +159,7 @@ export async function getDb(): Promise<DbInstance> {
 	if (!dbInitPromise) {
 		dbInitPromise = (async () => {
 			const url = await getDbUrl();
-			const db = await createDbConnection(url);
+			const db = createDbConnection(url);
 			dbInstance = db;
 			return db;
 		})().finally(() => {
@@ -126,52 +171,39 @@ export async function getDb(): Promise<DbInstance> {
 }
 
 /**
- * Create database connection with optimized settings for serverless
+ * Build a Neon serverless pool + Drizzle instance.
+ *
+ * `new Pool()` is lazy — it does not open a socket until the first query (HTTP
+ * fetch) or first transaction (`connect()`), so there is nothing to retry at
+ * construction time; per-statement failures surface on the query itself and are
+ * bounded by `statement_timeout`.
  */
-async function createDbConnection(
-	url: string,
-	retryCount = 0,
-): Promise<DbInstance> {
-	if (retryCount === 0) connectionAttempts = 0;
+function createDbConnection(url: string): DbInstance {
+	const pool = new Pool({
+		connectionString: url,
+		// Lambda handles one request at a time, but DataLoaders can fan out
+		// parallel queries within a single invocation — a small pool covers that.
+		max: 5,
+		connectionTimeoutMillis: STATEMENT_TIMEOUT_MS,
+		idleTimeoutMillis: 10_000,
+		statement_timeout: STATEMENT_TIMEOUT_MS,
+	});
 
-	try {
-		const sql: NeonQueryFunction<boolean, boolean> = neon(url, {
-			fetchOptions: {
-				cache: "no-store", // Disable caching for fresh data
-				signal: AbortSignal.timeout(8000), // 8s hard timeout per query
-			},
-			// Optimize for serverless - query via fetch for better cold starts
-			fullResults: false,
-		});
-
-		const db = drizzle(sql, {
-			schema,
-			logger: process.env.NODE_ENV === "development",
-		});
-
-		return db;
-	} catch (error) {
-		connectionAttempts++;
-
-		if (retryCount < MAX_RETRIES) {
-			// Exponential backoff
-			const delay = RETRY_DELAY_MS * 2 ** retryCount;
-			logger.warn("Database connection attempt failed, retrying", {
-				attempt: retryCount + 1,
-				retryInMs: delay,
-				error: errorMessage(error),
-			});
-
-			await new Promise((resolve) => setTimeout(resolve, delay));
-			return createDbConnection(url, retryCount + 1);
-		}
-
-		logger.error("Database connection failed after retries", {
-			attempts: connectionAttempts,
+	// node-postgres emits 'error' on idle clients whose connection drops — common
+	// in serverless when Neon closes an idle WebSocket. Without a listener the
+	// unhandled event would crash the Lambda process; log and swallow instead.
+	pool.on("error", (error) => {
+		logger.error("Idle database client error", {
 			error: errorMessage(error),
 		});
-		throw new Error("Failed to connect to database after multiple attempts");
-	}
+	});
+
+	poolInstance = pool;
+
+	return drizzle(pool, {
+		schema,
+		logger: process.env.NODE_ENV === "development",
+	});
 }
 
 export { schema };

@@ -1,8 +1,8 @@
-import * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
-import * as apigwv2Authorizers from "@aws-cdk/aws-apigatewayv2-authorizers-alpha";
-import * as apigwv2Integrations from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
 import * as cdk from "aws-cdk-lib";
 import { Aspects } from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as acm from "aws-cdk-lib/aws-certificatemanager";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
@@ -209,9 +209,7 @@ export class ApiStack extends cdk.Stack {
 							managedRuleGroupStatement: {
 								vendorName: "AWS",
 								name: "AWSManagedRulesCommonRuleSet",
-								excludedRules: [
-									{ name: "SizeRestrictions_BODY" },
-								],
+								excludedRules: [{ name: "SizeRestrictions_BODY" }],
 							},
 						},
 						visibilityConfig: {

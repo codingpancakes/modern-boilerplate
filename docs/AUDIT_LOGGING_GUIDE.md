@@ -431,9 +431,19 @@ currently **disabled for the MVP** to save cost (~$16/mo). The WAF rule definiti
 remain fully intact in code — only the deployed resource is absent. **Re-enable before
 real users:** set SSM `/postway/production/enable-waf=true` and run the prod pipeline.
 
+### Delivery guarantee (fire-and-forget + flush)
+Audit writes are kicked off fire-and-forget (`void logAudit(...)`) so they never
+block the hot path, but they are **not** left as detached promises: each one is
+registered in an in-flight set and the request wrappers (`withAuth`,
+`withPublicCors`, the GraphQL handler) call `flushAudits()` before returning.
+This matters on Lambda — once the handler promise resolves the environment can
+freeze, dropping any un-awaited work. Flushing at the boundary drains the writes
+first; the CloudWatch fallback in `logAudit` covers a DB failure on top of that.
+
 ### Audit subsystem rating: **9 / 10**
 Production-grade design with real defense-in-depth (DB-enforced immutability,
-fire-and-forget resilience with CloudWatch fallback, uniform redaction contract).
+fire-and-forget writes drained via `flushAudits()` with CloudWatch fallback,
+uniform redaction contract).
 The remaining point is governance/polish (GDPR erasure strategy, value-based
 redaction, cursor pagination), not anything broken.
 

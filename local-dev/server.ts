@@ -202,15 +202,11 @@ function toLambdaEvent(
 			stage: "local",
 			time: new Date().toISOString(),
 			timeEpoch: Date.now(),
+			// Mirror the deployed custom Lambda authorizer (SIMPLE response), which
+			// exposes claims under `authorizer.lambda` only — no `jwt` block, since
+			// no native JWT authorizer is used. Keep this in sync with getClaims().
 			authorizer: claims
 				? {
-						jwt: {
-							claims: claims as Record<
-								string,
-								string | number | boolean | string[]
-							>,
-							scopes: [],
-						},
 						lambda: {
 							...(claims as Record<string, string | number | boolean>),
 						},

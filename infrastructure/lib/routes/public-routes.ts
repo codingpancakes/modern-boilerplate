@@ -1,6 +1,6 @@
-import * as apigwv2 from "@aws-cdk/aws-apigatewayv2-alpha";
-import * as apigwv2Integrations from "@aws-cdk/aws-apigatewayv2-integrations-alpha";
 import * as cdk from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as sqs from "aws-cdk-lib/aws-sqs";
 import type { Construct } from "constructs";
 import type { RouteBuilder } from "./route-builder";
