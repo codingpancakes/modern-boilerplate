@@ -32,9 +32,15 @@ export function createWorkosJwks(clientId: string): JWTVerifyGetKey {
 	return createRemoteJWKSet(
 		new URL(`https://api.workos.com/sso/jwks/${clientId}`),
 		{
-			// Reduce blast radius on DDoS/JWKS abuse & network quirks
-			cooldownDuration: 60_000, // 60s min interval between fetches
-			timeoutDuration: 2_000, // 2s network timeout
+			// Min interval between key-set refetches (e.g. on unknown `kid`).
+			cooldownDuration: 60_000,
+			// Network timeout for the JWKS fetch. Kept generous because a COLD
+			// START must fetch keys over DNS+TLS+WorkOS latency on the first
+			// request; a too-tight timeout aborts that fetch and returns a DENY,
+			// which API Gateway then caches for `resultsCacheTtl` (5 min) — locking
+			// the token out. The authorizer Lambda's own timeout is 30s, so 6s here
+			// is safe headroom. Warm invocations use the in-memory cache (no fetch).
+			timeoutDuration: 6_000,
 		},
 	);
 }
@@ -70,7 +76,10 @@ export async function verifyWorkosToken(
 	const {
 		clientId,
 		authIssuer = DEFAULT_AUTH_ISSUER,
-		timeoutMs = 5000,
+		// Outer guard against a hung verify. Must sit ABOVE the JWKS fetch
+		// timeout (6s) so it never cuts off a legitimate cold-start fetch, while
+		// staying well under the 30s authorizer Lambda timeout.
+		timeoutMs = 10_000,
 	} = options;
 
 	const verifyPromise = jwtVerify(token, key, {
