@@ -158,7 +158,13 @@ async function verifyAccessToken(accessToken: string): Promise<JWTPayload> {
 			"https://api.workos.com/",
 			`https://api.workos.com/user_management/${CLIENT_ID}`,
 		],
+		// Mirror the deployed authorizer: WorkOS access tokens have no `aud`
+		// claim, so we bind via `client_id` instead of passing `audience`.
 	});
+
+	if ((payload as { client_id?: string }).client_id !== CLIENT_ID) {
+		throw new Error("Access token client_id mismatch");
+	}
 
 	console.log("JWT verified, sub:", payload.sub);
 

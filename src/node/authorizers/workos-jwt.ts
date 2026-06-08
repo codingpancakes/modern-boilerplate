@@ -75,7 +75,11 @@ export const handler = async (
 					AUTH_ISSUER,
 					`https://api.workos.com/user_management/${CLIENT_ID}`,
 				],
-				audience: CLIENT_ID || undefined,
+				// NOTE: do NOT pass `audience` here. WorkOS user/AuthKit access
+				// tokens do not carry an `aud` claim — they bind to the app via the
+				// `client_id` claim, which we validate explicitly below. Passing
+				// `audience` makes jose require a non-existent `aud` and reject every
+				// real token ("missing required \"aud\" claim").
 				algorithms: ["RS256"],
 				clockTolerance: 60,
 			});
@@ -106,10 +110,19 @@ export const handler = async (
 
 			// Construct a string-only context object for HTTP API simple authorizers
 			const payloadData = payload as Record<string, unknown>;
+
+			// Bind the token to our WorkOS app via the `client_id` claim (the
+			// audience equivalent for WorkOS access tokens). Skipped only when
+			// CLIENT_ID is unset (local dev).
+			if (CLIENT_ID && payloadData.client_id !== CLIENT_ID) {
+				logger.warn("JWT client_id mismatch, rejecting");
+				return { isAuthorized: false };
+			}
 			const ctx: Record<string, string> = {
 				sub: String(payload.sub),
 				sid: String(payloadData.sid ?? ""),
 				iss: String(payload.iss ?? ""),
+				client_id: String(payloadData.client_id ?? ""),
 				email: String(payloadData.email ?? ""),
 				org_id: String(payloadData.org_id ?? ""),
 				role: String(payloadData.role ?? ""),
