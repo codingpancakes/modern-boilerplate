@@ -7,12 +7,7 @@ import type {
 import cors from "cors";
 import * as dotenv from "dotenv";
 import express from "express";
-import type { JWK, JWTPayload } from "jose";
-import { importJWK, jwtVerify } from "jose";
-
-interface JWKSResponse {
-	keys: (JWK & { kid?: string; alg?: string })[];
-}
+import type { JWTPayload } from "jose";
 
 interface AuthenticatedRequest extends express.Request {
 	user?: JWTPayload;
@@ -23,6 +18,10 @@ dotenv.config({ path: ".env.local" });
 
 import { ApolloServer } from "@apollo/server";
 import depthLimit from "graphql-depth-limit";
+import {
+	createWorkosJwks,
+	verifyWorkosToken,
+} from "../src/node/authorizers/verify-token";
 import { createContext as createGraphQLContext } from "../src/node/handlers/graphql/context";
 // GraphQL handler needs special treatment - don't import the Lambda handler
 import { handler as graphqlDocsHandler } from "../src/node/handlers/graphql/docs";
@@ -105,71 +104,14 @@ const apolloReady = apolloServer
 		process.exit(1);
 	});
 
-// WorkOS access token verification
-const CLIENT_ID = process.env.WORKOS_CLIENT_ID;
+// WorkOS access token verification — uses the SAME shared verifier as the
+// deployed Lambda authorizer, so local and prod can never diverge on how a
+// token is validated.
+const CLIENT_ID = process.env.WORKOS_CLIENT_ID ?? "";
 if (!CLIENT_ID) {
 	throw new Error("WORKOS_CLIENT_ID is required in .env.local");
 }
-const JWKS_URL = `https://api.workos.com/sso/jwks/${CLIENT_ID}`;
-
-// JWKS cache
-let jwksCache: JWKSResponse | null = null;
-let jwksCacheTime = 0;
-const JWKS_CACHE_TTL = 3600000; // 1 hour
-
-async function fetchJWKS(): Promise<JWKSResponse> {
-	const now = Date.now();
-	if (jwksCache && now - jwksCacheTime < JWKS_CACHE_TTL) {
-		return jwksCache;
-	}
-
-	const response = await fetch(JWKS_URL);
-	if (!response.ok) {
-		throw new Error(
-			`Failed to fetch JWKS: ${response.status} ${response.statusText}`,
-		);
-	}
-
-	const jwks = (await response.json()) as JWKSResponse;
-	jwksCache = jwks;
-	jwksCacheTime = now;
-	return jwks;
-}
-
-async function verifyAccessToken(accessToken: string): Promise<JWTPayload> {
-	const [headerB64] = accessToken.split(".");
-	const header = JSON.parse(Buffer.from(headerB64, "base64").toString()) as {
-		kid?: string;
-	};
-
-	const jwks = await fetchJWKS();
-	if (!jwks.keys || !Array.isArray(jwks.keys)) {
-		throw new Error("Invalid JWKS response");
-	}
-
-	const jwk = jwks.keys.find((k) => k.kid === header.kid);
-	if (!jwk) {
-		throw new Error(`No matching key found for kid: ${header.kid}`);
-	}
-
-	const key = await importJWK(jwk, jwk.alg);
-	const { payload } = await jwtVerify(accessToken, key, {
-		issuer: [
-			"https://api.workos.com/",
-			`https://api.workos.com/user_management/${CLIENT_ID}`,
-		],
-		// Mirror the deployed authorizer: WorkOS access tokens have no `aud`
-		// claim, so we bind via `client_id` instead of passing `audience`.
-	});
-
-	if ((payload as { client_id?: string }).client_id !== CLIENT_ID) {
-		throw new Error("Access token client_id mismatch");
-	}
-
-	console.log("JWT verified, sub:", payload.sub);
-
-	return payload;
-}
+const jwks = createWorkosJwks(CLIENT_ID);
 
 // Helper to convert Express request to Lambda event
 function toLambdaEvent(
@@ -255,7 +197,10 @@ async function requireAuth(
 	console.log("Auth: token present, length:", token.length);
 
 	try {
-		const claims = await verifyAccessToken(token);
+		const claims = await verifyWorkosToken(token, jwks, {
+			clientId: CLIENT_ID,
+		});
+		console.log("JWT verified, sub:", claims.sub);
 		(req as AuthenticatedRequest).user = claims;
 		next();
 	} catch (error) {

@@ -1,18 +1,13 @@
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayRequestAuthorizerEvent } from "aws-lambda";
-import {
-	createRemoteJWKSet,
-	errors,
-	type JWTVerifyResult,
-	jwtVerify,
-} from "jose";
+import { errors, type JWTVerifyGetKey } from "jose";
 import { errorMessage } from "../lib/error-utils";
 import { verifyOriginHeader } from "../lib/origin-verify";
+import { createWorkosJwks, verifyWorkosToken } from "./verify-token";
 
 const logger = new Logger({ serviceName: "workos-authorizer" });
 
 const CLIENT_ID = process.env.WORKOS_CLIENT_ID || "";
-const AUTH_ISSUER = process.env.AUTH_ISSUER ?? "https://api.workos.com/";
 
 const IS_LOCAL =
 	process.env.NODE_ENV === "development" || process.env.STAGE === "development";
@@ -20,16 +15,9 @@ if (!CLIENT_ID && !IS_LOCAL) {
 	throw new Error("WORKOS_CLIENT_ID is required in deployed environments");
 }
 
-let JWKS: ReturnType<typeof createRemoteJWKSet> | undefined;
+let JWKS: JWTVerifyGetKey | undefined;
 try {
-	JWKS = createRemoteJWKSet(
-		new URL(`https://api.workos.com/sso/jwks/${CLIENT_ID}`),
-		{
-			// Reduce blast radius on DDoS/JWKS abuse & network quirks
-			cooldownDuration: 60_000, // 60s min interval between fetches
-			timeoutDuration: 2_000, // 2s network timeout
-		},
-	);
+	JWKS = createWorkosJwks(CLIENT_ID);
 } catch (jwksError) {
 	logger.error("Failed to create JWKS", {
 		error: errorMessage(jwksError),
@@ -68,56 +56,15 @@ export const handler = async (
 		}
 
 		try {
-			// Add timeout to prevent hanging promises
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			const verifyPromise = jwtVerify(token, JWKS, {
-				issuer: [
-					AUTH_ISSUER,
-					`https://api.workos.com/user_management/${CLIENT_ID}`,
-				],
-				// NOTE: do NOT pass `audience` here. WorkOS user/AuthKit access
-				// tokens do not carry an `aud` claim — they bind to the app via the
-				// `client_id` claim, which we validate explicitly below. Passing
-				// `audience` makes jose require a non-existent `aud` and reject every
-				// real token ("missing required \"aud\" claim").
-				algorithms: ["RS256"],
-				clockTolerance: 60,
+			// Verification (signature + issuer + sub + client_id binding) lives in
+			// the shared verifier so this authorizer and the local dev server can
+			// never drift apart.
+			const payload = await verifyWorkosToken(token, JWKS, {
+				clientId: CLIENT_ID,
 			});
-
-			const timeoutPromise = new Promise<never>((_, reject) => {
-				timer = setTimeout(
-					() => reject(new Error("JWT verification timeout")),
-					5000,
-				);
-			});
-
-			let payload: JWTVerifyResult["payload"];
-			try {
-				const result = (await Promise.race([
-					verifyPromise,
-					timeoutPromise,
-				])) as JWTVerifyResult;
-				payload = result.payload;
-			} finally {
-				clearTimeout(timer);
-			}
-
-			// Reject tokens without a subject claim
-			if (!payload.sub) {
-				logger.error("JWT missing sub claim, rejecting");
-				return { isAuthorized: false };
-			}
 
 			// Construct a string-only context object for HTTP API simple authorizers
 			const payloadData = payload as Record<string, unknown>;
-
-			// Bind the token to our WorkOS app via the `client_id` claim (the
-			// audience equivalent for WorkOS access tokens). Skipped only when
-			// CLIENT_ID is unset (local dev).
-			if (CLIENT_ID && payloadData.client_id !== CLIENT_ID) {
-				logger.warn("JWT client_id mismatch, rejecting");
-				return { isAuthorized: false };
-			}
 			const ctx: Record<string, string> = {
 				sub: String(payload.sub),
 				sid: String(payloadData.sid ?? ""),
