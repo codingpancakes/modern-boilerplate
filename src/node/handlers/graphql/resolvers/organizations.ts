@@ -75,18 +75,20 @@ export const organizationResolvers = {
 			context: GraphQLContext,
 		) => {
 			const clampedLimit = Math.min(Math.max(limit ?? 20, 1), 100);
+			// `parsed.createdAt` is the stored timestamp string carried losslessly
+			// through the cursor — compare it directly (no Date round-trip) so
+			// keyset boundaries hold at full microsecond precision.
 			const parsed = cursor ? decodeCursor(cursor) : null;
-			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
 
 			const rows = await context.db.query.organizationMembers.findMany({
 				where: and(
 					eq(organizationMembers.userId, context.userId),
 					eq(organizationMembers.status, "ACTIVE"),
-					parsed && cursorTs
+					parsed
 						? or(
-								gt(organizationMembers.createdAt, cursorTs),
+								gt(organizationMembers.createdAt, parsed.createdAt),
 								and(
-									eq(organizationMembers.createdAt, cursorTs),
+									eq(organizationMembers.createdAt, parsed.createdAt),
 									gt(organizationMembers.id, parsed.id),
 								),
 							)
@@ -129,18 +131,18 @@ export const organizationResolvers = {
 			await requireMembership(context, organizationId);
 
 			const clampedLimit = Math.min(Math.max(limit ?? 20, 1), 100);
+			// See myOrganizations: compare the lossless stored-string cursor value.
 			const parsed = cursor ? decodeCursor(cursor) : null;
-			const cursorTs = parsed ? new Date(parsed.timestamp).toISOString() : null;
 
 			const rows = await context.db.query.organizationMembers.findMany({
 				where: and(
 					eq(organizationMembers.organizationId, organizationId),
 					eq(organizationMembers.status, "ACTIVE"),
-					parsed && cursorTs
+					parsed
 						? or(
-								gt(organizationMembers.createdAt, cursorTs),
+								gt(organizationMembers.createdAt, parsed.createdAt),
 								and(
-									eq(organizationMembers.createdAt, cursorTs),
+									eq(organizationMembers.createdAt, parsed.createdAt),
 									gt(organizationMembers.id, parsed.id),
 								),
 							)

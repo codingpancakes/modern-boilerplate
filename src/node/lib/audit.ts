@@ -24,6 +24,37 @@ export const AUDIT_RETENTION_YEARS = 7;
 const logger = new Logger({ serviceName: "audit" });
 
 /**
+ * Emit an `AuditWriteFailure` count metric so a sustained DB outage holing the
+ * compliance trail pages someone instead of only leaving log lines behind.
+ *
+ * Uses the CloudWatch Embedded Metric Format (EMF) written straight to stdout —
+ * Lambda's log pipeline turns it into a real metric with no SDK call, no extra
+ * dependency, and no added latency on the (already fire-and-forget) audit path.
+ * Deliberately isolated in this one function so the Workers migration can swap
+ * the body for an Analytics Engine write (or similar) without touching callers.
+ */
+function emitAuditWriteFailureMetric(): void {
+	const namespace = process.env.PROJECT_NAME || "local-dev";
+	const emf = {
+		_aws: {
+			Timestamp: Date.now(),
+			CloudWatchMetrics: [
+				{
+					Namespace: namespace,
+					Dimensions: [["Service"]],
+					Metrics: [{ Name: "AuditWriteFailure", Unit: "Count" }],
+				},
+			],
+		},
+		Service: "audit",
+		AuditWriteFailure: 1,
+	};
+	// Must be a bare console.log: EMF requires the JSON object to be the whole
+	// log line, which the structured logger's envelope would break.
+	console.log(JSON.stringify(emf));
+}
+
+/**
  * Context with audit fields
  */
 export interface AuditContext {
@@ -237,6 +268,7 @@ async function persistAudit(entry: AuditLogEntry): Promise<void> {
 		if (process.env.NODE_ENV === "test") {
 			// Silently swallow — no DB in unit tests
 		} else {
+			emitAuditWriteFailureMetric();
 			logger.error("Failed to log audit event — fallback to CloudWatch", {
 				error: errorMessage(error),
 				auditEntry,
