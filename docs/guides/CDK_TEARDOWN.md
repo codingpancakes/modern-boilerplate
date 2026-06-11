@@ -1,22 +1,21 @@
 # CDK Complete Teardown Guide
 
+> ⚠️ There is no `destroy-all.sh` script — teardown is the manual sequence below.
+> Before tearing down for the [Cloudflare migration](../direction/MIGRATION_PLAN.md),
+> archive CloudTrail logs first (compliance retention evidence).
+
 ## Quick Commands
 
 ### Destroy Everything (No Residuals)
 ```bash
-# For dev environment
-./scripts/destroy-all.sh dev
-
-# For staging environment
-./scripts/destroy-all.sh staging
-
-# For production environment
-./scripts/destroy-all.sh production
+# Destroy stacks in dependency order (see Step 5 for the order),
+# then clean residuals per Steps 1-4 below:
+ENV_FILE=.env.staging npx cdk destroy --all
 ```
 
 ## What Gets Deleted
 
-The `destroy-all.sh` script performs a **complete cleanup** with NO residuals:
+A complete cleanup with NO residuals covers:
 
 ### ✅ Step 1: S3 Buckets
 - Empties ALL objects (including versions)
@@ -207,7 +206,7 @@ If you need to delete everything RIGHT NOW without confirmation:
 ```bash
 # WARNING: NO CONFIRMATION PROMPT
 export STAGE=dev
-export PROJECT_NAME=railbranch   # or your PROJECT_NAME
+export PROJECT_NAME=your-project   # your PROJECT_NAME from .env
 export STACK_PREFIX="${PROJECT_NAME}-${STAGE}"
 
 # Empty all buckets

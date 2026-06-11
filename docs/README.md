@@ -1,5 +1,12 @@
 # Documentation
 
+## Direction
+- [North Star](./direction/NORTH_STAR.md) — **where this backend is going:** Cloudflare Workers + Hono + Neon, one-person maintainable, optimized for price and performance
+- [Migration Plan](./direction/MIGRATION_PLAN.md) — phased path from the current AWS/CDK stack (route-by-route, ~3–4 weeks)
+- [Audit (June 2026)](./direction/AUDIT_2026-06.md) — verified audit of the current stack: 8.5/10, findings, and false positives dismissed
+
+> The docs below describe the **current AWS/CDK stack** — accurate until the migration lands.
+
 ## Setup & Operations
 - [Setup Guide](./BOILERPLATE_SETUP.md) — First-time project setup from zero
 - [Environment Variables](./ENVIRONMENT_VARIABLES.md) — All env vars, secrets, SSM params
