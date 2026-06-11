@@ -1,14 +1,9 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { Context } from "aws-lambda";
-import { eq } from "drizzle-orm";
-import { profiles, users } from "../../db/schema/index";
-import { getUserIdFromClaims } from "../../lib/auth";
-import { getDb } from "../../lib/db";
-import { Errors } from "../../lib/errors";
-import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
-import { createSuccessResponse } from "../../lib/response";
-
-const logger = new Logger({ serviceName: "users-me" });
+/**
+ * Thin Lambda adapter — the route logic lives on the shared Hono app
+ * (`src/node/routes/users.ts`, GET /me relative to the /v1/users mount).
+ * The @swagger block stays here because `scripts/generate-openapi.js`
+ * only globs `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -44,40 +39,4 @@ const logger = new Logger({ serviceName: "users-me" });
  *       500:
  *         description: Internal server error
  */
-
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-	logger.addContext(context);
-
-	// Get internal user ID from JWT claims
-	const userId = await getUserIdFromClaims(event);
-
-	// Add persistent context to all logs
-	logger.appendKeys({ userId });
-
-	logger.info("Getting user profile");
-
-	const db = await getDb();
-
-	// Fetch user and profile in parallel (independent queries)
-	const [userResult, profileResult] = await Promise.all([
-		db.select().from(users).where(eq(users.id, userId)).limit(1),
-		db.select().from(profiles).where(eq(profiles.userId, userId)).limit(1),
-	]);
-
-	if (userResult.length === 0) {
-		logger.error("User record not found after auth lookup");
-		throw Errors.Unauthorized();
-	}
-
-	const user = userResult[0];
-	const profile = profileResult[0] || null;
-
-	logger.info("User profile retrieved successfully", { userId: user.id });
-
-	return createSuccessResponse({
-		user,
-		profile,
-	});
-};
-
-export const handler = withAuth(handlerFn);
+export { handler } from "../../lambda";

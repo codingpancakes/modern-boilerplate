@@ -1,6 +1,10 @@
-import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
-import { createNoContentResponse } from "../../lib/response";
-import { withPublicCors } from "../../lib/withPublicCors";
+/**
+ * Thin Lambda adapter — OPTIONS preflight (incl. API GW's
+ * OPTIONS /v1/{proxy+}) is answered globally by the CORS middleware in
+ * `src/node/lib/hono/middleware.ts`, so there is no dedicated route.
+ * The @swagger block stays here because `scripts/generate-openapi.js`
+ * only globs `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -14,11 +18,4 @@ import { withPublicCors } from "../../lib/withPublicCors";
  *       204:
  *         description: No content - CORS preflight successful
  */
-const optionsHandler = async (
-	_event: APIGatewayProxyEventV2,
-	_context: Context,
-) => {
-	return createNoContentResponse();
-};
-
-export const handler = withPublicCors(optionsHandler);
+export { handler } from "../../lambda";

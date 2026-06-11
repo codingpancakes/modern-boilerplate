@@ -1,29 +1,11 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-import type { Context } from "aws-lambda";
-import {
-	AUDIT_ACTIONS,
-	AUDIT_RESOURCE_TYPES,
-	AUDIT_STATUS,
-	extractRequestContext,
-	logAudit,
-} from "../../lib/audit";
-import { getUserIdFromClaims } from "../../lib/auth";
-import { Errors } from "../../lib/errors";
-import {
-	buildImageKey,
-	buildImageUrl,
-	getMediaConfig,
-	getS3Client,
-	validateContentTypeExtension,
-	validateImageMagicBytes,
-} from "../../lib/media";
-import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
-import { createSuccessResponse } from "../../lib/response";
-import { parseBody } from "../../lib/validation/helpers";
-import { uploadImageDirectRequest } from "../../lib/validation/media";
-
-const logger = new Logger({ serviceName: "media-upload-direct" });
+/**
+ * POST /v1/media/upload-image-direct — Lambda entry point.
+ *
+ * The route logic lives on the shared Hono app (`src/node/routes/media.ts`);
+ * this file stays so CDK/RouteBuilder wiring is untouched. The @swagger block
+ * below must remain here: `scripts/generate-openapi.js` only globs
+ * `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -87,100 +69,4 @@ const logger = new Logger({ serviceName: "media-upload-direct" });
  *       500:
  *         description: Internal server error
  */
-
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-	logger.addContext(context);
-
-	// Get internal user ID from JWT claims
-	const userId = await getUserIdFromClaims(event);
-
-	// Add persistent context to all logs
-	logger.appendKeys({ userId });
-
-	const config = getMediaConfig();
-
-	const input = parseBody(event, uploadImageDirectRequest);
-
-	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
-	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
-		throw Errors.BadRequest(
-			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
-		);
-	}
-
-	// Decode base64 image data
-	let imageBuffer: Buffer;
-	try {
-		// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-		const base64Data = input.imageData.replace(/^data:[^;]*;base64,/, "");
-		imageBuffer = Buffer.from(base64Data, "base64");
-	} catch (_error) {
-		throw Errors.BadRequest("Invalid base64 image data");
-	}
-
-	// Lambda synchronous payload limit is ~6MB. Base64 encoding adds ~33% overhead,
-	// so the effective max decoded image size is ~4.5MB.
-	const maxSize = 4.5 * 1024 * 1024;
-	if (imageBuffer.length > maxSize) {
-		throw Errors.BadRequest(
-			"Image size exceeds maximum allowed size of 4.5MB for direct upload. Use the presigned URL endpoint (/v1/media/upload-image) for larger files.",
-		);
-	}
-
-	if (!validateImageMagicBytes(imageBuffer, input.contentType)) {
-		throw Errors.BadRequest(
-			"File content does not match the declared content type",
-		);
-	}
-
-	const key = buildImageKey(userId, input.category, input.filename);
-
-	logger.info("Uploading image to S3", {
-		userId,
-		key,
-		size: imageBuffer.length,
-		contentType: input.contentType,
-	});
-
-	const uploadCommand = new PutObjectCommand({
-		Bucket: config.bucketName,
-		Key: key,
-		Body: imageBuffer,
-		ContentType: input.contentType,
-		ServerSideEncryption: "AES256",
-		Metadata: {
-			userId,
-			originalFilename: input.filename,
-			uploadedAt: new Date().toISOString(),
-		},
-	});
-
-	await getS3Client().send(uploadCommand);
-
-	const imageUrl = buildImageUrl(key, config);
-
-	logger.info("Image uploaded successfully", { key, imageUrl });
-
-	void logAudit({
-		userId,
-		action: AUDIT_ACTIONS.CREATE,
-		resourceType: AUDIT_RESOURCE_TYPES.MEDIA,
-		resourceId: key,
-		...extractRequestContext(event),
-		status: AUDIT_STATUS.SUCCESS,
-		metadata: {
-			source: "rest",
-			handler: "media/upload-image-direct",
-			contentType: input.contentType,
-			size: imageBuffer.length,
-			category: input.category,
-		},
-	});
-
-	return createSuccessResponse({
-		imageUrl,
-		key,
-	});
-};
-
-export const handler = withAuth(handlerFn);
+export { handler } from "../../lambda";

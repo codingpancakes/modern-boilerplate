@@ -1,17 +1,11 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { Context } from "aws-lambda";
-import { getUserIdFromClaims } from "../../lib/auth";
-import { Errors } from "../../lib/errors";
-import {
-	generatePresignedUploadUrl,
-	validateContentTypeExtension,
-} from "../../lib/media";
-import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
-import { createSuccessResponse } from "../../lib/response";
-import { parseBody } from "../../lib/validation/helpers";
-import { uploadImageRequest } from "../../lib/validation/media";
-
-const logger = new Logger({ serviceName: "media-upload-image" });
+/**
+ * POST /v1/media/upload-image — Lambda entry point.
+ *
+ * The route logic lives on the shared Hono app (`src/node/routes/media.ts`);
+ * this file stays so CDK/RouteBuilder wiring is untouched. The @swagger block
+ * below must remain here: `scripts/generate-openapi.js` only globs
+ * `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -76,44 +70,4 @@ const logger = new Logger({ serviceName: "media-upload-image" });
  *         description: Unauthorized
  *         schema: { $ref: '#/definitions/StandardErrorResponse' }
  */
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-	logger.addContext(context);
-
-	// Get internal user ID from JWT claims
-	const userId = await getUserIdFromClaims(event);
-
-	// Add persistent context to all logs
-	logger.appendKeys({ userId });
-
-	const input = parseBody(event, uploadImageRequest);
-
-	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
-	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
-		throw Errors.BadRequest(
-			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
-		);
-	}
-
-	logger.info("Generating presigned URL for image upload", {
-		userId,
-		contentType: input.contentType,
-	});
-
-	const result = await generatePresignedUploadUrl(
-		userId,
-		input.filename,
-		input.contentType,
-		input.fileSize,
-		input.category,
-	);
-
-	logger.info("Presigned URL generated successfully", { key: result.key });
-
-	return createSuccessResponse({
-		uploadUrl: result.uploadUrl,
-		imageUrl: result.imageUrl,
-		key: result.key,
-	});
-};
-
-export const handler = withAuth(handlerFn);
+export { handler } from "../../lambda";

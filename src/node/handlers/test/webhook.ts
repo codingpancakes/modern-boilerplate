@@ -1,3 +1,11 @@
+/**
+ * NOT ported to the shared Hono app (`src/node/app.ts`): this diagnostic
+ * endpoint is local-dev-only — no API Gateway route points at it, and the
+ * route barrel (`src/node/routes/index.ts`) mounts no /v1/test path it could
+ * live under. It stays a standalone Lambda handler for `local-dev/server.ts`
+ * (POST /v1/test/webhook) until that shim is deleted (MIGRATION_PLAN Phase 1),
+ * at which point this file goes with it or moves behind a /v1/test mount.
+ */
 import { createHmac } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";

@@ -1,12 +1,11 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { Context } from "aws-lambda";
-import { getUserIdFromClaims } from "../../lib/auth";
-import { listUserImages } from "../../lib/media";
-import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
-import { createSuccessResponse } from "../../lib/response";
-import { mediaSchemas, parseQuery } from "../../lib/validation";
-
-const logger = new Logger({ serviceName: "media-list-images" });
+/**
+ * GET /v1/media/images — Lambda entry point.
+ *
+ * The route logic lives on the shared Hono app (`src/node/routes/media.ts`);
+ * this file stays so CDK/RouteBuilder wiring is untouched. The @swagger block
+ * below must remain here: `scripts/generate-openapi.js` only globs
+ * `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -74,35 +73,4 @@ const logger = new Logger({ serviceName: "media-list-images" });
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-	logger.addContext(context);
-
-	// Get internal user ID from JWT claims
-	const userId = await getUserIdFromClaims(event);
-
-	// Add persistent context to all logs
-	logger.appendKeys({ userId });
-
-	const query = parseQuery(event, mediaSchemas.listImages);
-
-	logger.info("Listing user images", {
-		category: query.prefix,
-		limit: query.limit,
-	});
-
-	const result = await listUserImages(
-		userId,
-		query.prefix,
-		query.limit,
-		query.continuationToken,
-	);
-
-	logger.info("Images listed successfully", {
-		imageCount: result.count,
-		hasMore: result.hasMore,
-	});
-
-	return createSuccessResponse(result);
-};
-
-export const handler = withAuth(handlerFn);
+export { handler } from "../../lambda";

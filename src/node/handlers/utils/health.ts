@@ -1,6 +1,9 @@
-import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
-import { createSuccessResponse } from "../../lib/response";
-import { withPublicCors } from "../../lib/withPublicCors";
+/**
+ * Thin Lambda adapter — the route logic lives on the shared Hono app
+ * (`src/node/routes/utils.ts`, GET /health relative to the /v1 mount).
+ * The @swagger block stays here because `scripts/generate-openapi.js`
+ * only globs `src/node/handlers/**`.
+ */
 
 /**
  * @swagger
@@ -38,16 +41,4 @@ import { withPublicCors } from "../../lib/withPublicCors";
  *                       type: string
  *                       example: production
  */
-const healthHandler = async (
-	_event: APIGatewayProxyEventV2,
-	_context: Context,
-) => {
-	return createSuccessResponse({
-		status: "ok",
-		timestamp: new Date().toISOString(),
-		version: process.env.API_VERSION || "v1",
-		stage: process.env.STAGE || "dev",
-	});
-};
-
-export const handler = withPublicCors(healthHandler);
+export { handler } from "../../lambda";
