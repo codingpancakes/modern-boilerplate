@@ -19,7 +19,7 @@ This document lists all environment variables used in the project and where they
 All files share the same variable schema. None are committed to git.
 
 ### Required Variables
-- `PROJECT_NAME` - Project identifier (e.g., "railbranch")
+- `PROJECT_NAME` - Project identifier (e.g., "your-project")
 - `STAGE` - Environment stage ("staging" or "production")
 - `AWS_REGION` - AWS region (e.g., "us-east-1")
 - `HOSTED_ZONE_ID` - Route53 hosted zone ID

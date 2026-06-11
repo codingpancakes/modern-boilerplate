@@ -50,9 +50,14 @@ These are enforced across the codebase. Breaking one is a regression, even if it
 6. **`ACTIVE` filter on all membership queries:** `eq(organizationMembers.status, "ACTIVE")`.
 7. **Response/error factories only.** REST: `createSuccessResponse(data)` / `throw Errors.NotFound("X")`.
    GraphQL: `throw new GraphQLError(msg, { extensions: { code } })`. Never hand-roll `{ statusCode, body }`.
-8. **Transactions for multi-step writes:** `db.transaction(async (tx) => { ... })`. This relies on the WebSocket-capable `neon-serverless` driver wired in `lib/db.ts` — the `neon-http` driver throws `"No transactions support"` at runtime, so never switch the driver back (guarded by `tests/unit/lib/db.test.ts`).
+8. **Transactions for multi-step writes:** `db.transaction(async (tx) => { ... })`. This relies on the WebSocket-capable `neon-serverless` driver wired in `lib/db.ts` — the `neon-http` driver throws `"No transactions support"` at runtime, so never switch the driver back (driver choice guarded by `tests/unit/lib/db.test.ts`; commit/rollback atomicity guarded against a real Postgres in `tests/integration/db-transactions.test.ts`, run via `pnpm test:integration`).
 9. **Secrets via Secrets Manager**, config via `commonEnv`. Never plaintext credentials in env or code.
 10. **Auth comes only from the API Gateway authorizer.** No local JWT re-parsing/fallback in handlers.
+11. **Migrations must be expand/contract (backward-compatible one release in each direction).** The
+    pipeline deploys code first, then runs migrations — so old code runs against the new schema during
+    the deploy, and a rollback runs old code against it indefinitely. Additive changes only per release:
+    new columns nullable or defaulted, no renames (add new + backfill + drop old across separate releases),
+    no dropping/tightening anything the currently-deployed code still reads or writes.
 
 ---
 
@@ -69,6 +74,7 @@ Before you consider a change complete, verify all of these:
 - [ ] Errors thrown via the factory; no internal details leak (5xx masked in deployed envs).
 - [ ] **Async/scheduled Lambdas: attach a DLQ + a CloudWatch error alarm** (see Scaling Patterns).
 - [ ] **Recursive utilities are depth-bounded** (mirror `redactSensitive`'s depth guard).
+- [ ] Schema changes are expand/contract-safe (deployable and rollback-able against the previous release).
 - [ ] Route registered in `infrastructure/lib/routes/` **and** `local-dev/server.ts`.
 - [ ] `pnpm check` passes (Biome lint + `tsc --noEmit` + Vitest) before commit.
 
@@ -109,7 +115,9 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
 
 - **`git push develop` → staging pipeline auto-deploys.** **`git push main` → production auto-deploys.**
 - Pipelines build, run CDK deploy (blue-green), then run migrations. Both must be green before promoting.
-- **WAF is production-only**, toggled by SSM `/postway/{stage}/enable-waf` (read in `buildspec.yml`, gates
+  This ordering is why invariant 11 (expand/contract migrations) exists — there is always a window where
+  the live code and the schema are one step apart.
+- **WAF is production-only**, toggled by SSM `/{PROJECT_NAME}/{stage}/enable-waf` (read in `buildspec.yml`, gates
   `api-stack.ts`). The WAF rule definitions stay in code regardless of the toggle. Re-enable before real users.
 - Never commit secrets (`.env*` are protected). SSM is the source of truth for env toggles, not local `.env`.
 

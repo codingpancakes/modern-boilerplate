@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import {
 	GetSecretValueCommand,
@@ -7,6 +7,7 @@ import {
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
 import { and, eq, lt, or } from "drizzle-orm";
 import { idempotencyKeys } from "../../db/schema/index";
+import { constantTimeEqual } from "../../lib/constant-time";
 import { getDb } from "../../lib/db";
 import { errorMessage } from "../../lib/error-utils";
 import { Errors, formatError } from "../../lib/errors";
@@ -172,15 +173,10 @@ function verifySignature(
 		.update(signedPayload)
 		.digest("hex");
 
-	const sigBuffer = Buffer.from(signature, "hex");
-	const expectedBuffer = Buffer.from(expectedSignature, "hex");
-
-	// Reject immediately if lengths differ (avoids timingSafeEqual throwing)
-	if (sigBuffer.length !== expectedBuffer.length) {
-		return false;
-	}
-
-	return timingSafeEqual(sigBuffer, expectedBuffer);
+	return constantTimeEqual(
+		Buffer.from(signature, "hex"),
+		Buffer.from(expectedSignature, "hex"),
+	);
 }
 
 const webhookHandler = async (

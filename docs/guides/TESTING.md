@@ -2,7 +2,7 @@
 
 Complete guide for unit tests, integration tests, and testing the backend locally, staging, and production.
 
-**Framework**: Vitest (unit) + Bash scripts (integration)  
+**Framework**: Vitest (unit + real-DB integration) + Bash scripts (deployed-API integration)  
 **Status**: Boilerplate — enough tests to show the patterns  
 
 ---
@@ -11,17 +11,25 @@ Complete guide for unit tests, integration tests, and testing the backend locall
 
 ```
 tests/
-├── unit/                           # Vitest unit tests
+├── unit/                               # Vitest unit tests
 │   ├── lib/
-│   │   ├── auth.test.ts            ✅
-│   │   ├── errors.test.ts          ✅
-│   │   └── validation-schemas.test.ts ✅
+│   │   ├── auth.test.ts                ✅ Authorizer claims (lambda-only source)
+│   │   ├── errors.test.ts              ✅ Error factory
+│   │   ├── validation-schemas.test.ts  ✅ Zod schemas
+│   │   ├── db.test.ts                  ✅ Driver-wiring guard (neon-serverless)
+│   │   └── sanitize.test.ts            ✅ XSS escaping + recursion depth
+│   ├── authorizers/
+│   │   └── verify-token.test.ts        ✅ WorkOS token verifier (real RS256)
+│   ├── infrastructure/
+│   │   └── api-stack.test.ts           ✅ CDK synth: authorizer/CORS/WAF
 │   └── graphql/
 │       └── resolvers/
-│           └── users.test.ts       ✅
+│           └── users.test.ts           ✅ Resolvers (mocked db.transaction)
 │
-├── integration/                    # Integration tests
-│   ├── test-all.sh                 ✅ Master runner
+├── integration/                        # Integration tests
+│   ├── db-transactions.test.ts         ✅ Real-DB commit/rollback (Vitest)
+│   ├── helpers/test-db.ts              ✅ Real-DB harness
+│   ├── test-all.sh                     ✅ Master runner (deployed API)
 │   ├── test-api.sh                 ✅ Staging/prod runner
 │   ├── test-handlers.sh            ✅ REST API
 │   ├── test-graphql.sh             ✅ GraphQL
@@ -41,9 +49,11 @@ tests/
 This project includes comprehensive unit tests to ensure code quality and catch regressions early.
 
 **Test Statistics:**
-- **Test Files**: 4
-- **Execution Time**: ~300ms
-- **Coverage**: Auth, Error handling, Validation schemas, GraphQL user resolvers
+- **Unit test files**: 8 (63 tests), plus 1 Vitest integration file (3 tests)
+- **Execution Time**: unit ~2s (CDK synth dominates), integration ~1s
+- **Coverage**: Auth + authorizer token verification, error handling, validation
+  schemas, input sanitization, DB driver wiring, CDK stack wiring, GraphQL user
+  resolvers, and real-DB transaction commit/rollback
 
 ### Available Commands
 
@@ -63,7 +73,7 @@ pnpm build         # TypeScript compile + generate docs
 ### Test Coverage
 
 #### 1. Auth Helpers (`tests/unit/lib/auth.test.ts`)
-**6 tests** - Validates JWT claims extraction from API Gateway authorizer context
+**8 tests** - Validates JWT claims extraction from API Gateway authorizer context
 
 - ✅ Extract claims from lambda authorizer
 - ✅ Throw error if `sub` claim missing
@@ -101,13 +111,17 @@ pnpm build         # TypeScript compile + generate docs
 ### Test Output Example
 
 ```
-✓ tests/unit/lib/validation-schemas.test.ts (11 tests) 3ms
-✓ tests/unit/lib/errors.test.ts (12 tests) 6ms
-✓ tests/unit/lib/auth.test.ts (6 tests) 2ms
-✓ tests/unit/graphql/resolvers/users.test.ts (15 tests) 8ms
+✓ tests/unit/lib/sanitize.test.ts (6 tests)
+✓ tests/unit/lib/validation-schemas.test.ts (11 tests)
+✓ tests/unit/lib/errors.test.ts (12 tests)
+✓ tests/unit/authorizers/verify-token.test.ts (9 tests)
+✓ tests/unit/lib/db.test.ts (3 tests)
+✓ tests/unit/lib/auth.test.ts (8 tests)
+✓ tests/unit/graphql/resolvers/users.test.ts (9 tests)
+✓ tests/unit/infrastructure/api-stack.test.ts (5 tests)
 
-Test Files  4 passed (4)
-  Duration  ~300ms
+Test Files  8 passed (8)
+      Tests  63 passed (63)
 ```
 
 ### Debugging Failed Tests
@@ -150,7 +164,50 @@ pnpm test:ui
 
 ---
 
-## 🔄 Integration Tests
+## 🗄️ Database Transaction Tests (Vitest + real Postgres)
+
+These run our actual service code against a **real Postgres engine** to prove
+that multi-step writes COMMIT atomically and ROLL BACK fully on error —
+behaviour the unit suite cannot verify because it mocks `db.transaction` as a
+pass-through.
+
+**File**: `tests/integration/db-transactions.test.ts`
+**Config**: `vitest.integration.config.ts` (separate from the unit suite, so
+`pnpm check` / CI stay DB-free).
+
+### Run it
+
+```bash
+# Start a local Postgres (docker-compose `postgres` service, port 5432)
+docker compose up -d postgres
+
+# Run the suite
+pnpm test:integration
+
+# …or point at any Postgres
+TEST_DATABASE_URL="postgres://user:pass@host:5432/db" pnpm test:integration
+```
+
+The harness (`tests/integration/helpers/test-db.ts`) connects, ensures the
+`citext` extension exists, and applies the project migrations before the tests
+run.
+
+### What it proves
+
+- ✅ `createUserWithIdentity` commits user + profile + identity together
+- ✅ A throw mid-transaction rolls back **all** rows (no partial writes)
+- ✅ A unique-constraint violation late in the transaction rolls back the
+  earlier inserts (no orphaned user/profile)
+
+> **Driver note:** these tests use the `node-postgres` driver for a hermetic
+> local DB. Production uses `neon-serverless`; that wiring is guarded separately
+> by `tests/unit/lib/db.test.ts`. Drizzle's transaction API and the underlying
+> SQL are identical across both drivers, so the atomicity proven here matches
+> production.
+
+---
+
+## 🔄 Integration Tests (deployed API, Bash)
 
 ### Available Test Suites
 
@@ -474,7 +531,10 @@ git commit -m "feat: add new feature"
 
 ### CI/CD Pipeline
 
-The `buildspec.yml` runs `pnpm test:run` before building and deploying via CodePipeline/CodeBuild.
+The `buildspec.yml` runs `pnpm test:run` (unit) **and** `pnpm test:integration`
+(against an ephemeral Postgres provisioned in the build container) before
+building and deploying via CodePipeline/CodeBuild. A failing transaction
+commit/rollback test blocks the deploy.
 
 ### Before Deployment
 ```bash
@@ -570,7 +630,8 @@ test('User can upload and retrieve images', async () => {
 
 ## ✅ Current Status
 
-- ✅ **Unit tests passing** (4 test files)
+- ✅ **Unit tests passing** (8 test files, 63 tests)
+- ✅ **Real-DB integration tests passing** (transaction commit/rollback)
 - ✅ **Lint checks passing**
 - ✅ **TypeScript checks passing**
 - ✅ **Build successful**

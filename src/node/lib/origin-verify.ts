@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { constantTimeEqual } from "./constant-time";
 
 const IS_LOCAL =
 	process.env.NODE_ENV === "development" || process.env.STAGE === "development";
@@ -24,9 +24,5 @@ export function verifyOriginHeader(
 	const value = headers["x-origin-verify"] || headers["X-Origin-Verify"] || "";
 	if (!value) return false;
 
-	const a = Buffer.from(value);
-	const b = Buffer.from(ORIGIN_SECRET);
-	if (a.length !== b.length) return false;
-
-	return timingSafeEqual(a, b);
+	return constantTimeEqual(value, ORIGIN_SECRET);
 }

@@ -29,7 +29,7 @@ app.get('/', (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>postway API Documentation</title>
+  <title>${openApiSpec.info?.title || 'API'} Documentation</title>
   <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@4.15.5/swagger-ui.css" />
   <style>
     html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }

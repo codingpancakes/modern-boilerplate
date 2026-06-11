@@ -429,7 +429,7 @@ Per-IP rate limiting and request body-size limits live in the WAF
 (`api-stack.ts`, gated by `ENABLE_WAF`). WAF is **production-only by design** and is
 currently **disabled for the MVP** to save cost (~$16/mo). The WAF rule definitions
 remain fully intact in code — only the deployed resource is absent. **Re-enable before
-real users:** set SSM `/postway/production/enable-waf=true` and run the prod pipeline.
+real users:** set SSM `/{PROJECT_NAME}/production/enable-waf=true` and run the prod pipeline.
 
 ### Delivery guarantee (fire-and-forget + flush)
 Audit writes are kicked off fire-and-forget (`void logAudit(...)`) so they never

@@ -1,10 +1,12 @@
 import { neon } from '@neondatabase/serverless';
 import * as dotenv from 'dotenv';
+import { confirmDestructiveDb } from './lib/destructive-db-guard';
 
 // Load environment variables
 dotenv.config({ path: '.env.local' });
 
 async function resetDatabase() {
+  await confirmDestructiveDb(process.env.DATABASE_URL);
   const sql = neon(process.env.DATABASE_URL!);
   
   console.log('🗑️  Dropping public schema...');

@@ -25,21 +25,20 @@ import { organizationSchemas } from "./organizations";
 import { userSchemas } from "./users";
 import { webhookSchemas } from "./webhooks";
 
-// Re-export domain schemas
-export {
-	commonSchemas,
-	userSchemas,
-	mediaSchemas,
-	organizationSchemas,
-	webhookSchemas,
-};
-
 // Re-export individual schemas for direct import
 export * from "./common";
 export * from "./media";
 export * from "./organizations";
 export * from "./users";
 export * from "./webhooks";
+// Re-export domain schemas
+export {
+	commonSchemas,
+	mediaSchemas,
+	organizationSchemas,
+	userSchemas,
+	webhookSchemas,
+};
 
 /**
  * Unified schemas object (backward compatible)

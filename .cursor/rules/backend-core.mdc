@@ -3,7 +3,7 @@ description: Core project conventions and architecture — applies to all files
 alwaysApply: true
 ---
 
-# RailBranch Backend — Core Rules
+# Backend — Core Rules
 
 ## Stack
 Node.js 24 / TypeScript 5 / pnpm / AWS Lambda + API Gateway HTTP v2 / Neon Postgres (drizzle-orm) / WorkOS JWT / Zod / Biome / Vitest

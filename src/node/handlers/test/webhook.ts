@@ -1,6 +1,7 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { Logger } from "@aws-lambda-powertools/logger";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { constantTimeEqual } from "../../lib/constant-time";
 import { Errors } from "../../lib/errors";
 import { createSuccessResponse } from "../../lib/response";
 import { withPublicCors } from "../../lib/withPublicCors";
@@ -19,10 +20,10 @@ function verifyHmac(
 	const expected = createHmac("sha256", secret)
 		.update(signedPayload)
 		.digest("hex");
-	const sigBuf = Buffer.from(signature, "hex");
-	const expBuf = Buffer.from(expected, "hex");
-	if (sigBuf.length !== expBuf.length) return false;
-	return timingSafeEqual(sigBuf, expBuf);
+	return constantTimeEqual(
+		Buffer.from(signature, "hex"),
+		Buffer.from(expected, "hex"),
+	);
 }
 
 const handlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {

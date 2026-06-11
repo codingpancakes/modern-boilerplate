@@ -142,13 +142,18 @@ for (const mapping of secretMappings) {
 console.log('📝 Syncing SSM Parameters...');
 
 // Helper: put SSM parameter safely via a temp file to avoid shell injection
-function putSsmParameter(name: string, value: string, description: string) {
+function putSsmParameter(
+  name: string,
+  value: string,
+  description: string,
+  type: 'String' | 'SecureString' = 'String',
+) {
   const tmpFile = path.join(os.tmpdir(), `ssm-param-${Date.now()}.json`);
   try {
     fs.writeFileSync(tmpFile, JSON.stringify({
       Name: name,
       Value: value,
-      Type: 'String',
+      Type: type,
       Description: description,
       Overwrite: true,
     }));
@@ -193,8 +198,8 @@ const ssmMappings = [
   // Monitoring (optional)
   { name: 'Alert Email', key: 'ALERT_EMAIL', paramName: `/${projectName}/${stage}/alert-email`, required: false },
 
-  // Security — CloudFront origin verification
-  { name: 'Origin Verify Secret', key: 'ORIGIN_VERIFY_SECRET', paramName: `/${projectName}/${stage}/origin-verify-secret`, required: false },
+  // Security — CloudFront origin verification (SecureString)
+  { name: 'Origin Verify Secret', key: 'ORIGIN_VERIFY_SECRET', paramName: `/${projectName}/${stage}/origin-verify-secret`, required: false, secure: true },
 
   // WAF toggle
   { name: 'Enable WAF', key: 'ENABLE_WAF', paramName: `/${projectName}/${stage}/enable-waf`, required: false },
@@ -205,15 +210,21 @@ for (const mapping of ssmMappings) {
     if (mapping.required) {
       console.error(`   ❌ ${mapping.name} (${mapping.key}) is REQUIRED but not found in .env.${stage}`);
       process.exit(1);
+    }
+    if (mapping.key === 'ORIGIN_VERIFY_SECRET') {
+      console.warn(`   ⚠️  ORIGIN_VERIFY_SECRET not found in .env.${stage} — CloudFront origin`);
+      console.warn(`      verification will be DISABLED (direct execute-api hits bypass the WAF).`);
+      console.warn(`      Generate one with: openssl rand -hex 32`);
     } else {
       console.log(`   ⏭️  ${mapping.name} (${mapping.key}) not found (optional)`);
-      continue;
     }
+    continue;
   }
-  
+
+  const paramType = 'secure' in mapping && mapping.secure ? 'SecureString' : 'String';
   try {
-    putSsmParameter(mapping.paramName, envVars[mapping.key], `${mapping.name} for ${stage}`);
-    console.log(`   ✓ ${mapping.name}`);
+    putSsmParameter(mapping.paramName, envVars[mapping.key], `${mapping.name} for ${stage}`, paramType);
+    console.log(`   ✓ ${mapping.name}${paramType === 'SecureString' ? ' (SecureString)' : ''}`);
   } catch (error) {
     console.error(`   ❌ Failed to sync ${mapping.name}:`, error);
   }

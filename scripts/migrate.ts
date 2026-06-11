@@ -1,3 +1,9 @@
+// NOTE: This migration runner intentionally uses the `neon-http` driver.
+// Unlike the application runtime (see src/node/lib/db.ts, which MUST use
+// `neon-serverless` for interactive `db.transaction()` calls), drizzle's
+// migrator runs each migration as its own statement batch and does not open an
+// interactive transaction, so the lighter HTTP driver is correct here. Do NOT
+// copy this import into application code.
 import { drizzle } from 'drizzle-orm/neon-http';
 import { neon } from '@neondatabase/serverless';
 import { migrate } from 'drizzle-orm/neon-http/migrator';

@@ -98,30 +98,40 @@ CDK looks up your hosted zone by ID — it does not create it. Create it first:
 
 `PROJECT_NAME` drives all AWS resource names: CloudFormation stacks, Lambda function names, S3 buckets, Secrets Manager paths, and CloudWatch log groups. Everything is namespaced as `{PROJECT_NAME}-{STAGE}-*`.
 
-Update it in:
+The one-command way:
+
+```bash
+pnpm init-project <project-name> <domain> \
+  --account YOUR_AWS_ACCOUNT_ID --email you@yourdomain.com \
+  --github-owner your-github-user --github-repo your-repo
+```
+
+This generates `.env.local`, `.env.staging`, and `.env.production` from the
+template in section 5 and sets the `package.json` name. You then fill in the
+real secret values (WorkOS, database, hosted zone ID) before deploying.
+
+Doing it manually instead, update `PROJECT_NAME` in:
 - `package.json` → `name` field
-- `.env.staging` → `PROJECT_NAME=your-project`
-- `.env.production` → `PROJECT_NAME=your-project`
-- `.env.local` → `PROJECT_NAME=your-project`
+- `.env.staging`, `.env.production`, `.env.local` → `PROJECT_NAME=your-project`
 
 S3 bucket names are globally unique. If your `PROJECT_NAME` is too generic, the deploy may fail with a bucket conflict — pick something distinctive.
 
-### Find and replace boilerplate references
+### Verify no stray references remain
+
+Tracked source and docs are name-clean: all naming flows from `PROJECT_NAME`
+and your domain in the (gitignored) `.env.*` files, and generated artifacts
+(`docs/api/openapi.json`) are re-stamped from those on every build. To verify
+nothing from a previous identity lingers in your clone:
 
 ```bash
-grep -r "postway\|railbranch\|357225328504\|codingpancakes" . \
+grep -ri "your-old-name" . \
   --include="*.ts" --include="*.md" --include="*.json" --include="*.sh" \
-  --exclude-dir=node_modules --exclude-dir=.git
+  --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=cdk.out
 ```
 
-Replace each occurrence with your own values:
-
-| Hardcoded value | Found in | Replace with |
-|---|---|---|
-| `postway` | `.env.*`, `docs/` | Your project name |
-| `postway.services`, `postway.ai` | `docs/`, `.env.*` | Your domain |
-| `357225328504` | `docs/`, `.env.*` | Your AWS account ID |
-| `codingpancakes` | `.env.*` | Your GitHub username or org |
+Placeholders used throughout the docs (`your-project`, `yourdomain.com`,
+`you@yourdomain.com`) are replaced by your real values only in `.env.*` files —
+never committed.
 
 ### Things hardcoded in source that need attention
 
@@ -373,8 +383,8 @@ Register the route in:
 
 ## 10. Cleanup Checklist
 
-- [ ] `PROJECT_NAME` updated in all `.env.*` files and `package.json`
-- [ ] All `postway`, `railbranch`, `postway.services`, `postway.ai` references replaced
+- [ ] `pnpm init-project` run (or `PROJECT_NAME` updated in all `.env.*` files and `package.json`)
+- [ ] No references to a previous project identity remain (see "Verify no stray references remain")
 - [ ] `CDK_DEFAULT_ACCOUNT` set to your actual AWS account ID
 - [ ] `ALERT_EMAIL` set so CloudWatch alarms have a notification destination
 - [ ] Budget amounts adjusted in `infrastructure/bin/app.ts`

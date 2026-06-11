@@ -1,6 +1,9 @@
-# RailBranch Backend
+# Serverless Backend Boilerplate
 
 Production-grade serverless API built with AWS Lambda, TypeScript, and WorkOS authentication.
+
+All project naming flows from `PROJECT_NAME` in your (gitignored) `.env` files — run
+`pnpm init-project` to spin off a new project (see `docs/BOILERPLATE_SETUP.md`).
 
 ## Stack
 
@@ -28,6 +31,7 @@ pnpm dev                            # http://localhost:3000
 | `pnpm dev` | Start local Express server (Lambda parity) |
 | `pnpm check` | Lint + typecheck + unit tests |
 | `pnpm test:run` | Unit tests only |
+| `pnpm test:integration` | Real-DB transaction tests (needs Postgres; `docker compose up -d postgres`) |
 | `pnpm lint:fix` | Auto-fix lint issues |
 | `pnpm typecheck` | TypeScript check |
 | `pnpm migrate` | Run Drizzle migrations |

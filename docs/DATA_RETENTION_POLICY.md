@@ -8,7 +8,7 @@
 
 ## 📊 Overview
 
-This document defines the data retention and deletion policies for the RailBranch platform. All retention periods are automatically enforced through infrastructure configuration and lifecycle policies.
+This document defines the data retention and deletion policies for this platform. All retention periods are automatically enforced through infrastructure configuration and lifecycle policies.
 
 ---
 
@@ -243,7 +243,7 @@ This document defines the data retention and deletion policies for the RailBranc
 ## 📞 Contact
 
 For questions about data retention or deletion requests:
-- **Email:** support@railbranch.com
+- **Email:** support@yourdomain.com *(replace with your support address)*
 - **Process:** Submit deletion request via support ticket
 - **Response Time:** Within 48 hours
 
