@@ -91,10 +91,6 @@ temp/
 *.sln
 *.sw?
 
-# AWS CDK
-cdk.out/
-cdk.context.json
-
 # Database
 *.db
 *.sqlite
@@ -113,18 +109,8 @@ ehthumbs.db
 # Local development
 docker-compose.override.yml
 
-# CDK asset staging directory
-.cdk.staging/
-cdk.out/
-
-# Lambda deployment packages
+# Deployment packages
 *.zip
-
-# Serverless directories
-.serverless/
-
-# AWS SAM
-.aws-sam/
 
 # Terraform
 *.tfstate
@@ -164,3 +150,9 @@ dmypy.json
 .env.local
 .env.development
 .env.production
+
+# Cloudflare Workers (wrangler)
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/

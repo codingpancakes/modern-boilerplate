@@ -1,14 +1,11 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import {
-	GetSecretValueCommand,
-	SecretsManagerClient,
-} from "@aws-sdk/client-secrets-manager";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { neonConfig, Pool } from "@neondatabase/serverless";
 import { drizzle, type NeonDatabase } from "drizzle-orm/neon-serverless";
 import * as schema from "../db/schema/index";
 import { errorMessage } from "./error-utils";
+import { createLogger } from "./logger";
 
-const logger = new Logger({ serviceName: "db" });
+const logger = createLogger({ serviceName: "db" });
 
 // Neon serverless driver configuration.
 //
@@ -18,156 +15,99 @@ const logger = new Logger({ serviceName: "db" });
 // org mutations, webhook upserts). The `neon-http` driver throws
 // "No transactions support in neon-http driver" on any `.transaction()` call.
 //
-// To keep Lambda cold starts cheap we set `poolQueryViaFetch`: every ordinary
-// (non-transactional) query is sent over stateless HTTP fetch, exactly like the
-// http driver did. A WebSocket connection is only opened when an interactive
-// transaction actually runs (drizzle calls `pool.connect()` for BEGIN/COMMIT),
-// and is released back to the pool immediately afterwards.
+// `poolQueryViaFetch` keeps ordinary (non-transactional) queries on stateless
+// HTTP fetch — no socket is ever opened for them. A WebSocket connection is
+// only opened when an interactive transaction actually runs (drizzle calls
+// `pool.connect()` for BEGIN/COMMIT), and is released back to the pool
+// immediately afterwards.
 if (typeof WebSocket !== "undefined") {
-	// Node 24 (and the Lambda runtime) expose a global WebSocket; reuse it so we
-	// don't need to bundle the `ws` package.
+	// Workers and Node 24 both expose a global WebSocket; reuse it so we don't
+	// need to bundle the `ws` package.
 	neonConfig.webSocketConstructor = WebSocket;
 }
 neonConfig.poolQueryViaFetch = true;
 
 export type DbInstance = NeonDatabase<typeof schema>;
 
-let dbInstance: DbInstance | null = null;
-let poolInstance: Pool | null = null;
-let dbInitPromise: Promise<DbInstance> | null = null;
-let dbUrl: string | null = null;
-let dbUrlCachedAt: number | null = null;
-const DB_URL_TTL_MS = 15 * 60 * 1000;
-
 // Hard ceiling on a single statement (server-enforced via Postgres
-// `statement_timeout`) so a hung query can't pin a Lambda for its whole timeout.
+// `statement_timeout`) so a hung query can't pin an invocation for its whole
+// timeout.
 const STATEMENT_TIMEOUT_MS = 8000;
 
 /**
- * Tear down the current pool + drizzle instance (e.g. when a rotated secret
- * means we must reconnect with a new URL). Best-effort: a failure to drain the
- * old pool must not block reconnection.
+ * Per-request database lifecycle.
+ *
+ * Cloudflare Workers FORBIDS reusing I/O objects (sockets, in-flight fetches)
+ * across requests: a module-level cached Pool created during request A throws
+ * "Cannot perform I/O on behalf of a different request" when request B uses
+ * it. So instead of the old warm-Lambda singleton, every request gets its own
+ * pool, carried in AsyncLocalStorage so `getDb()` call sites stay unchanged:
+ *
+ *   - The `dbScope()` Hono middleware (lib/hono/middleware.ts) wraps each
+ *     request in {@link runWithDbScope}; every `getDb()` within the request —
+ *     including fire-and-forget audit writes drained by `flushAudits()` —
+ *     shares one lazily-created pool, which is drained when the scope exits.
+ *   - Callers OUTSIDE a scope (cron handlers, scripts) get a fresh instance
+ *     per call. Pools are lazy and ordinary queries go over stateless fetch,
+ *     so an un-drained pool holds no socket unless a transaction ran; cron
+ *     jobs can wrap themselves in {@link runWithDbScope} for explicit cleanup.
  */
-function resetConnection(): void {
-	const pool = poolInstance;
-	poolInstance = null;
-	dbInstance = null;
-	if (pool) {
-		void pool.end().catch((error) => {
-			logger.warn("Failed to drain previous database pool", {
-				error: errorMessage(error),
-			});
-		});
-	}
+interface DbScope {
+	db: DbInstance | null;
+	pool: Pool | null;
 }
 
-async function getDbUrl(): Promise<string> {
-	// Option 1: Use DATABASE_URL from environment (no TTL — env vars don't rotate)
-	if (process.env.DATABASE_URL) {
-		if (!dbUrl) dbUrl = process.env.DATABASE_URL;
-		return dbUrl;
+const dbScopeStorage = new AsyncLocalStorage<DbScope>();
+
+function getDbUrl(): string {
+	const url = process.env.DATABASE_URL;
+	if (!url) {
+		throw new Error("DATABASE_URL must be configured");
 	}
-
-	// Option 2: Fetch from Secrets Manager — apply TTL so rotation is picked up
-	if (process.env.DB_SECRET_ARN) {
-		const expired =
-			!dbUrl || !dbUrlCachedAt || Date.now() - dbUrlCachedAt >= DB_URL_TTL_MS;
-
-		if (!expired && dbUrl) return dbUrl;
-
-		// Cache expired or missing — drop the pool so it reconnects with the new URL
-		resetConnection();
-		dbUrl = null;
-
-		const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
-		const command = new GetSecretValueCommand({
-			SecretId: process.env.DB_SECRET_ARN,
-		});
-
-		try {
-			const response = await client.send(command);
-			if (response.SecretString) {
-				const secret = JSON.parse(response.SecretString) as Record<
-					string,
-					unknown
-				>;
-
-				if (
-					typeof secret.url === "string" &&
-					secret.url.startsWith("postgresql")
-				) {
-					dbUrl = secret.url;
-					dbUrlCachedAt = Date.now();
-					return dbUrl;
-				}
-
-				// Fallback: RDS-style secret with individual fields
-				if (
-					typeof secret.username === "string" &&
-					typeof secret.password === "string" &&
-					typeof secret.host === "string" &&
-					typeof secret.database === "string"
-				) {
-					const sslmode =
-						typeof secret.sslmode === "string" ? secret.sslmode : "require";
-					const channelBinding =
-						typeof secret.channel_binding === "string"
-							? `&channel_binding=${secret.channel_binding}`
-							: "";
-					dbUrl = `postgresql://${encodeURIComponent(secret.username as string)}:${encodeURIComponent(secret.password as string)}@${secret.host}:${secret.port || 5432}/${secret.database}?sslmode=${sslmode}${channelBinding}`;
-					dbUrlCachedAt = Date.now();
-					return dbUrl;
-				}
-
-				throw new Error(
-					"Secret JSON missing required fields (url or username/password/host/database)",
-				);
-			}
-		} catch (error) {
-			logger.error("Failed to retrieve database secret", {
-				error: errorMessage(error),
-			});
-			throw new Error("Failed to retrieve database credentials");
-		}
-	}
-
-	throw new Error("DATABASE_URL or DB_SECRET_ARN must be configured");
-}
-
-function isDbUrlExpired(): boolean {
-	if (process.env.DATABASE_URL) return false;
-	if (!process.env.DB_SECRET_ARN) return false;
-	return !dbUrlCachedAt || Date.now() - dbUrlCachedAt >= DB_URL_TTL_MS;
+	return url;
 }
 
 /**
- * Get the shared Drizzle database instance.
+ * Get the Drizzle database instance for the current request scope.
  *
- * Backed by a module-level Neon serverless pool that is reused across warm
- * Lambda invocations. The pool is rebuilt when a rotated DB secret is detected
- * (see {@link isDbUrlExpired}). Concurrent first-callers share a single
- * in-flight init so we never construct duplicate pools.
+ * Inside a {@link runWithDbScope} scope (every HTTP request via the
+ * `dbScope()` middleware) the same instance is returned for the whole
+ * request and disposed when the scope exits. Outside a scope a fresh
+ * instance is created per call — see {@link DbScope}.
  *
- * @throws Error if credentials cannot be resolved
- * @returns Drizzle database instance
+ * @throws Error if DATABASE_URL is not configured
  */
 export async function getDb(): Promise<DbInstance> {
-	// Check TTL even when dbInstance exists so secret rotation is picked up
-	if (dbInstance && !isDbUrlExpired()) return dbInstance;
-
-	// Reuse in-flight init to prevent concurrent callers from creating duplicates
-	if (!dbInitPromise) {
-		dbInitPromise = (async () => {
-			const url = await getDbUrl();
-			const db = createDbConnection(url);
-			dbInstance = db;
-			return db;
-		})().finally(() => {
-			dbInitPromise = null;
-		});
+	const scope = dbScopeStorage.getStore();
+	if (!scope) {
+		return createDbConnection(getDbUrl()).db;
 	}
+	if (!scope.db) {
+		const { db, pool } = createDbConnection(getDbUrl());
+		scope.db = db;
+		scope.pool = pool;
+	}
+	return scope.db;
+}
 
-	return dbInitPromise;
+/**
+ * Run `fn` with a request-scoped database lifecycle: all `getDb()` calls in
+ * its async context share one lazily-created pool, drained on exit. Pool
+ * teardown is best-effort — a failure to drain never masks `fn`'s result.
+ */
+export async function runWithDbScope<T>(fn: () => Promise<T>): Promise<T> {
+	const scope: DbScope = { db: null, pool: null };
+	try {
+		return await dbScopeStorage.run(scope, fn);
+	} finally {
+		if (scope.pool) {
+			await scope.pool.end().catch((error: unknown) => {
+				logger.warn("Failed to drain request database pool", {
+					error: errorMessage(error),
+				});
+			});
+		}
+	}
 }
 
 /**
@@ -178,32 +118,33 @@ export async function getDb(): Promise<DbInstance> {
  * construction time; per-statement failures surface on the query itself and are
  * bounded by `statement_timeout`.
  */
-function createDbConnection(url: string): DbInstance {
+function createDbConnection(url: string): { db: DbInstance; pool: Pool } {
 	const pool = new Pool({
 		connectionString: url,
-		// Lambda handles one request at a time, but DataLoaders can fan out
-		// parallel queries within a single invocation — a small pool covers that.
+		// One pool per request, but DataLoaders can fan out parallel queries
+		// within a single request — a small pool covers that.
 		max: 5,
 		connectionTimeoutMillis: STATEMENT_TIMEOUT_MS,
 		idleTimeoutMillis: 10_000,
 		statement_timeout: STATEMENT_TIMEOUT_MS,
 	});
 
-	// node-postgres emits 'error' on idle clients whose connection drops — common
-	// in serverless when Neon closes an idle WebSocket. Without a listener the
-	// unhandled event would crash the Lambda process; log and swallow instead.
+	// node-postgres emits 'error' on idle clients whose connection drops —
+	// common in serverless when Neon closes an idle WebSocket. Without a
+	// listener the unhandled event would crash the process; log and swallow.
 	pool.on("error", (error) => {
 		logger.error("Idle database client error", {
 			error: errorMessage(error),
 		});
 	});
 
-	poolInstance = pool;
-
-	return drizzle(pool, {
-		schema,
-		logger: process.env.NODE_ENV === "development",
-	});
+	return {
+		db: drizzle(pool, {
+			schema,
+			logger: process.env.NODE_ENV === "development",
+		}),
+		pool,
+	};
 }
 
 export { schema };

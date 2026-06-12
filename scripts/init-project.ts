@@ -2,24 +2,24 @@
 /**
  * Spin off a new project from this boilerplate.
  *
- * Generates .env.local / .env.staging / .env.production from the canonical
- * template (docs/BOILERPLATE_SETUP.md §5) and sets the package.json name.
- * PROJECT_NAME drives ALL AWS resource naming ({PROJECT_NAME}-{STAGE}-*),
- * so this one command is the whole rename.
+ * Generates .env.local / .env.staging / .env.production and sets the
+ * package.json name. PROJECT_NAME drives resource naming and the generated
+ * API docs; the stage env files feed `pnpm sync-secrets <stage>` (which
+ * pushes secret values to Cloudflare via `wrangler secret put`).
  *
  * Usage:
  *   pnpm init-project <project-name> <domain> [options]
  *
  * Example:
- *   pnpm init-project acme-api acme.dev --region us-east-1 --email ops@acme.dev
+ *   pnpm init-project acme-api acme.dev --github-owner acme
  *
  * Options:
- *   --region <aws-region>     default: us-east-1
- *   --account <aws-account>   12-digit AWS account id (placeholder if omitted)
- *   --email <alert-email>     CloudWatch alarm destination
- *   --github-owner <owner>    GitHub user/org for the CI pipeline
+ *   --github-owner <owner>    GitHub user/org for CI
  *   --github-repo <repo>      GitHub repo name (default: <project-name>)
  *   --force                   overwrite existing .env files
+ *
+ * Remember to also update wrangler.toml: worker names, [vars] placeholders
+ * (CORS origins, IMAGES_CDN_URL), and the R2 bucket bindings.
  */
 
 import * as fs from "node:fs";
@@ -37,12 +37,12 @@ const [projectName, domain] = positional;
 
 if (!projectName || !domain) {
 	console.error("Usage: pnpm init-project <project-name> <domain> [options]");
-	console.error("Example: pnpm init-project acme-api acme.dev --email ops@acme.dev");
+	console.error("Example: pnpm init-project acme-api acme.dev");
 	process.exit(1);
 }
 
-// S3 bucket and CloudFormation stack names are derived from PROJECT_NAME —
-// enforce a charset that is safe for both.
+// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
+// charset that is safe for both.
 if (!/^[a-z][a-z0-9-]{2,29}$/.test(projectName)) {
 	console.error(
 		"❌ Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.",
@@ -54,9 +54,6 @@ if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
 	process.exit(1);
 }
 
-const region = flag("region") ?? "us-east-1";
-const account = flag("account") ?? "YOUR_12_DIGIT_AWS_ACCOUNT_ID";
-const email = flag("email") ?? `you@${domain}`;
 const githubOwner = flag("github-owner") ?? "your-github-username";
 const githubRepo = flag("github-repo") ?? projectName;
 const force = hasFlag("force");
@@ -64,7 +61,6 @@ const force = hasFlag("force");
 const root = path.join(__dirname, "..");
 
 function deployedEnv(stage: "staging" | "production"): string {
-	const apiHost = stage === "production" ? `api.${domain}` : `api-staging.${domain}`;
 	const imagesHost =
 		stage === "production" ? `images.${domain}` : `images-staging.${domain}`;
 	const branch = stage === "production" ? "main" : "develop";
@@ -72,21 +68,15 @@ function deployedEnv(stage: "staging" | "production"): string {
 PROJECT_NAME=${projectName}
 STAGE=${stage}
 
-# AWS
-AWS_REGION=${region}
-CDK_DEFAULT_ACCOUNT=${account}
-
-# Domain
+# Domain (drives the generated API docs)
 HOSTED_ZONE_NAME=${domain}
-HOSTED_ZONE_ID=Z0123456789YOURID
-API_DOMAIN=${apiHost}
 
-# Media / Storage
+# Media / Storage (Cloudflare R2)
 IMAGES_BUCKET=${projectName}-${stage}-images
 IMAGES_CDN_URL=https://${imagesHost}
-
-# CORS
-CORS_DOMAIN_PATTERNS=*.${domain},localhost:*
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
 
 # Auth (WorkOS)
 WORKOS_CLIENT_ID=client_${stage}_xxx
@@ -95,15 +85,11 @@ WORKOS_WEBHOOK_SECRET=whsec_xxx
 # Database (Neon)
 DATABASE_URL=postgresql://user:pass@host.neon.tech/dbname?sslmode=require
 
-# Security — CloudFront origin verification (generate: openssl rand -hex 32)
-ORIGIN_VERIFY_SECRET=
-
 # Monitoring
-ALERT_EMAIL=${email}
 SENTRY_DSN=
 SENTRY_ENVIRONMENT=${stage}
 
-# GitHub (required for CDK to synthesize the pipeline stack)
+# GitHub (CI)
 GITHUB_OWNER=${githubOwner}
 GITHUB_REPO=${githubRepo}
 GITHUB_BRANCH=${branch}
@@ -114,13 +100,10 @@ const localEnv = `# Identity
 PROJECT_NAME=${projectName}
 STAGE=development
 
-# AWS
-AWS_REGION=${region}
-
 # Local Postgres (docker compose up -d postgres)
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/serverless_db
 
-# Auth (WorkOS) — required by local-dev/server.ts
+# Auth (WorkOS)
 WORKOS_CLIENT_ID=client_staging_xxx
 `;
 
@@ -133,7 +116,9 @@ const files: Array<[string, string]> = [
 for (const [name, content] of files) {
 	const target = path.join(root, name);
 	if (fs.existsSync(target) && !force) {
-		console.log(`⏭️  ${name} already exists — skipping (use --force to overwrite)`);
+		console.log(
+			`⏭️  ${name} already exists — skipping (use --force to overwrite)`,
+		);
 		continue;
 	}
 	fs.writeFileSync(target, content);
@@ -152,12 +137,13 @@ if (pkg.name !== projectName) {
 console.log(`
 🎉 Project "${projectName}" initialized for ${domain}.
 
-Next steps (full guide: docs/BOILERPLATE_SETUP.md):
+Next steps:
   1. Fill in the real values in .env.staging / .env.production:
-     WORKOS_CLIENT_ID, WORKOS_WEBHOOK_SECRET, DATABASE_URL, HOSTED_ZONE_ID,
-     CDK_DEFAULT_ACCOUNT, SENTRY_DSN, and ORIGIN_VERIFY_SECRET (openssl rand -hex 32)
-  2. cdk bootstrap aws://<account>/${region}
-  3. pnpm sync-secrets staging
-  4. pnpm deploy:staging
-  5. pnpm migrate
+     WORKOS_CLIENT_ID, WORKOS_WEBHOOK_SECRET, DATABASE_URL, SENTRY_DSN,
+     and the R2 credentials
+  2. Update wrangler.toml (worker names, [vars] placeholders, R2 buckets)
+  3. cp .dev.vars.example .dev.vars  # local secrets for wrangler dev
+  4. pnpm sync-secrets staging
+  5. pnpm deploy:staging
+  6. pnpm migrate
 `);

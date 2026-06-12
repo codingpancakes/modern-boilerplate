@@ -1,4 +1,3 @@
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { and, eq } from "drizzle-orm";
 import { authIdentities } from "../db/schema/index";
 import {
@@ -23,24 +22,27 @@ export type Claims = {
 	[k: string]: unknown;
 };
 
-export function getClaims(evt: APIGatewayProxyEventV2): Claims {
-	// Single source of trust: the API Gateway custom Lambda authorizer
-	// (SIMPLE response) populates `requestContext.authorizer.lambda`. We never
-	// read `authorizer.jwt` — no native JWT authorizer is configured, and
-	// re-parsing/falling back to anything else would violate invariant #10
-	// (auth comes ONLY from the authorizer). Mirrors middleware.ts / sentry.ts.
-	const rc = evt.requestContext as typeof evt.requestContext & {
-		authorizer?: { lambda?: Record<string, unknown> };
-	};
-	const claims = rc.authorizer?.lambda;
+/** A verified claims object (e.g. `AuthClaims` set by `requireAuth()`). */
+export type ClaimsLike = { sub: string; [claim: string]: unknown };
+
+export type ClaimsSource = ClaimsLike;
+
+/**
+ * Normalize a verified claims object into the canonical `Claims` shape
+ * (numeric exp/iat, string iss). Claims must come from `requireAuth()`
+ * (single source of auth trust) — never re-parse a token here
+ * (invariant #10).
+ */
+export function getClaims(source: ClaimsSource): Claims {
+	const claims: Record<string, unknown> = source;
 
 	if (!claims?.sub || typeof claims.sub !== "string") {
 		throw Errors.Unauthorized();
 	}
 	return {
 		...claims,
-		sub: claims.sub as string,
-		iss: (claims.iss as string) ?? "",
+		sub: claims.sub,
+		iss: typeof claims.iss === "string" ? claims.iss : "",
 		exp: Number(claims.exp) || 0,
 		iat: Number(claims.iat) || 0,
 	} as Claims;
@@ -54,9 +56,9 @@ export function getClaims(evt: APIGatewayProxyEventV2): Claims {
  * IMPORTANT: claims.sub is the WorkOS provider subject, NOT the internal user ID.
  */
 export async function getUserIdFromClaims(
-	evt: APIGatewayProxyEventV2,
+	source: ClaimsSource,
 ): Promise<string> {
-	const claims = getClaims(evt);
+	const claims = getClaims(source);
 	const providerSubject = claims.sub;
 
 	const db = await getDb();

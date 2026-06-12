@@ -25,7 +25,7 @@ const options = {
     info: {
       title: `${projectName} API`,
       version: '1.0.0',
-      description: 'Production-grade serverless REST API with TypeScript and Python Lambda support',
+      description: 'Production-grade serverless REST API on Cloudflare Workers',
       contact: {
         name: 'API Support',
         email: `support@${hostedZone}`
@@ -243,16 +243,15 @@ const options = {
       }
     ]
   },
-  // Scan all TypeScript handler files
+  // Scan the Hono route modules (the single source of every public path)
   apis: [
-    './src/node/handlers/**/*.ts',
-    './src/node/handlers/**/*.js'
+    './src/node/routes/**/*.ts'
   ]
 };
 
 // Generate OpenAPI specification
 console.log('🔍 Generating OpenAPI specification...');
-console.log('📁 Scanning handler files in src/node/handlers/');
+console.log('📁 Scanning route files in src/node/routes/');
 
 try {
   const spec = swaggerJsdoc(options);
@@ -291,7 +290,7 @@ try {
   console.error(error.message);
   console.error('');
   console.error('💡 Tips:');
-  console.error('   - Check @swagger JSDoc comments in handler files');
+  console.error('   - Check @swagger JSDoc comments in route files');
   console.error('   - Ensure YAML syntax is correct');
   console.error('   - Run with DEBUG=swagger-jsdoc:* for detailed logs');
   console.error('');

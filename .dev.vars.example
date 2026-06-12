@@ -1,0 +1,55 @@
+# .dev.vars.example — template for .dev.vars (gitignored; NEVER commit real values).
+#
+#   cp .dev.vars.example .dev.vars   # then fill in real values
+#   npx wrangler dev --local
+#
+# `wrangler dev` loads .dev.vars as secrets and merges them over wrangler.toml
+# [vars]; with nodejs_compat they all land on process.env, same as Lambda.
+# For deployed envs, set each SECRET below once per environment:
+#   npx wrangler secret put <NAME> --env staging|production
+# Non-secret config lives in wrangler.toml [vars] — override here only for
+# local experiments.
+
+# ── Secrets (required) ───────────────────────────────────────────────────────
+
+# Neon Postgres connection string (was Secrets Manager /{project}/{stage}/database)
+DATABASE_URL="postgresql://USER:PASSWORD@YOUR-NEON-HOST/DB?sslmode=require"
+
+# WorkOS client id — JWT audience binding (was Secrets Manager /{project}/{stage}/workos)
+WORKOS_CLIENT_ID="client_REPLACE_ME"
+
+# ── Secrets (feature-dependent) ──────────────────────────────────────────────
+
+# WorkOS webhook signature secret (required for POST /v1/webhooks/workos)
+WORKOS_WEBHOOK_SECRET="REPLACE_ME"
+
+# Sentry error reporting; leave empty to disable locally
+SENTRY_DSN=""
+
+# Constant-time-compared key for GET /v1/test/api-key (src/node/routes/test.ts;
+# dev/staging only — the /v1/test/* sub-app 404s when STAGE=production)
+TEST_API_KEY=""
+
+# HMAC secret for POST /v1/test/webhook (src/node/routes/test.ts)
+WEBHOOK_SECRET=""
+
+# R2 S3-API credentials (lib/media.ts presigning/listing via aws4fetch).
+# Unset → media endpoints return a clear 503 MEDIA_STORAGE_NOT_CONFIGURED.
+# R2_BUCKET falls back to IMAGES_BUCKET (wrangler.toml [vars]).
+R2_ACCOUNT_ID=""
+R2_ACCESS_KEY_ID=""
+R2_SECRET_ACCESS_KEY=""
+# R2_BUCKET=""
+
+# ── Optional overrides ───────────────────────────────────────────────────────
+
+# JWT issuer override; defaults to https://api.workos.com/ (authorizers/verify-token.ts)
+# AUTH_ISSUER=""
+
+# Log threshold for src/node/lib/logger.ts: DEBUG | INFO | WARN | ERROR (default INFO).
+# POWERTOOLS_LOG_LEVEL is honored first for Lambda-era parity, then LOG_LEVEL.
+# LOG_LEVEL="DEBUG"
+
+# ── Not carried over from AWS (do not add) ──────────────────────────────────
+# ORIGIN_VERIFY_SECRET — deleted by construction: the Worker IS the edge, no origin to protect
+# WORKOS_SECRET_ARN / DB_SECRET_ARN / AWS_REGION — Secrets Manager is gone

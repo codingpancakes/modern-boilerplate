@@ -2,39 +2,46 @@ import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { flushAudits } from "../audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "../cors";
-import { Errors } from "../errors";
-import { verifyOriginHeader } from "../origin-verify";
+import { runWithDbScope } from "../db";
 import type { AppEnv } from "./types";
 
 /**
  * Hono middleware for the single shared app (`src/node/app.ts`).
  *
- * These port the cross-cutting behavior of the Lambda wrappers
- * (`lib/middleware.ts` withAuth / `lib/withPublicCors.ts`) onto Hono while
- * reusing the existing logic in `lib/cors.ts` and `lib/origin-verify.ts` —
- * nothing here duplicates an origin list or a header policy.
+ * These port the cross-cutting behavior of the old Lambda wrappers onto Hono
+ * while reusing the existing logic in `lib/cors.ts` — nothing here duplicates
+ * an origin list or a header policy.
  */
 
 /**
- * Assign a request id for error bodies and audit logs. On Lambda this is the
- * invocation's `awsRequestId` (what `formatError` received before); locally it
- * honors an incoming `x-request-id` or generates one.
+ * Assign a request id for error bodies and audit logs. On Cloudflare the
+ * `cf-ray` header is the platform's request id (searchable in Cloudflare
+ * logs); locally an incoming `x-request-id` is honored, else one is generated.
  */
 export const requestId = (): MiddlewareHandler<AppEnv> => async (c, next) => {
 	c.set(
 		"requestId",
-		c.env?.lambdaContext?.awsRequestId ??
-			c.req.header("x-request-id") ??
-			randomUUID(),
+		c.req.header("cf-ray") ?? c.req.header("x-request-id") ?? randomUUID(),
 	);
 	await next();
 };
 
 /**
- * Drain fire-and-forget `logAudit()` writes before the Lambda runtime can
- * freeze, even when a downstream handler throws — mirrors the `finally`
- * blocks in withAuth / withPublicCors. Must be mounted outermost (before
- * routing) so no handler can return without a flush.
+ * Give every request its own database lifecycle (see `runWithDbScope` in
+ * lib/db.ts): all `getDb()` calls during the request share one pool, drained
+ * when the request finishes. Required on Workers, where I/O objects must not
+ * be reused across requests. Must be mounted BEFORE `auditFlush()` so the
+ * audit drain still runs inside the scope.
+ */
+export const dbScope = (): MiddlewareHandler<AppEnv> => (_c, next) =>
+	runWithDbScope(() => next());
+
+/**
+ * Drain fire-and-forget `logAudit()` writes before the request finishes,
+ * even when a downstream handler throws — an un-awaited promise alone is not
+ * guaranteed to complete once the response is returned. Must run inside
+ * `dbScope()` (mounted after it) so the drained writes can still use the
+ * request's pool.
  */
 export const auditFlush = (): MiddlewareHandler<AppEnv> => async (_c, next) => {
 	try {
@@ -47,10 +54,10 @@ export const auditFlush = (): MiddlewareHandler<AppEnv> => async (_c, next) => {
 /**
  * Dynamic CORS + standard security headers.
  *
- * - OPTIONS preflight is answered here (parity with the old OPTIONS Lambda:
- *   method/header validation via `handleOptionsRequest`, no security headers).
+ * - OPTIONS preflight is answered here (method/header validation via
+ *   `handleOptionsRequest`, no security headers).
  * - All other responses get `securityHeaders(getCorsHeaders(origin))` applied
- *   last, overriding handler-set headers — the exact merge order the Lambda
+ *   last, overriding handler-set headers — the exact merge order the old
  *   wrappers used.
  */
 export const corsAndSecurityHeaders =
@@ -71,18 +78,4 @@ export const corsAndSecurityHeaders =
 		for (const [key, value] of Object.entries(headers)) {
 			c.res.headers.set(key, value);
 		}
-	};
-
-/**
- * Reject requests that did not arrive through CloudFront, reusing
- * `verifyOriginHeader` (including its skip conditions: local dev, or
- * ORIGIN_VERIFY_SECRET unset). Runs after CORS so preflight stays open,
- * matching withPublicCors ordering.
- */
-export const originVerify =
-	(): MiddlewareHandler<AppEnv> => async (c, next) => {
-		if (!verifyOriginHeader(c.req.header())) {
-			throw Errors.Forbidden();
-		}
-		await next();
 	};

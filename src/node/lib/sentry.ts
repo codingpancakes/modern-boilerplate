@@ -1,174 +1,192 @@
 /**
- * Sentry Error Tracking Integration
+ * Sentry Error Tracking Integration — platform-neutral, fetch-based.
  *
- * Captures and reports errors to Sentry for monitoring and alerting.
- * Automatically enriches errors with user context, request details, and environment info.
+ * The Node SDK (`@sentry/node`) does not run on Cloudflare Workers, so this
+ * module reports errors with a minimal Sentry envelope sent over plain
+ * `fetch` (available on Workers and Node 24 alike). Fully env-gated: with no
+ * SENTRY_DSN it degrades to a structured local log line; under NODE_ENV=test
+ * it is silent.
+ *
+ * Kept from the old SDK setup:
+ *  - the beforeSend filtering (drop routine 4xx REST client errors except
+ *    403/429; drop routine GraphQL client error codes)
+ *  - the exported surface used by callers: `captureException`, `flush`
+ *
+ * Deliberately NOT ported: ambient per-request scopes (`Sentry.setUser`,
+ * `setContext`). They relied on module-level mutable state, which on Workers
+ * is shared across CONCURRENT requests in one isolate — request context could
+ * leak between unrelated errors. Pass request-specific data through
+ * `captureException(error, context)` instead.
  */
 
-import { Logger } from "@aws-lambda-powertools/logger";
-import * as Sentry from "@sentry/node";
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
+import { createLogger } from "./logger";
 
-const logger = new Logger({ serviceName: "sentry" });
+const logger = createLogger({ serviceName: "sentry" });
 
-const SENTRY_DSN = process.env.SENTRY_DSN;
-const SENTRY_ENVIRONMENT =
-	process.env.SENTRY_ENVIRONMENT || process.env.STAGE || "development";
-const SENTRY_ENABLED = !!SENTRY_DSN && process.env.NODE_ENV !== "test";
+const SENTRY_CLIENT = "railbranch-fetch-shim/1.0.0";
 
 interface ErrorWithStatusCode extends Error {
 	statusCode?: number;
 }
 
-// Initialize Sentry
-if (SENTRY_ENABLED) {
-	const GRAPHQL_CLIENT_CODES = new Set([
-		"BAD_USER_INPUT",
-		"GRAPHQL_VALIDATION_FAILED",
-		"GRAPHQL_PARSE_FAILED",
-		"NOT_FOUND",
-		"CONFLICT",
-	]);
-
-	Sentry.init({
-		dsn: SENTRY_DSN,
-		environment: SENTRY_ENVIRONMENT,
-		tracesSampleRate: SENTRY_ENVIRONMENT === "production" ? 0.1 : 1.0,
-		beforeSend(event, hint) {
-			const error = hint.originalException;
-			if (error && typeof error === "object") {
-				// Drop routine REST client errors (keep 403 + 429)
-				if (
-					"statusCode" in error &&
-					typeof (error as ErrorWithStatusCode).statusCode === "number"
-				) {
-					const statusCode = (error as ErrorWithStatusCode).statusCode ?? 0;
-					if (
-						statusCode >= 400 &&
-						statusCode < 500 &&
-						statusCode !== 403 &&
-						statusCode !== 429
-					) {
-						return null;
-					}
-				}
-				// Drop routine GraphQL client errors (keep FORBIDDEN + UNAUTHENTICATED)
-				if ("extensions" in error) {
-					const code = (error as { extensions?: { code?: string } }).extensions
-						?.code;
-					if (code && GRAPHQL_CLIENT_CODES.has(code)) {
-						return null;
-					}
-				}
-			}
-			return event;
-		},
-	});
-}
-
-const SENSITIVE_QUERY_EXACT = new Set([
-	"token",
-	"key",
-	"secret",
-	"password",
-	"auth",
-	"api_key",
-	"apikey",
-	"access_token",
-	"refresh_token",
-	"session",
-	"code",
-	"credential",
-	"jwt",
-	"bearer",
-	"ssn",
-	"pin",
+const GRAPHQL_CLIENT_CODES = new Set([
+	"BAD_USER_INPUT",
+	"GRAPHQL_VALIDATION_FAILED",
+	"GRAPHQL_PARSE_FAILED",
+	"NOT_FOUND",
+	"CONFLICT",
 ]);
 
-const SENSITIVE_SUBSTRINGS = [
-	"token",
-	"secret",
-	"password",
-	"passwd",
-	"credential",
-	"api_key",
-	"apikey",
-	"auth",
-];
-
-function isSensitiveKey(key: string): boolean {
-	const lower = key.toLowerCase();
-	if (SENSITIVE_QUERY_EXACT.has(lower)) return true;
-	return SENSITIVE_SUBSTRINGS.some((sub) => lower.includes(sub));
+interface SentryEndpoint {
+	envelopeUrl: string;
+	authHeader: string;
 }
 
 /**
- * Set request context for error tracking
+ * Parse the DSN per call (env vars are populated per invocation on Workers).
+ * DSN shape: https://PUBLIC_KEY@HOST/PROJECT_ID
  */
-export function setRequestContext(event: APIGatewayProxyEventV2) {
-	if (!SENTRY_ENABLED) return;
+function getEndpoint(): SentryEndpoint | null {
+	const dsn = process.env.SENTRY_DSN;
+	if (!dsn || process.env.NODE_ENV === "test") return null;
 
-	Sentry.setContext("request", {
-		method: event.requestContext.http.method,
-		path: event.requestContext.http.path,
-		userAgent: event.requestContext.http.userAgent,
-		requestId: event.requestContext.requestId,
-	});
-
-	// Enrich with user/org from authorizer claims when available
-	const authCtx = (
-		event.requestContext as {
-			authorizer?: { lambda?: Record<string, string> };
-		}
-	).authorizer?.lambda;
-	if (authCtx?.sub) {
-		Sentry.setUser({
-			id: authCtx.sub,
-			email: authCtx.email || undefined,
-		});
-		if (authCtx.org_id) {
-			Sentry.setTag("org_id", authCtx.org_id);
-		}
+	let url: URL;
+	try {
+		url = new URL(dsn);
+	} catch {
+		logger.error("Invalid SENTRY_DSN; error reporting disabled");
+		return null;
 	}
-
-	// Add query parameters with sensitive values redacted
-	if (event.queryStringParameters) {
-		const filtered: Record<string, string> = {};
-		for (const [k, v] of Object.entries(event.queryStringParameters)) {
-			filtered[k] = isSensitiveKey(k) ? "[REDACTED]" : (v ?? "");
-		}
-		Sentry.setContext("query", filtered);
+	const projectId = url.pathname.replace(/\//g, "");
+	if (!url.username || !projectId) {
+		logger.error("Invalid SENTRY_DSN; error reporting disabled");
+		return null;
 	}
+	return {
+		envelopeUrl: `${url.protocol}//${url.host}/api/${projectId}/envelope/`,
+		authHeader: `Sentry sentry_version=7, sentry_client=${SENTRY_CLIENT}, sentry_key=${url.username}`,
+	};
+}
+
+function environment(): string {
+	return process.env.SENTRY_ENVIRONMENT || process.env.STAGE || "development";
 }
 
 /**
- * Capture exception manually
+ * Port of the SDK `beforeSend` filter: drop routine client errors so Sentry
+ * only alerts on real failures (keep 403 + 429 and auth-shaped GraphQL codes).
+ */
+function isRoutineClientError(error: Error): boolean {
+	const statusCode = (error as ErrorWithStatusCode).statusCode;
+	if (typeof statusCode === "number") {
+		if (
+			statusCode >= 400 &&
+			statusCode < 500 &&
+			statusCode !== 403 &&
+			statusCode !== 429
+		) {
+			return true;
+		}
+	}
+	if ("extensions" in error) {
+		const code = (error as { extensions?: { code?: string } }).extensions?.code;
+		if (code && GRAPHQL_CLIENT_CODES.has(code)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * In-flight envelope sends, drained by {@link flush}. Module-level is fine:
+ * draining another request's send is harmless (allSettled, never rejects).
+ */
+const pendingSends = new Set<Promise<void>>();
+
+function sendEnvelope(endpoint: SentryEndpoint, event: object): void {
+	const eventId = crypto.randomUUID().replace(/-/g, "");
+	const sentAt = new Date().toISOString();
+	const envelope = [
+		JSON.stringify({ event_id: eventId, sent_at: sentAt }),
+		JSON.stringify({ type: "event" }),
+		JSON.stringify({ event_id: eventId, ...event }),
+	].join("\n");
+
+	const send = fetch(endpoint.envelopeUrl, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/x-sentry-envelope",
+			"X-Sentry-Auth": endpoint.authHeader,
+		},
+		body: envelope,
+	}).then(
+		(response) => {
+			if (!response.ok) {
+				logger.warn("Sentry rejected error envelope", {
+					status: response.status,
+				});
+			}
+		},
+		(error: unknown) => {
+			logger.warn("Failed to send error to Sentry", {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		},
+	);
+	pendingSends.add(send);
+	void send.finally(() => pendingSends.delete(send));
+}
+
+/**
+ * Capture exception manually. `context` lands under `extra.additional` in
+ * the Sentry event (the replacement for the old per-request scope).
  */
 export function captureException(
 	error: Error,
 	context?: Record<string, unknown>,
-) {
-	if (!SENTRY_ENABLED) {
-		logger.error("Sentry not enabled, logging error locally", {
-			error: error.message,
-		});
+): void {
+	if (process.env.NODE_ENV === "test") return;
+
+	const endpoint = getEndpoint();
+	if (!endpoint) {
+		if (!process.env.SENTRY_DSN) {
+			logger.error("Sentry not enabled, logging error locally", {
+				error: error.message,
+			});
+		}
 		return;
 	}
 
-	Sentry.withScope((scope) => {
-		if (context) {
-			scope.setContext("additional", context);
-		}
-		Sentry.captureException(error);
+	if (isRoutineClientError(error)) return;
+
+	sendEnvelope(endpoint, {
+		timestamp: Date.now() / 1000,
+		platform: "javascript",
+		level: "error",
+		environment: environment(),
+		exception: {
+			values: [
+				{
+					type: error.name || "Error",
+					value: error.message,
+				},
+			],
+		},
+		extra: {
+			// Raw stack string — frame parsing is a TODO; the stack is fully
+			// visible in the Sentry UI under "Additional Data".
+			stack: error.stack,
+			...(context ? { additional: context } : {}),
+		},
 	});
 }
 
 /**
- * Flush Sentry events (call before Lambda exits)
+ * Await in-flight error reports (call before the invocation ends so sends
+ * are not cancelled with the request context). Never rejects.
  */
 export async function flush(): Promise<boolean> {
-	if (!SENTRY_ENABLED) return true;
-	return Sentry.flush(2000); // 2 second timeout
+	if (pendingSends.size === 0) return true;
+	await Promise.allSettled([...pendingSends]);
+	return true;
 }
-
-export { Sentry };

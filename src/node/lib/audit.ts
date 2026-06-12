@@ -1,5 +1,3 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { lt } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
@@ -12,6 +10,7 @@ import {
 } from "../db/schema";
 import { getDb } from "./db";
 import { errorMessage, toError } from "./error-utils";
+import { createLogger } from "./logger";
 import { captureException } from "./sentry";
 
 /**
@@ -21,17 +20,18 @@ import { captureException } from "./sentry";
  */
 export const AUDIT_RETENTION_YEARS = 7;
 
-const logger = new Logger({ serviceName: "audit" });
+const logger = createLogger({ serviceName: "audit" });
 
 /**
  * Emit an `AuditWriteFailure` count metric so a sustained DB outage holing the
  * compliance trail pages someone instead of only leaving log lines behind.
  *
- * Uses the CloudWatch Embedded Metric Format (EMF) written straight to stdout —
- * Lambda's log pipeline turns it into a real metric with no SDK call, no extra
- * dependency, and no added latency on the (already fire-and-forget) audit path.
- * Deliberately isolated in this one function so the Workers migration can swap
- * the body for an Analytics Engine write (or similar) without touching callers.
+ * The body is the CloudWatch Embedded Metric Format (EMF) JSON written to
+ * stdout. On Workers there is no EMF pipeline, so this degrades to a
+ * structured log line that Workers Logs / Logpush queries can count on
+ * (`_aws.CloudWatchMetrics[0].Metrics[0].Name == "AuditWriteFailure"`).
+ * Deliberately isolated in this one function so it can be swapped for an
+ * Analytics Engine write (or similar) without touching callers.
  */
 function emitAuditWriteFailureMetric(): void {
 	const namespace = process.env.PROJECT_NAME || "local-dev";
@@ -172,21 +172,22 @@ function redactMetadata(
 }
 
 /**
- * In-flight audit writes for the current Lambda invocation.
+ * In-flight audit writes.
  *
  * Audit logging is intentionally called fire-and-forget (`void logAudit(...)`)
- * so it never blocks the request hot path. But on AWS Lambda a detached promise
- * is NOT guaranteed to finish: once the handler's returned promise resolves the
- * execution environment is frozen, and an in-flight DB write can be dropped —
- * unacceptable for an immutable, compliance-grade audit trail.
+ * so it never blocks the request hot path. But a detached promise is NOT
+ * guaranteed to finish once the response is returned (the Workers runtime can
+ * cancel work outliving its request) — unacceptable for an immutable,
+ * compliance-grade audit trail.
  *
- * So every `logAudit` registers its write here, and the request wrappers
- * (`withAuth`, `withPublicCors`, the GraphQL handler) call {@link flushAudits}
- * before returning. The hot path still never awaits an individual write; we just
- * drain whatever is outstanding at the very end, before the runtime can freeze.
+ * So every `logAudit` registers its write here, and the `auditFlush()`
+ * middleware (lib/hono/middleware.ts) calls {@link flushAudits} before the
+ * request finishes. The hot path still never awaits an individual write; we
+ * just drain whatever is outstanding at the very end.
  *
- * Lambda processes one event per container at a time, so this module-level set
- * never mixes audits from concurrent requests.
+ * On Workers, CONCURRENT requests share this module-level set, so a flush may
+ * also drain another request's writes — harmless (allSettled, never rejects),
+ * it only means a request occasionally waits on a neighbor's audit insert.
  */
 const pendingAudits = new Set<Promise<void>>();
 
@@ -211,7 +212,7 @@ export async function flushAudits(): Promise<void> {
  *   resourceType: AUDIT_RESOURCE_TYPES.USER,
  *   resourceId: newUser.id,
  *   changes: { after: newUser },
- *   ipAddress: event.requestContext?.http?.sourceIp,
+ *   ipAddress: c.req.header("cf-connecting-ip"),
  *   status: AUDIT_STATUS.SUCCESS,
  * });
  * ```
@@ -246,7 +247,7 @@ async function persistAudit(entry: AuditLogEntry): Promise<void> {
 		});
 	} catch (error) {
 		// Don't throw — audit logging should never break the main flow.
-		// Log the full entry to CloudWatch as fallback so it can be backfilled.
+		// Log the full entry as fallback so it can be backfilled from logs.
 		// Mirror every persisted column (changes still redacted) so a log-based
 		// replay can fully reconstruct the row after a DB outage.
 		const auditEntry = {
@@ -269,7 +270,7 @@ async function persistAudit(entry: AuditLogEntry): Promise<void> {
 			// Silently swallow — no DB in unit tests
 		} else {
 			emitAuditWriteFailureMetric();
-			logger.error("Failed to log audit event — fallback to CloudWatch", {
+			logger.error("Failed to log audit event — falling back to log line", {
 				error: errorMessage(error),
 				auditEntry,
 			});
@@ -279,13 +280,34 @@ async function persistAudit(entry: AuditLogEntry): Promise<void> {
 }
 
 /**
- * Extract request context from API Gateway V2 event
+ * Source-agnostic request descriptor for audit context — built from whatever
+ * carried the request (Hono context, webhook payload, test fixture).
  */
-export function extractRequestContext(event: APIGatewayProxyEventV2) {
+export interface RequestContextSource {
+	requestId?: string;
+	sourceIp?: string;
+	userAgent?: string;
+}
+
+/**
+ * Map a request descriptor onto audit-entry fields. Spread into `logAudit`:
+ *
+ * ```typescript
+ * void logAudit({
+ *   ...,
+ *   ...extractRequestContext({
+ *     requestId: c.get("requestId"),
+ *     sourceIp: c.req.header("cf-connecting-ip"),
+ *     userAgent: c.req.header("user-agent"),
+ *   }),
+ * });
+ * ```
+ */
+export function extractRequestContext(source: RequestContextSource) {
 	return {
-		ipAddress: event.requestContext?.http?.sourceIp,
-		userAgent: event.headers?.["user-agent"],
-		requestId: event.requestContext?.requestId,
+		ipAddress: source.sourceIp,
+		userAgent: source.userAgent,
+		requestId: source.requestId,
 	};
 }
 

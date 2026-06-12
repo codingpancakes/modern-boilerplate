@@ -1,6 +1,6 @@
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import DataLoader from "dataloader";
 import { and, eq, inArray } from "drizzle-orm";
+import type { Context } from "hono";
 import {
 	organizationMembers,
 	organizations,
@@ -8,8 +8,9 @@ import {
 	users,
 } from "../../db/schema/index";
 import type { AuditContext } from "../../lib/audit";
-import { getClaims, getUserIdFromClaims } from "../../lib/auth";
+import { getUserIdFromClaims } from "../../lib/auth";
 import { getDb } from "../../lib/db";
+import type { AppEnv } from "../../lib/hono/types";
 
 export interface GraphQLContext extends AuditContext {
 	userId: string;
@@ -114,34 +115,42 @@ export function createLoaders(db: Awaited<ReturnType<typeof getDb>>) {
 	};
 }
 
-export async function createContext({
-	event,
-}: {
-	event: APIGatewayProxyEventV2;
-}): Promise<GraphQLContext> {
-	const claims = getClaims(event);
-	const userId = await getUserIdFromClaims(event);
-	const db = await getDb();
-
-	const organizationId = (claims.org_id as string) || undefined;
-	const requestId = event.requestContext.requestId;
-	const ipAddress = event.requestContext?.http?.sourceIp;
-	const userAgent = event.headers?.["user-agent"];
-	const sub = claims.sub;
+/**
+ * Build the per-request GraphQL context from the Hono context. Claims are set
+ * by `requireAuth()` (applied to `/v1/graphql/*` in the route barrel), so this
+ * never re-parses tokens — same trust boundary as every REST route.
+ * DataLoaders are created fresh per request: batching/dedup never crosses a
+ * request boundary (also a Workers requirement — no I/O reuse across
+ * requests).
+ */
+export async function createContext(
+	c: Context<AppEnv>,
+): Promise<GraphQLContext> {
+	const claims = c.get("claims");
+	const sub = claims?.sub;
 	if (typeof sub !== "string" || sub.length === 0) {
 		throw new Error("JWT missing required 'sub' claim");
 	}
 
+	// Internal user id lookup + JIT provisioning (shared with REST routes).
+	const userId = await getUserIdFromClaims(claims);
+	const db = await getDb();
+
 	return {
 		userId,
-		organizationId,
-		role: (claims.role as string) || "VIEWER",
-		email: (claims.email as string) || "",
+		organizationId: claims.org_id || undefined,
+		role: claims.role || "VIEWER",
+		email: claims.email || "",
 		providerSubject: sub,
 		claims,
-		requestId,
-		ipAddress,
-		userAgent,
+		requestId: c.get("requestId"),
+		// CF-Connecting-IP is set by Cloudflare (and simulated by wrangler dev);
+		// fall back to X-Forwarded-For's first hop — replaces the API Gateway
+		// `requestContext.http.sourceIp`.
+		ipAddress:
+			c.req.header("cf-connecting-ip") ??
+			c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),
+		userAgent: c.req.header("user-agent"),
 		db,
 		loaders: createLoaders(db),
 	};

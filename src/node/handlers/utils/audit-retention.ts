@@ -1,18 +1,18 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { ScheduledHandler } from "aws-lambda";
+// Cron Trigger job — dispatched via the registry in src/node/cron.ts
+// ("0 5 * * *" in wrangler.toml [triggers]).
 import { cleanupExpiredAuditLogs } from "../../lib/audit";
 import { errorMessage } from "../../lib/error-utils";
+import { createLogger } from "../../lib/logger";
 
-const logger = new Logger({ serviceName: "audit-retention" });
+const logger = createLogger({ serviceName: "audit-retention" });
 
 /**
- * Scheduled job that prunes audit logs past the SOC 2 retention window.
+ * Daily job that prunes audit logs past the SOC 2 retention window.
  * Deletion of in-window rows is blocked by the `audit_logs_guard` DB trigger,
- * so this job can only ever remove genuinely expired entries.
+ * so this job can only ever remove genuinely expired entries. Throws on
+ * failure so the platform records a failed cron invocation.
  */
-export const handler: ScheduledHandler = async (_event, context) => {
-	logger.addContext(context);
-
+export async function runAuditRetention(): Promise<void> {
 	try {
 		logger.info("Starting audit log retention cleanup");
 
@@ -25,4 +25,4 @@ export const handler: ScheduledHandler = async (_event, context) => {
 		});
 		throw error;
 	}
-};
+}

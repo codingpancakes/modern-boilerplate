@@ -6,7 +6,7 @@
 set -e
 
 JWT_TOKEN=$1
-API_URL=${API_URL:-http://localhost:3000}
+API_URL=${API_URL:-http://localhost:8787}
 
 if [ -z "$JWT_TOKEN" ]; then
   echo "❌ Error: JWT token required"

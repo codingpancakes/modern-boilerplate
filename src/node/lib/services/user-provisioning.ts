@@ -1,4 +1,3 @@
-import { Logger } from "@aws-lambda-powertools/logger";
 import { and, eq } from "drizzle-orm";
 import {
 	authIdentities,
@@ -14,12 +13,13 @@ import {
 	logAudit,
 } from "../audit";
 import type { DbInstance } from "../db";
+import { createLogger } from "../logger";
 import {
 	isWorkOSAuthFailure,
 	type WorkOSAuthData,
 } from "../validation/webhooks";
 
-const logger = new Logger({ serviceName: "user-provisioning" });
+const logger = createLogger({ serviceName: "user-provisioning" });
 
 interface WorkOSUserData {
 	id: string;

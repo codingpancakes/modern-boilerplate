@@ -17,19 +17,15 @@ import type { AppEnv, AuthClaims } from "./types";
 /**
  * Auth middleware for the shared Hono app.
  *
- * On Lambda, claims come ONLY from the API Gateway Lambda authorizer
- * (`event.requestContext.authorizer.lambda`) — the same invariant as
- * `authorizers/workos-jwt.ts` + `lib/middleware.ts` withAuth: no JWT
- * re-parsing fallback in deployed environments.
+ * The bearer token is verified directly with the SHARED verifier
+ * (`authorizers/verify-token.ts`) — the single source of auth trust, exactly
+ * the validation contract the old API Gateway Lambda authorizer enforced
+ * (RS256 + issuer + sub + client_id binding). There is no other claims path:
+ * the Worker IS the edge, so no upstream authorizer context exists.
  *
- * In local dev (`@hono/node-server`, no API Gateway in the loop) there is no
- * authorizer context, so the bearer token is verified directly with the
- * SHARED verifier (`authorizers/verify-token.ts`) and the resulting claims
- * are stringified exactly like the deployed authorizer's context, so handlers
- * see one claim shape everywhere.
+ * Resulting claims are stringified like the old authorizer context, so
+ * handlers see one claim shape everywhere (`AuthClaims` in ./types).
  */
-
-const CLIENT_ID = process.env.WORKOS_CLIENT_ID || "";
 
 /**
  * Byte-compatible with the legacy withAuth 401 body, which says
@@ -38,28 +34,15 @@ const CLIENT_ID = process.env.WORKOS_CLIENT_ID || "";
  */
 const unauthorized = () => new ApiError(401, "UNAUTHORIZED", "Unauthorized");
 
-// HTTP API simple authorizers return all context values as strings, so
-// exp/iat arrive as e.g. "1711385600" or "" — accept both types (same check
-// as lib/middleware.ts).
-const isNumericish = (v: unknown): boolean =>
-	v === undefined ||
-	v === "" ||
-	typeof v === "number" ||
-	(typeof v === "string" && /^\d+$/.test(v));
+/**
+ * JWKS key sets are cached per client id. Safe to share across requests on
+ * Workers: jose caches fetched KEYS (plain data / CryptoKey objects), not a
+ * live socket — the JWKS HTTP fetch itself happens lazily inside whichever
+ * request triggers it.
+ */
+let jwksCache: { clientId: string; jwks: JWTVerifyGetKey } | undefined;
 
-function getRecord(
-	value: unknown,
-	key: string,
-): Record<string, unknown> | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const inner = (value as Record<string, unknown>)[key];
-	if (typeof inner !== "object" || inner === null) return undefined;
-	return inner as Record<string, unknown>;
-}
-
-let jwks: JWTVerifyGetKey | undefined;
-
-async function verifyLocalToken(
+async function verifyBearerToken(
 	authHeader: string | undefined,
 ): Promise<AuthClaims> {
 	const token = authHeader?.startsWith("Bearer ")
@@ -67,10 +50,16 @@ async function verifyLocalToken(
 		: "";
 	if (!token) throw unauthorized();
 
-	jwks ??= createWorkosJwks(CLIENT_ID);
+	// Read per request, not at module init: on Workers, env vars/secrets are
+	// populated per invocation by nodejs_compat.
+	const clientId = process.env.WORKOS_CLIENT_ID || "";
+	if (!jwksCache || jwksCache.clientId !== clientId) {
+		jwksCache = { clientId, jwks: createWorkosJwks(clientId) };
+	}
+
 	let claims: WorkosTokenClaims;
 	try {
-		claims = await verifyWorkosToken(token, jwks, { clientId: CLIENT_ID });
+		claims = await verifyWorkosToken(token, jwksCache.jwks, { clientId });
 	} catch {
 		throw unauthorized();
 	}
@@ -78,8 +67,9 @@ async function verifyLocalToken(
 }
 
 /**
- * Mirror the string-only context the deployed authorizer builds
- * (`authorizers/workos-jwt.ts`), including `urn:*` custom-claim forwarding.
+ * Mirror the string-only context the old deployed Lambda authorizer built,
+ * including `urn:*` custom-claim forwarding, so the claim shape handlers see
+ * is unchanged by the platform move.
  */
 function toAuthorizerContext(payload: WorkosTokenClaims): AuthClaims {
 	const payloadData: Record<string, unknown> = payload;
@@ -105,55 +95,28 @@ function toAuthorizerContext(payload: WorkosTokenClaims): AuthClaims {
 
 /**
  * Require an authenticated caller; sets `c.get("claims")` on success and
- * throws a 401 ApiError otherwise. Applied per-domain in `routes/index.ts`
- * (the Hono equivalent of attaching the API Gateway authorizer to a route).
+ * throws a 401 ApiError otherwise. Applied per-domain in `routes/index.ts`.
  */
 export const requireAuth = (): MiddlewareHandler<AppEnv> => async (c, next) => {
-	const event = c.env?.event;
-
-	if (event) {
-		const requestContext = getRecord(event, "requestContext");
-		const lambdaCtx = getRecord(
-			getRecord(requestContext, "authorizer"),
-			"lambda",
-		);
-
-		const claimsValid =
-			lambdaCtx !== undefined &&
-			typeof lambdaCtx.sub === "string" &&
-			lambdaCtx.sub.length > 0 &&
-			isNumericish(lambdaCtx.exp) &&
-			isNumericish(lambdaCtx.iat);
-
-		if (!lambdaCtx || !claimsValid) {
-			const http = getRecord(requestContext, "http");
-			// Fire-and-forget — never block the 401 response (drained by the
-			// auditFlush middleware before the runtime can freeze).
-			void logAudit({
-				action: AUDIT_ACTIONS.ACCESS_DENIED,
-				resourceType: AUDIT_RESOURCE_TYPES.USER,
-				status: AUDIT_STATUS.FAILURE,
-				ipAddress:
-					typeof http?.sourceIp === "string" ? http.sourceIp : undefined,
-				userAgent: c.req.header("user-agent"),
-				requestId:
-					typeof requestContext?.requestId === "string"
-						? requestContext.requestId
-						: c.get("requestId"),
-				metadata: {
-					reason: "missing_claims",
-					path: c.req.path,
-					method: c.req.method,
-				},
-			});
-			throw unauthorized();
-		}
-
-		c.set("claims", lambdaCtx as AuthClaims);
-	} else {
-		// Local dev only — there is no API Gateway event at all. On Lambda the
-		// branch above always runs, so this can never bypass the authorizer.
-		c.set("claims", await verifyLocalToken(c.req.header("authorization")));
+	try {
+		c.set("claims", await verifyBearerToken(c.req.header("authorization")));
+	} catch (error) {
+		// Fire-and-forget — never block the 401 response (drained by the
+		// auditFlush middleware before the request finishes).
+		void logAudit({
+			action: AUDIT_ACTIONS.ACCESS_DENIED,
+			resourceType: AUDIT_RESOURCE_TYPES.USER,
+			status: AUDIT_STATUS.FAILURE,
+			ipAddress: c.req.header("cf-connecting-ip"),
+			userAgent: c.req.header("user-agent"),
+			requestId: c.get("requestId"),
+			metadata: {
+				reason: "invalid_token",
+				path: c.req.path,
+				method: c.req.method,
+			},
+		});
+		throw error;
 	}
 
 	await next();

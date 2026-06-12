@@ -1,9 +1,4 @@
 import { createHmac } from "node:crypto";
-import { Logger } from "@aws-lambda-powertools/logger";
-import {
-	GetSecretValueCommand,
-	SecretsManagerClient,
-} from "@aws-sdk/client-secrets-manager";
 import { and, eq, lt, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { idempotencyKeys } from "../db/schema/index";
@@ -13,6 +8,7 @@ import { errorMessage } from "../lib/error-utils";
 import { Errors } from "../lib/errors";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
+import { createLogger } from "../lib/logger";
 import {
 	deleteOrgFromWorkOS,
 	deleteUserFromWorkOS,
@@ -32,17 +28,7 @@ import {
  * /v1/webhooks/* — webhook routes (public; each webhook verifies its own
  * signature/HMAC inside the handler, never via `requireAuth()`).
  *
- * Ported from the Lambda handler (now a thin re-export of the shared app
- * handler). The @swagger block stays in the entry file because
- * `scripts/generate-openapi.js` only globs `src/node/handlers/**`:
- *   POST /workos ← src/node/handlers/webhooks/workos.ts (API GW: POST /v1/webhooks/workos)
- *
- * NOT ported here:
- *   - handlers/test/webhook.ts / api-key.ts — local-dev-only diagnostics
- *     with NO API Gateway route. Their paths (/v1/test/*) fall outside this
- *     sub-app's /v1/webhooks mount, so they stay standalone Lambda handlers
- *     consumed by `local-dev/server.ts` until that shim is deleted
- *     (MIGRATION_PLAN Phase 1) or the barrel grows a /v1/test mount.
+ *   POST /workos — WorkOS user/org lifecycle events
  *
  * Signature verification MUST run against the raw request body string
  * (`c.req.text()`) — never a re-serialized JSON.parse/stringify round-trip,
@@ -50,47 +36,21 @@ import {
  */
 export const webhooks = new Hono<AppEnv>();
 
-const logger = new Logger({ serviceName: "workos-webhook" });
+const logger = createLogger({ serviceName: "workos-webhook" });
 
 // WorkOS webhook data types are validated via Zod in validation/webhooks.ts
 
-let _cachedWebhookSecret: string | null = null;
-let _secretCachedAt = 0;
-const SECRET_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-async function getWebhookSecret(): Promise<string> {
-	if (process.env.WORKOS_WEBHOOK_SECRET) {
-		return process.env.WORKOS_WEBHOOK_SECRET;
+/**
+ * WORKOS_WEBHOOK_SECRET env only (wrangler secret / .dev.vars) — read per
+ * request, never cached at module init. Missing config is a server error
+ * (500), not a 401: the request isn't unauthorized, we are misconfigured.
+ */
+function getWebhookSecret(): string {
+	const secret = process.env.WORKOS_WEBHOOK_SECRET;
+	if (!secret) {
+		throw new Error("WORKOS_WEBHOOK_SECRET is not configured");
 	}
-
-	if (_cachedWebhookSecret && Date.now() - _secretCachedAt < SECRET_TTL_MS) {
-		return _cachedWebhookSecret;
-	}
-
-	const client = new SecretsManagerClient({ region: process.env.AWS_REGION });
-	const command = new GetSecretValueCommand({
-		SecretId: process.env.WORKOS_SECRET_ARN,
-	});
-
-	const response = await client.send(command);
-	if (!response.SecretString) {
-		throw new Error("Failed to retrieve webhook secret");
-	}
-
-	const secret: unknown = JSON.parse(response.SecretString);
-	if (
-		typeof secret !== "object" ||
-		secret === null ||
-		typeof (secret as Record<string, unknown>).webhookSecret !== "string"
-	) {
-		throw new Error(
-			"Webhook secret JSON missing required 'webhookSecret' string field",
-		);
-	}
-
-	_cachedWebhookSecret = (secret as Record<string, string>).webhookSecret;
-	_secretCachedAt = Date.now();
-	return _cachedWebhookSecret;
+	return secret;
 }
 
 // Reject webhook payloads older than 5 minutes to prevent replay attacks
@@ -138,6 +98,67 @@ function verifySignature(
 	);
 }
 
+/**
+ * @swagger
+ * /v1/webhooks/workos:
+ *   post:
+ *     tags: [Webhooks]
+ *     summary: WorkOS webhook handler
+ *     description: |
+ *       Handles WorkOS webhook events for user and organization lifecycle management.
+ *       Verifies webhook signature and processes events idempotently.
+ *
+ *       **Supported Events:**
+ *       - `user.created` - Creates new user and auth identity
+ *       - `user.updated` - Updates existing user data
+ *       - `user.deleted` - Removes user and auth identity
+ *       - `organization.created` - Creates new organization
+ *       - `organization.updated` - Updates organization data
+ *       - `organization.deleted` - Removes organization
+ *
+ *       **Security:** Requires valid WorkOS webhook signature in headers.
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               id:
+ *                 type: string
+ *                 description: Unique event ID
+ *                 example: "evt_01H1234567890ABCDEFGHIJK"
+ *               event:
+ *                 type: string
+ *                 description: Event type
+ *                 enum: [user.created, user.updated, user.deleted, organization.created, organization.updated, organization.deleted]
+ *                 example: "user.created"
+ *               data:
+ *                 type: object
+ *                 description: Event payload (varies by event type)
+ *     responses:
+ *       200:
+ *         description: Webhook processed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     status:
+ *                       type: string
+ *                       enum: [processed, already_processed]
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         $ref: '#/components/responses/ServerError'
+ */
 webhooks.post("/workos", async (c) => {
 	// Tracked across the try/catch so a failed attempt releases its idempotency
 	// lock (status -> "failed") and WorkOS's retry can re-run the event instead
@@ -168,7 +189,7 @@ webhooks.post("/workos", async (c) => {
 		}
 
 		// Verify signature
-		const secret = await getWebhookSecret();
+		const secret = getWebhookSecret();
 		if (!verifySignature(payload, signature, secret)) {
 			logger.error("Invalid webhook signature");
 			throw Errors.Unauthorized();

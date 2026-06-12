@@ -1,7 +1,7 @@
-import { Logger } from "@aws-lambda-powertools/logger";
 import { errorMessage } from "./error-utils";
+import { createLogger } from "./logger";
 
-const logger = new Logger({ serviceName: "api" });
+const logger = createLogger({ serviceName: "api" });
 
 const isDeployed =
 	process.env.NODE_ENV === "production" || process.env.NODE_ENV === "staging";

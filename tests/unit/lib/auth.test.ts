@@ -1,26 +1,24 @@
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { describe, expect, it } from "vitest";
-import { getClaims } from "@/lib/auth";
+import { type ClaimsLike, getClaims } from "@/lib/auth";
 
+/**
+ * getClaims normalizes the verified claims object set by `requireAuth()`
+ * (`c.get("claims")`) into the canonical `Claims` shape. It is the single
+ * choke point between token verification and user lookup — these tests
+ * guard that no unverified/garbage shape sneaks through (invariant #10:
+ * auth comes only from the shared verifier, never re-parsed locally).
+ */
 describe("Auth Helpers - Claims Extraction", () => {
 	describe("getClaims", () => {
-		it("should extract claims from lambda authorizer context", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						lambda: {
-							sub: "user_01abc123",
-							email: "test@example.com",
-							org_id: "org_456",
-							iss: "https://api.workos.com",
-							exp: 1234567890,
-							iat: 1234567890,
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			const claims = getClaims(event);
+		it("should extract claims from a verified claims object", () => {
+			const claims = getClaims({
+				sub: "user_01abc123",
+				email: "test@example.com",
+				org_id: "org_456",
+				iss: "https://api.workos.com",
+				exp: 1234567890,
+				iat: 1234567890,
+			});
 
 			expect(claims.sub).toBe("user_01abc123");
 			expect(claims.email).toBe("test@example.com");
@@ -29,114 +27,66 @@ describe("Auth Helpers - Claims Extraction", () => {
 		});
 
 		it("should return sub as user ID", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						lambda: {
-							sub: "user_01abc123",
-							iss: "https://api.workos.com",
-							exp: 1234567890,
-							iat: 1234567890,
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			const claims = getClaims(event);
+			const claims = getClaims({
+				sub: "user_01abc123",
+				iss: "https://api.workos.com",
+				exp: 1234567890,
+				iat: 1234567890,
+			});
 			expect(claims.sub).toBe("user_01abc123");
 		});
 
 		it("should return org_id when present", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						lambda: {
-							sub: "user_01abc123",
-							org_id: "org_456",
-							iss: "https://api.workos.com",
-							exp: 1234567890,
-							iat: 1234567890,
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			const claims = getClaims(event);
+			const claims = getClaims({
+				sub: "user_01abc123",
+				org_id: "org_456",
+				iss: "https://api.workos.com",
+				exp: 1234567890,
+				iat: 1234567890,
+			});
 			expect(claims.org_id).toBe("org_456");
 		});
 
 		it("should return undefined org_id when not present", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						lambda: {
-							sub: "user_01abc123",
-							iss: "https://api.workos.com",
-							exp: 1234567890,
-							iat: 1234567890,
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			const claims = getClaims(event);
+			const claims = getClaims({
+				sub: "user_01abc123",
+				iss: "https://api.workos.com",
+				exp: 1234567890,
+				iat: 1234567890,
+			});
 			expect(claims.org_id).toBeUndefined();
 		});
 
-		it("reads only authorizer.lambda, ignoring any jwt block (invariant #10)", () => {
-			// Production uses a custom Lambda authorizer (SIMPLE) → claims live under
-			// `authorizer.lambda`. Guard against reintroducing a `jwt` fallback: even
-			// if a `jwt` block is present, lambda must be the single source of trust.
-			const event = {
-				requestContext: {
-					authorizer: {
-						jwt: { claims: { sub: "spoofed_via_jwt" } },
-						lambda: {
-							sub: "user_real",
-							iss: "https://api.workos.com",
-							exp: 1234567890,
-							iat: 1234567890,
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			const claims = getClaims(event);
-			expect(claims.sub).toBe("user_real");
+		it("normalizes string exp/iat to numbers (JWT claims may arrive stringly)", () => {
+			const claims = getClaims({
+				sub: "user_01abc123",
+				iss: "https://api.workos.com",
+				exp: "1234567890",
+				iat: "1234567891",
+			});
+			expect(claims.exp).toBe(1234567890);
+			expect(claims.iat).toBe(1234567891);
 		});
 
-		it("throws when only a jwt block is present (no lambda context)", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						jwt: { claims: { sub: "user_01abc123" } },
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			expect(() => getClaims(event)).toThrow();
+		it("defaults iss to empty string and exp/iat to 0 when absent", () => {
+			const claims = getClaims({ sub: "user_01abc123" });
+			expect(claims.iss).toBe("");
+			expect(claims.exp).toBe(0);
+			expect(claims.iat).toBe(0);
 		});
 
 		it("should throw Unauthorized if sub is missing", () => {
-			const event = {
-				requestContext: {
-					authorizer: {
-						lambda: {
-							email: "test@example.com",
-						},
-					},
-				},
-			} as unknown as APIGatewayProxyEventV2;
-
-			expect(() => getClaims(event)).toThrow();
+			expect(() =>
+				getClaims({ email: "test@example.com" } as unknown as ClaimsLike),
+			).toThrow();
 		});
 
-		it("should throw Unauthorized if no claims exist", () => {
-			const event = {
-				requestContext: {},
-			} as unknown as APIGatewayProxyEventV2;
+		it("should throw Unauthorized if sub is not a string", () => {
+			expect(() => getClaims({ sub: 42 } as unknown as ClaimsLike)).toThrow();
+		});
 
-			expect(() => getClaims(event)).toThrow();
+		it("should throw Unauthorized for an empty claims object", () => {
+			expect(() => getClaims({} as unknown as ClaimsLike)).toThrow();
 		});
 	});
 });

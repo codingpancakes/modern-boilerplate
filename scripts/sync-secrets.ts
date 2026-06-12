@@ -1,240 +1,110 @@
 #!/usr/bin/env tsx
 /**
- * Sync environment variables from .env files to AWS Secrets Manager
- * 
+ * Push secrets to Cloudflare Workers via `wrangler secret put`.
+ *
+ * The secret NAMES come from `.dev.vars.example` (the single checked-in
+ * registry of every secret the Worker reads); the VALUES come from the
+ * stage's env file (`.env.staging` / `.env.production`, both gitignored).
+ *
  * Usage:
  *   pnpm sync-secrets staging
  *   pnpm sync-secrets production
+ *
+ * Values are piped to wrangler over stdin so they never appear in argv,
+ * `ps` output, or this script's logs. Non-secret config lives in
+ * wrangler.toml [vars] and is deployed with the Worker, not synced here.
  */
 
-import { execSync } from 'node:child_process';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
+import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 
 const stage = process.argv[2];
 
-if (!stage || !['staging', 'production'].includes(stage)) {
-  console.error('❌ Usage: pnpm run sync-secrets <staging|production>');
-  process.exit(1);
+if (!stage || !["staging", "production"].includes(stage)) {
+	console.error("❌ Usage: pnpm sync-secrets <staging|production>");
+	process.exit(1);
+}
+
+/** Parse KEY=VALUE lines (ignoring comments/blanks) from an env-style file. */
+function parseEnvFile(filePath: string): Record<string, string> {
+	const vars: Record<string, string> = {};
+	for (const rawLine of fs.readFileSync(filePath, "utf-8").split("\n")) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		const eq = line.indexOf("=");
+		if (eq <= 0) continue;
+		const key = line.slice(0, eq).trim();
+		let value = line.slice(eq + 1).trim();
+		// Strip a single layer of surrounding quotes
+		if (
+			(value.startsWith('"') && value.endsWith('"')) ||
+			(value.startsWith("'") && value.endsWith("'"))
+		) {
+			value = value.slice(1, -1);
+		}
+		vars[key] = value;
+	}
+	return vars;
+}
+
+const exampleFile = path.join(process.cwd(), ".dev.vars.example");
+if (!fs.existsSync(exampleFile)) {
+	console.error("❌ .dev.vars.example not found — it is the secret registry");
+	process.exit(1);
 }
 
 const envFile = path.join(process.cwd(), `.env.${stage}`);
-
 if (!fs.existsSync(envFile)) {
-  console.error(`❌ File not found: ${envFile}`);
-  process.exit(1);
+	console.error(`❌ File not found: ${envFile}`);
+	process.exit(1);
 }
 
-console.log(`🔄 Syncing ${stage} environment variables to AWS Secrets Manager...\n`);
+// Every uncommented KEY in .dev.vars.example is a secret the Worker may read.
+const secretNames = Object.keys(parseEnvFile(exampleFile));
+const values = parseEnvFile(envFile);
 
-// Load .env file
-const envContent = fs.readFileSync(envFile, 'utf-8');
-const envVars: Record<string, string> = {};
+console.log(
+	`🔄 Syncing ${secretNames.length} secret(s) to Cloudflare (--env ${stage})...\n`,
+);
 
-envContent.split('\n').forEach((line) => {
-  line = line.trim();
-  
-  // Skip comments and empty lines
-  if (!line || line.startsWith('#')) return;
-  
-  const [key, ...valueParts] = line.split('=');
-  if (key && valueParts.length > 0) {
-    envVars[key.trim()] = valueParts.join('=').trim();
-  }
-});
+let pushed = 0;
+let skipped = 0;
+let failed = 0;
 
-// Validate required environment variables
-if (!envVars.PROJECT_NAME) {
-  console.error('❌ PROJECT_NAME is required in .env file');
-  process.exit(1);
-}
-if (!envVars.AWS_REGION) {
-  console.error('❌ AWS_REGION is required in .env file');
-  process.exit(1);
-}
-if (!envVars.STAGE) {
-  console.error('❌ STAGE is required in .env file');
-  process.exit(1);
-}
+for (const name of secretNames) {
+	const value = values[name];
+	if (!value) {
+		console.log(`   ⏭️  ${name} — no value in .env.${stage}, skipped`);
+		skipped++;
+		continue;
+	}
 
-const projectName = envVars.PROJECT_NAME;
-const awsRegion = envVars.AWS_REGION;
+	// Value goes over stdin; only the NAME is on the command line.
+	const result = spawnSync(
+		"npx",
+		["wrangler", "secret", "put", name, "--env", stage],
+		{ input: value, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8" },
+	);
 
-// Define which secrets to sync
-const secretMappings = [
-  {
-    name: 'WorkOS Credentials',
-    secretId: `/${projectName}/${stage}/workos`,
-    keys: ['WORKOS_CLIENT_ID', 'WORKOS_WEBHOOK_SECRET'],
-    jsonKeys: {
-      clientId: 'WORKOS_CLIENT_ID',
-      webhookSecret: 'WORKOS_WEBHOOK_SECRET',
-    },
-  },
-  {
-    name: 'Database Credentials',
-    secretId: `/${projectName}/${stage}/database`,
-    keys: ['DATABASE_URL'],
-    jsonKeys: {
-      url: 'DATABASE_URL',
-    },
-  },
-];
-
-// Sync each secret
-for (const mapping of secretMappings) {
-  console.log(`📦 Syncing ${mapping.name}...`);
-  
-  // Build JSON object from env vars
-  const secretValue: Record<string, string> = {};
-  let hasValues = false;
-  
-  for (const [jsonKey, envKey] of Object.entries(mapping.jsonKeys)) {
-    if (envVars[envKey]) {
-      secretValue[jsonKey] = envVars[envKey];
-      hasValues = true;
-      console.log(`   ✓ ${envKey}`);
-    } else {
-      console.log(`   ⚠️  ${envKey} not found in .env.${stage}`);
-    }
-  }
-  
-  if (!hasValues) {
-    console.log(`   ⏭️  Skipping (no values found)\n`);
-    continue;
-  }
-  
-  // Check if secret exists
-  let secretExists = false;
-  try {
-    execSync(`aws secretsmanager describe-secret --secret-id "${mapping.secretId}" --region ${awsRegion}`, {
-      stdio: 'pipe',
-    });
-    secretExists = true;
-  } catch {
-    // Secret doesn't exist
-  }
-  
-  // Create or update secret — pipe via stdin so values never appear in `ps` output
-  try {
-    const secretString = JSON.stringify(secretValue);
-    
-    if (secretExists) {
-      execSync(
-        `aws secretsmanager put-secret-value --secret-id "${mapping.secretId}" --secret-string file:///dev/stdin --region ${awsRegion}`,
-        { input: secretString, stdio: ['pipe', 'pipe', 'pipe'] }
-      );
-      console.log(`   ✅ Updated secret: ${mapping.secretId}\n`);
-    } else {
-      execSync(
-        `aws secretsmanager create-secret --name "${mapping.secretId}" --description "${mapping.name} for ${stage}" --secret-string file:///dev/stdin --region ${awsRegion}`,
-        { input: secretString, stdio: ['pipe', 'pipe', 'pipe'] }
-      );
-      console.log(`   ✅ Created secret: ${mapping.secretId}\n`);
-    }
-  } catch (error) {
-    console.error(`   ❌ Failed to sync ${mapping.name}:`, error);
-  }
+	if (result.status === 0) {
+		console.log(`   ✅ ${name}`);
+		pushed++;
+	} else {
+		// wrangler's stderr does not echo the piped secret value
+		console.error(`   ❌ ${name} failed:\n${result.stderr}`);
+		failed++;
+	}
 }
 
-// Sync SSM parameters (non-sensitive config)
-console.log('📝 Syncing SSM Parameters...');
+console.log("\n📋 Summary:");
+console.log(`   Stage:   ${stage}`);
+console.log(`   Pushed:  ${pushed}`);
+console.log(`   Skipped: ${skipped}`);
+console.log(`   Failed:  ${failed}`);
+console.log("\n🔍 Verify with:");
+console.log(`   npx wrangler secret list --env ${stage}`);
 
-// Helper: put SSM parameter safely via a temp file to avoid shell injection
-function putSsmParameter(
-  name: string,
-  value: string,
-  description: string,
-  type: 'String' | 'SecureString' = 'String',
-) {
-  const tmpFile = path.join(os.tmpdir(), `ssm-param-${Date.now()}.json`);
-  try {
-    fs.writeFileSync(tmpFile, JSON.stringify({
-      Name: name,
-      Value: value,
-      Type: type,
-      Description: description,
-      Overwrite: true,
-    }));
-    execSync(
-      `aws ssm put-parameter --cli-input-json file://${tmpFile} --region ${awsRegion}`,
-      { stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-  } finally {
-    try { fs.unlinkSync(tmpFile); } catch {}
-  }
+if (failed > 0) {
+	process.exit(1);
 }
-
-// First, sync PROJECT_NAME to a global parameter (used by CI/CD pipeline)
-try {
-  putSsmParameter('/github/project-name', projectName, 'Project name for CI/CD pipeline');
-  console.log(`   ✓ Global PROJECT_NAME parameter`);
-} catch (error) {
-  console.error(`   ❌ Failed to sync global PROJECT_NAME:`, error);
-}
-
-const ssmMappings = [
-  // Required infrastructure variables
-  { name: 'Hosted Zone ID', key: 'HOSTED_ZONE_ID', paramName: `/${projectName}/${stage}/hosted-zone-id`, required: true },
-  { name: 'Hosted Zone Name', key: 'HOSTED_ZONE_NAME', paramName: `/${projectName}/${stage}/hosted-zone-name`, required: true },
-  
-  // GitHub configuration (required for CI/CD)
-  { name: 'GitHub Owner', key: 'GITHUB_OWNER', paramName: `/${projectName}/${stage}/github-owner`, required: true },
-  { name: 'GitHub Repo', key: 'GITHUB_REPO', paramName: `/${projectName}/${stage}/github-repo`, required: true },
-  { name: 'GitHub Branch', key: 'GITHUB_BRANCH', paramName: `/${projectName}/${stage}/github-branch`, required: true },
-  
-  // Optional infrastructure variables (have defaults in code)
-  { name: 'Images Bucket', key: 'IMAGES_BUCKET', paramName: `/${projectName}/${stage}/images-bucket`, required: false },
-  { name: 'Images Bucket Prefix', key: 'IMAGES_BUCKET_PREFIX', paramName: `/${projectName}/${stage}/images-bucket-prefix`, required: false },
-  { name: 'Images CDN URL', key: 'IMAGES_CDN_URL', paramName: `/${projectName}/${stage}/images-cdn-url`, required: false },
-  { name: 'API Domain', key: 'API_DOMAIN', paramName: `/${projectName}/${stage}/api-domain`, required: false },
-  
-  // CORS configuration (optional)
-  { name: 'CORS Domain Patterns', key: 'CORS_DOMAIN_PATTERNS', paramName: `/${projectName}/${stage}/cors-domain-patterns`, required: false },
-  { name: 'CORS Exact Origins', key: 'CORS_EXACT_ORIGINS', paramName: `/${projectName}/${stage}/cors-exact-origins`, required: false },
-  { name: 'CORS Parent Domains', key: 'CORS_PARENT_DOMAINS', paramName: `/${projectName}/${stage}/cors-parent-domains`, required: false },
-  
-  // Monitoring (optional)
-  { name: 'Alert Email', key: 'ALERT_EMAIL', paramName: `/${projectName}/${stage}/alert-email`, required: false },
-
-  // Security — CloudFront origin verification (SecureString)
-  { name: 'Origin Verify Secret', key: 'ORIGIN_VERIFY_SECRET', paramName: `/${projectName}/${stage}/origin-verify-secret`, required: false, secure: true },
-
-  // WAF toggle
-  { name: 'Enable WAF', key: 'ENABLE_WAF', paramName: `/${projectName}/${stage}/enable-waf`, required: false },
-];
-
-for (const mapping of ssmMappings) {
-  if (!envVars[mapping.key]) {
-    if (mapping.required) {
-      console.error(`   ❌ ${mapping.name} (${mapping.key}) is REQUIRED but not found in .env.${stage}`);
-      process.exit(1);
-    }
-    if (mapping.key === 'ORIGIN_VERIFY_SECRET') {
-      console.warn(`   ⚠️  ORIGIN_VERIFY_SECRET not found in .env.${stage} — CloudFront origin`);
-      console.warn(`      verification will be DISABLED (direct execute-api hits bypass the WAF).`);
-      console.warn(`      Generate one with: openssl rand -hex 32`);
-    } else {
-      console.log(`   ⏭️  ${mapping.name} (${mapping.key}) not found (optional)`);
-    }
-    continue;
-  }
-
-  const paramType = 'secure' in mapping && mapping.secure ? 'SecureString' : 'String';
-  try {
-    putSsmParameter(mapping.paramName, envVars[mapping.key], `${mapping.name} for ${stage}`, paramType);
-    console.log(`   ✓ ${mapping.name}${paramType === 'SecureString' ? ' (SecureString)' : ''}`);
-  } catch (error) {
-    console.error(`   ❌ Failed to sync ${mapping.name}:`, error);
-  }
-}
-
-console.log('\n✅ Sync complete!\n');
-console.log('📋 Summary:');
-console.log(`   Stage: ${stage}`);
-console.log(`   Secrets Manager: /${projectName}/${stage}/*`);
-console.log(`   SSM Parameters: /${projectName}/${stage}/*`);
-console.log('\n🔍 Verify with:');
-console.log(`   aws secretsmanager list-secrets --filters Key=name,Values=/${projectName}/${stage}`);
-console.log(`   aws ssm get-parameters-by-path --path /${projectName}/${stage}`);

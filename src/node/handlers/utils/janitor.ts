@@ -1,25 +1,26 @@
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { ScheduledHandler } from "aws-lambda";
+// Cron Trigger job — dispatched via the registry in src/node/cron.ts
+// ("0 4 * * *" in wrangler.toml [triggers]).
 import { errorMessage } from "../../lib/error-utils";
 import { cleanupExpiredKeys } from "../../lib/idempotency";
+import { createLogger } from "../../lib/logger";
 
-const logger = new Logger({ serviceName: "idempotency-janitor" });
+const logger = createLogger({ serviceName: "idempotency-janitor" });
 
-export const handler: ScheduledHandler = async (_event, context) => {
-	logger.addContext(context);
-
+/**
+ * Daily janitor job — deletes expired idempotency keys. Throws on failure so
+ * the platform records a failed cron invocation (the DLQ-alarm equivalent).
+ */
+export async function runJanitor(): Promise<void> {
 	try {
 		logger.info("Starting idempotency key cleanup");
 
 		const deletedCount = await cleanupExpiredKeys();
 
 		logger.info("Idempotency key cleanup completed", { deletedCount });
-
-		// ScheduledHandler doesn't return anything
 	} catch (error) {
 		logger.error("Error during cleanup", {
 			error: errorMessage(error),
 		});
 		throw error;
 	}
-};
+}

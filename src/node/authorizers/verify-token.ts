@@ -8,11 +8,11 @@ import {
 /**
  * Shared WorkOS access-token verification.
  *
- * This is the SINGLE source of truth for how a WorkOS token is validated, used
- * by BOTH the deployed Lambda authorizer (`workos-jwt.ts`) and the local dev
- * server (`local-dev/server.ts`). Keeping one implementation prevents the
- * local/deploy divergence that previously let an auth regression ship
- * undetected (local accepted tokens the deployed authorizer rejected).
+ * This is the SINGLE source of truth for how a WorkOS token is validated —
+ * `requireAuth()` (lib/hono/auth.ts) is its only consumer, and the same code
+ * runs locally (`wrangler dev --local`) and deployed. One implementation
+ * prevents the local/deploy divergence that previously let an auth
+ * regression ship undetected.
  */
 
 export type WorkosTokenClaims = JWTPayload & {

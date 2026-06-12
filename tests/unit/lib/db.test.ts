@@ -2,11 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Spies/objects must be hoisted so the vi.mock factories below can close over
 // them (vi.mock calls are hoisted above imports).
-const { drizzleMock, poolCtorSpy, neonConfigObj } = vi.hoisted(() => ({
-	drizzleMock: vi.fn((..._args: unknown[]) => ({ __serverlessDrizzle: true })),
-	poolCtorSpy: vi.fn(),
-	neonConfigObj: {} as Record<string, unknown>,
-}));
+const { drizzleMock, poolCtorSpy, poolEndSpy, neonConfigObj } = vi.hoisted(
+	() => ({
+		drizzleMock: vi.fn((..._args: unknown[]) => ({
+			__serverlessDrizzle: true,
+		})),
+		poolCtorSpy: vi.fn(),
+		poolEndSpy: vi.fn(),
+		neonConfigObj: {} as Record<string, unknown>,
+	}),
+);
 
 vi.mock("@neondatabase/serverless", () => {
 	class Pool {
@@ -15,6 +20,7 @@ vi.mock("@neondatabase/serverless", () => {
 		}
 		on() {}
 		end() {
+			poolEndSpy();
 			return Promise.resolve();
 		}
 	}
@@ -39,6 +45,7 @@ describe("database driver wiring", () => {
 	beforeEach(() => {
 		vi.resetModules();
 		poolCtorSpy.mockClear();
+		poolEndSpy.mockClear();
 		drizzleMock.mockClear();
 		for (const key of Object.keys(neonConfigObj)) delete neonConfigObj[key];
 		process.env.DATABASE_URL = "postgresql://user:pass@localhost:5432/db";
@@ -75,10 +82,55 @@ describe("database driver wiring", () => {
 		expect(neonConfigObj.poolQueryViaFetch).toBe(true);
 	});
 
-	it("reuses a single pool across calls within a warm invocation", async () => {
+	// Per-request lifecycle guards: Cloudflare Workers forbids reusing I/O
+	// objects (the pool's sockets) across requests, so db.ts must NEVER cache
+	// a pool at module level. Each request scope gets exactly one pool, shared
+	// by every getDb() inside it and drained when the scope exits.
+
+	it("reuses a single pool across getDb() calls within one request scope", async () => {
+		const { getDb, runWithDbScope } = await import("@/lib/db");
+		await runWithDbScope(async () => {
+			await getDb();
+			await getDb();
+		});
+		expect(poolCtorSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("drains the scoped pool when the request scope exits", async () => {
+		const { getDb, runWithDbScope } = await import("@/lib/db");
+		await runWithDbScope(async () => {
+			await getDb();
+			expect(poolEndSpy).not.toHaveBeenCalled();
+		});
+		expect(poolEndSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("drains the scoped pool even when the scoped work throws", async () => {
+		const { getDb, runWithDbScope } = await import("@/lib/db");
+		await expect(
+			runWithDbScope(async () => {
+				await getDb();
+				throw new Error("handler failed");
+			}),
+		).rejects.toThrow("handler failed");
+		expect(poolEndSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("never shares a pool across request scopes (Workers I/O isolation)", async () => {
+		const { getDb, runWithDbScope } = await import("@/lib/db");
+		await runWithDbScope(async () => {
+			await getDb();
+		});
+		await runWithDbScope(async () => {
+			await getDb();
+		});
+		expect(poolCtorSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it("creates a fresh instance per call outside a scope (cron/scripts)", async () => {
 		const { getDb } = await import("@/lib/db");
 		await getDb();
 		await getDb();
-		expect(poolCtorSpy).toHaveBeenCalledTimes(1);
+		expect(poolCtorSpy).toHaveBeenCalledTimes(2);
 	});
 });

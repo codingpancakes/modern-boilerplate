@@ -1,27 +1,25 @@
 /**
  * Shared Media Utilities
  *
- * Centralizes image upload configuration, S3 key generation, URL building,
- * and content-type validation used across REST handlers and GraphQL resolvers.
+ * Centralizes image upload configuration, object-key generation, URL
+ * building, and content-type validation used across REST handlers and
+ * GraphQL resolvers.
+ *
+ * Storage is Cloudflare R2 via its S3-compatible API, signed with `aws4fetch`
+ * (pure fetch + WebCrypto — runs on Workers and Node alike). The R2 binding
+ * (`c.env.IMAGES`) is preferred by routes when present; everything here works
+ * from plain env config so GraphQL resolvers and presigning need no binding.
+ *
+ * Required env for the S3-API path (gate like origin-verify did: when unset,
+ * media endpoints fail with a CLEAR 503 config error instead of crashing):
+ *   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+ *   R2_BUCKET (falls back to IMAGES_BUCKET — same bucket, one name)
  */
 
 import { randomUUID } from "node:crypto";
-import {
-	ListObjectsV2Command,
-	PutObjectCommand,
-	S3Client,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { AwsClient } from "aws4fetch";
+import { ApiError } from "./errors";
 import { ALLOWED_FILE_EXTENSIONS, sanitizeFilename } from "./sanitize";
-
-let _s3Client: S3Client | null = null;
-
-export function getS3Client(): S3Client {
-	if (!_s3Client) {
-		_s3Client = new S3Client({ region: process.env.AWS_REGION });
-	}
-	return _s3Client;
-}
 
 export const IMAGE_CONTENT_TYPE_MAP: Record<string, string[]> = {
 	"image/jpeg": ["jpg", "jpeg"],
@@ -66,20 +64,75 @@ export function validateImageMagicBytes(
 	return true;
 }
 
+const mediaNotConfigured = () =>
+	new ApiError(
+		503,
+		"MEDIA_STORAGE_NOT_CONFIGURED",
+		"Media storage is not configured",
+	);
+
 export interface MediaConfig {
 	bucketName: string;
 	cdnUrl: string;
 }
 
+/**
+ * Public-URL config (IMAGES_BUCKET + IMAGES_CDN_URL — the R2 public bucket /
+ * custom-domain URL). Throws a clear 503 config error when unset.
+ */
 export function getMediaConfig(): MediaConfig {
 	const bucketName = process.env.IMAGES_BUCKET;
 	const cdnUrl = process.env.IMAGES_CDN_URL;
 	if (!bucketName || !cdnUrl) {
-		throw new Error(
-			"Missing required environment variables: IMAGES_BUCKET, IMAGES_CDN_URL",
-		);
+		throw mediaNotConfigured();
 	}
 	return { bucketName, cdnUrl };
+}
+
+export interface R2S3Config {
+	accountId: string;
+	accessKeyId: string;
+	secretAccessKey: string;
+	bucket: string;
+}
+
+/** S3-API config for R2, or null when not configured. */
+export function getR2S3Config(): R2S3Config | null {
+	const accountId = process.env.R2_ACCOUNT_ID;
+	const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+	const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+	const bucket = process.env.R2_BUCKET || process.env.IMAGES_BUCKET;
+	if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+		return null;
+	}
+	return { accountId, accessKeyId, secretAccessKey, bucket };
+}
+
+/** S3-API config for R2; throws a clear 503 config error when unset. */
+export function requireR2S3Config(): R2S3Config {
+	const config = getR2S3Config();
+	if (!config) {
+		throw mediaNotConfigured();
+	}
+	return config;
+}
+
+function r2Client(config: R2S3Config): AwsClient {
+	return new AwsClient({
+		accessKeyId: config.accessKeyId,
+		secretAccessKey: config.secretAccessKey,
+		region: "auto",
+		service: "s3",
+	});
+}
+
+/** Object keys are path-like; encode each segment, keep the slashes. */
+function encodeKeyPath(key: string): string {
+	return key.split("/").map(encodeURIComponent).join("/");
+}
+
+function objectUrl(config: R2S3Config, key: string): string {
+	return `https://${config.accountId}.r2.cloudflarestorage.com/${config.bucket}/${encodeKeyPath(key)}`;
 }
 
 /**
@@ -94,7 +147,7 @@ export function validateContentTypeExtension(
 }
 
 /**
- * Builds a user-scoped S3 key with sanitized filename and unique prefix.
+ * Builds a user-scoped object key with sanitized filename and unique prefix.
  */
 export function buildImageKey(
 	userId: string,
@@ -112,13 +165,12 @@ export function buildImageKey(
 }
 
 /**
- * Builds a public image URL from an S3 key using CDN or direct S3.
+ * Builds a public image URL from an object key via the CDN (R2 public
+ * bucket / custom domain) URL.
  */
 export function buildImageUrl(key: string, config?: MediaConfig): string {
-	const { bucketName, cdnUrl } = config ?? getMediaConfig();
-	return cdnUrl
-		? `${cdnUrl}/${key}`
-		: `https://${bucketName}.s3.amazonaws.com/${key}`;
+	const { cdnUrl } = config ?? getMediaConfig();
+	return `${cdnUrl}/${key}`;
 }
 
 const UPLOAD_EXPIRY_SECONDS = 300;
@@ -131,8 +183,13 @@ export interface PresignedUploadResult {
 }
 
 /**
- * Generate a presigned S3 PUT URL for image upload.
+ * Generate a presigned PUT URL for image upload, against the R2 S3 API.
  * Single source of truth for both REST and GraphQL upload flows.
+ *
+ * The uploader must send the declared `Content-Type` and `Content-Length`
+ * (both are signed headers, as with the old S3 presigner); object metadata
+ * (`x-amz-meta-*`) is hoisted into the signed query string, so clients don't
+ * have to send it.
  */
 export async function generatePresignedUploadUrl(
 	userId: string,
@@ -141,7 +198,8 @@ export async function generatePresignedUploadUrl(
 	fileSize: number,
 	category?: string,
 ): Promise<PresignedUploadResult> {
-	const config = getMediaConfig();
+	const r2 = requireR2S3Config();
+	const mediaConfig = getMediaConfig();
 	const key = buildImageKey(userId, category, filename);
 
 	const safeFilename = sanitizeFilename(filename, {
@@ -149,29 +207,60 @@ export async function generatePresignedUploadUrl(
 		allowedExtensions: ALLOWED_FILE_EXTENSIONS.IMAGE,
 	});
 
-	const command = new PutObjectCommand({
-		Bucket: config.bucketName,
-		Key: key,
-		ContentType: contentType,
-		ContentLength: fileSize,
-		ServerSideEncryption: "AES256",
-		Metadata: {
-			userId,
-			originalFilename: safeFilename,
-			uploadedAt: new Date().toISOString(),
-		},
-	});
+	const url = new URL(objectUrl(r2, key));
+	url.searchParams.set("X-Amz-Expires", String(UPLOAD_EXPIRY_SECONDS));
+	url.searchParams.set("x-amz-meta-userid", userId);
+	url.searchParams.set("x-amz-meta-originalfilename", safeFilename);
+	url.searchParams.set("x-amz-meta-uploadedat", new Date().toISOString());
 
-	const uploadUrl = await getSignedUrl(getS3Client(), command, {
-		expiresIn: UPLOAD_EXPIRY_SECONDS,
+	// NOTE: headers are passed via init (NOT a pre-built Request) on purpose:
+	// `content-length` is a fetch-spec forbidden request header, so a Request
+	// constructor would silently drop it and it would never get signed.
+	const signed = await r2Client(r2).sign(url.toString(), {
+		method: "PUT",
+		headers: {
+			"content-type": contentType,
+			"content-length": String(fileSize),
+		},
+		// allHeaders: aws4fetch treats content-type/content-length as unsignable
+		// by default; they ARE the upload contract here, so force-sign them.
+		aws: { signQuery: true, allHeaders: true },
 	});
 
 	return {
-		uploadUrl,
-		imageUrl: buildImageUrl(key, config),
+		uploadUrl: signed.url,
+		imageUrl: buildImageUrl(key, mediaConfig),
 		key,
 		expiresIn: UPLOAD_EXPIRY_SECONDS,
 	};
+}
+
+/**
+ * Upload an object through the R2 S3 API. Fallback for the direct-upload
+ * route when the R2 binding (`c.env.IMAGES`) is not available (e.g. the
+ * local Node server). Metadata keys must already be header-safe.
+ */
+export async function putImageObject(
+	key: string,
+	body: Buffer,
+	contentType: string,
+	metadata: Record<string, string>,
+): Promise<void> {
+	const r2 = requireR2S3Config();
+
+	const headers: Record<string, string> = { "content-type": contentType };
+	for (const [name, value] of Object.entries(metadata)) {
+		headers[`x-amz-meta-${name.toLowerCase()}`] = value;
+	}
+
+	const response = await r2Client(r2).fetch(objectUrl(r2, key), {
+		method: "PUT",
+		headers,
+		body,
+	});
+	if (!response.ok) {
+		throw new Error(`Image upload failed (status ${response.status})`);
+	}
 }
 
 export interface ImageItem {
@@ -190,8 +279,23 @@ export interface ListImagesResult {
 	continuationToken: string | null;
 }
 
+/** Decode the five XML character entities (S3 list responses are XML). */
+function decodeXml(value: string): string {
+	return value
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		.replace(/&amp;/g, "&");
+}
+
+function xmlTagValue(xml: string, tag: string): string | undefined {
+	const match = xml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+	return match ? decodeXml(match[1]) : undefined;
+}
+
 /**
- * List images for a user from S3.
+ * List images for a user from R2 (S3 ListObjectsV2 API).
  * Single source of truth for both REST and GraphQL listing flows.
  */
 export async function listUserImages(
@@ -200,29 +304,45 @@ export async function listUserImages(
 	limit = 20,
 	continuationToken?: string | null,
 ): Promise<ListImagesResult> {
-	const config = getMediaConfig();
+	const r2 = requireR2S3Config();
+	const mediaConfig = getMediaConfig();
 	const safeLimit = Math.min(Math.max(limit, 1), 100);
 
 	const prefix = category ? `users/${userId}/${category}/` : `users/${userId}/`;
 
-	const command = new ListObjectsV2Command({
-		Bucket: config.bucketName,
-		Prefix: prefix,
-		MaxKeys: safeLimit,
-		ContinuationToken: continuationToken || undefined,
-	});
+	const url = new URL(
+		`https://${r2.accountId}.r2.cloudflarestorage.com/${r2.bucket}`,
+	);
+	url.searchParams.set("list-type", "2");
+	url.searchParams.set("prefix", prefix);
+	url.searchParams.set("max-keys", String(safeLimit));
+	if (continuationToken) {
+		url.searchParams.set("continuation-token", continuationToken);
+	}
 
-	const response = await getS3Client().send(command);
+	const response = await r2Client(r2).fetch(url.toString());
+	if (!response.ok) {
+		throw new Error(`Failed to list images (status ${response.status})`);
+	}
+	const xml = await response.text();
 
-	const images: ImageItem[] = (response.Contents || []).map((item) => {
-		const key = item.Key ?? "";
+	const images: ImageItem[] = (
+		xml.match(/<Contents>[\s\S]*?<\/Contents>/g) ?? []
+	).map((entry) => {
+		const key = xmlTagValue(entry, "Key") ?? "";
+		const size = Number(xmlTagValue(entry, "Size")) || 0;
+		const lastModifiedRaw = xmlTagValue(entry, "LastModified");
+		const lastModifiedDate = lastModifiedRaw
+			? new Date(lastModifiedRaw)
+			: new Date();
 		const parts = key.split("/");
 		return {
 			key,
-			url: buildImageUrl(key, config),
-			size: item.Size || 0,
-			lastModified:
-				item.LastModified?.toISOString() || new Date().toISOString(),
+			url: buildImageUrl(key, mediaConfig),
+			size,
+			lastModified: Number.isNaN(lastModifiedDate.getTime())
+				? new Date().toISOString()
+				: lastModifiedDate.toISOString(),
 			category: parts.length > 2 ? parts[2] : null,
 			filename: parts[parts.length - 1],
 		};
@@ -231,7 +351,7 @@ export async function listUserImages(
 	return {
 		images,
 		count: images.length,
-		hasMore: response.IsTruncated || false,
-		continuationToken: response.NextContinuationToken || null,
+		hasMore: xmlTagValue(xml, "IsTruncated") === "true",
+		continuationToken: xmlTagValue(xml, "NextContinuationToken") || null,
 	};
 }

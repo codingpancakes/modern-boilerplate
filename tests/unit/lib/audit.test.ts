@@ -15,15 +15,15 @@ vi.mock("@/lib/sentry", () => ({
 	captureException: captureExceptionMock,
 }));
 
-// The powertools Logger writes straight to stdout (not console.*), so mock it
-// to keep the fallback error log out of test output.
-vi.mock("@aws-lambda-powertools/logger", () => ({
-	Logger: class {
-		debug() {}
-		info() {}
-		warn() {}
-		error() {}
-	},
+// Silence the structured logger (it emits JSON lines via console.<level>) to
+// keep the fallback error log out of test output.
+vi.mock("@/lib/logger", () => ({
+	createLogger: () => ({
+		debug() {},
+		info() {},
+		warn() {},
+		error() {},
+	}),
 }));
 
 import { AUDIT_ACTIONS, AUDIT_RESOURCE_TYPES, logAudit } from "@/lib/audit";

@@ -12,7 +12,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-API_URL="http://localhost:3000"
+API_URL="http://localhost:8787"
 API_KEY="test-api-key-12345"
 
 echo -e "${YELLOW}🧪 Testing Middleware Variants${NC}"

@@ -1,8 +1,4 @@
 import { createHash } from "node:crypto";
-import type {
-	APIGatewayProxyEventV2,
-	APIGatewayProxyResultV2,
-} from "aws-lambda";
 import { and, eq, inArray, lt } from "drizzle-orm";
 import { idempotencyKeys } from "../db/schema/index";
 import { getDb } from "./db";
@@ -12,13 +8,44 @@ export interface IdempotencyOptions {
 	ttlSeconds?: number;
 }
 
+/**
+ * Runtime-agnostic request descriptor for idempotency.
+ *
+ * The fields feed {@link hashRequest} with EXACTLY the same inputs (and JSON
+ * key order) the old API Gateway event produced — `sub`, `method`, `path`,
+ * `body`, `queryParams` — so request hashes stored before the platform move
+ * stay valid. Parity rules for callers:
+ *  - `body`: the RAW body string, or `undefined` (never `""`) when bodyless
+ *  - `query`: the query-param map, or `undefined` when there are none
+ */
+export interface IdempotentRequest {
+	/** The `Idempotency-Key` header value; absent = run the handler directly. */
+	key?: string;
+	/** Authenticated subject (claims.sub); hashed as "anonymous" when unset. */
+	sub?: string;
+	method: string;
+	path: string;
+	body?: string;
+	query?: Record<string, string | undefined>;
+}
+
+/**
+ * The persisted (and replayed) response shape. Stored rows from the Lambda
+ * era hold `{ statusCode, headers, body }` JSON — this type IS that contract,
+ * so it must not change shape.
+ */
+export interface StoredResponse {
+	statusCode: number;
+	headers?: Record<string, string>;
+	body?: string;
+}
+
 export async function withIdempotency(
-	event: APIGatewayProxyEventV2,
-	handler: () => Promise<APIGatewayProxyResultV2>,
+	request: IdempotentRequest,
+	handler: () => Promise<StoredResponse>,
 	options: IdempotencyOptions = {},
-): Promise<APIGatewayProxyResultV2> {
-	const idempotencyKey =
-		event.headers["idempotency-key"] || event.headers["Idempotency-Key"];
+): Promise<StoredResponse> {
+	const idempotencyKey = request.key;
 
 	// If no idempotency key, just execute the handler
 	if (!idempotencyKey) {
@@ -26,7 +53,7 @@ export async function withIdempotency(
 	}
 
 	const db = await getDb();
-	const requestHash = hashRequest(event);
+	const requestHash = hashRequest(request);
 	const ttl = options.ttlSeconds || 86400; // 24 hours default
 	const expiresAt = new Date(Date.now() + ttl * 1000);
 
@@ -84,7 +111,7 @@ export async function withIdempotency(
 							parsed !== null &&
 							"statusCode" in parsed
 						) {
-							return parsed as APIGatewayProxyResultV2;
+							return parsed as StoredResponse;
 						}
 					} catch {
 						// Corrupt JSON — fall through to reclaim
@@ -152,17 +179,15 @@ export async function withIdempotency(
 	}
 }
 
-function hashRequest(event: APIGatewayProxyEventV2): string {
-	const authorizer = event.requestContext as {
-		authorizer?: { lambda?: { sub?: string } };
-	} & typeof event.requestContext;
-
+function hashRequest(request: IdempotentRequest): string {
+	// Key order and field values are part of the stored-hash contract — see
+	// the IdempotentRequest docblock before changing ANYTHING here.
 	const data = {
-		sub: authorizer.authorizer?.lambda?.sub || "anonymous",
-		method: event.requestContext.http.method,
-		path: event.requestContext.http.path,
-		body: event.body,
-		queryParams: event.queryStringParameters,
+		sub: request.sub || "anonymous",
+		method: request.method,
+		path: request.path,
+		body: request.body,
+		queryParams: request.query,
 	};
 
 	return createHash("sha256").update(JSON.stringify(data)).digest("hex");

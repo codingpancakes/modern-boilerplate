@@ -1,0 +1,111 @@
+# wrangler.toml — Cloudflare Workers configuration (the replacement for the CDK stacks).
+#
+# Local dev:  npx wrangler dev --local         (no Cloudflare account needed;
+#             R2/cron bindings are simulated on disk under .wrangler/state)
+# Deploy:     npx wrangler deploy --env staging | --env production
+# Secrets:    local  → .dev.vars (gitignored; template in .dev.vars.example)
+#             remote → npx wrangler secret put <NAME> --env <staging|production>
+#
+# With nodejs_compat and a 2025+ compatibility_date, the runtime populates
+# process.env from [vars] + secrets, so existing `process.env.X` reads in
+# src/node keep working unchanged.
+
+name = "railbranch-backend"
+main = "src/node/worker.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Workers Logs (replaces CloudWatch log groups).
+[observability]
+enabled = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cron Triggers — the two daily maintenance jobs (UTC, off-peak):
+#   "0 4 * * *" → src/node/handlers/utils/janitor.ts         (idempotency-key cleanup)
+#   "0 5 * * *" → src/node/handlers/utils/audit-retention.ts (7-year audit-log pruning)
+# These expressions are the DISPATCH KEYS: they must exactly match the keys of
+# `cronRegistry` in src/node/cron.ts (see src/node/worker.ts `scheduled`).
+# [triggers] IS inherited by [env.*] blocks, so it is declared once here.
+# Test locally: wrangler dev --local --test-scheduled, then
+#   curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
+# ─────────────────────────────────────────────────────────────────────────────
+[triggers]
+crons = [
+  "0 4 * * *", # janitor — daily idempotency-key cleanup
+  "0 5 * * *", # audit-retention — daily 7-year retention pruning
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Non-secret config — mirrors the non-secret "Lambda Runtime Environment"
+# section of docs/ENVIRONMENT_VARIABLES.md. SECRETS NEVER GO HERE (DATABASE_URL,
+# WORKOS_CLIENT_ID, etc. → .dev.vars locally, `wrangler secret put` deployed).
+# NOTE: [vars] and [[r2_buckets]] are NOT inherited by named environments —
+# they are repeated in full under [env.staging] / [env.production] below.
+# This top-level block is what `wrangler dev --local` uses.
+# ─────────────────────────────────────────────────────────────────────────────
+[vars]
+NODE_ENV = "development"
+STAGE = "local"
+PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+API_VERSION = "v1"
+# CORS — same semantics as the Lambda env (see src/node/lib/cors.ts)
+CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER: regex patterns, comma-separated
+CORS_EXACT_ORIGINS = "http://localhost:3000"    # PLACEHOLDER: exact origins, comma-separated
+CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER: parent domains, comma-separated
+# Media — IMAGES_BUCKET must match [[r2_buckets]].bucket_name below; the CDN
+# URL becomes the R2 public/custom-domain URL (was CloudFront).
+IMAGES_BUCKET = "railbranch-images-local"
+IMAGES_CDN_URL = ""                             # PLACEHOLDER: R2 public bucket / custom domain URL
+
+# R2 — replaces the S3 images bucket. Route code reaches it as c.env.IMAGES
+# (see src/node/worker.ts WorkerBindings). `wrangler dev --local` simulates the
+# bucket on disk; the name does not need to exist on a real account.
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "railbranch-images-local"         # PLACEHOLDER: local-sim name, anything works
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Staging
+# Required secrets (set once): npx wrangler secret put DATABASE_URL --env staging
+# (repeat for every secret listed in .dev.vars.example)
+# ─────────────────────────────────────────────────────────────────────────────
+[env.staging]
+
+[env.staging.vars]
+NODE_ENV = "staging"
+STAGE = "staging"
+PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+API_VERSION = "v1"
+SENTRY_ENVIRONMENT = "staging"
+CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
+CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://staging.yourdomain.com
+CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
+IMAGES_BUCKET = "railbranch-images-staging"     # PLACEHOLDER: must match the R2 bucket below
+IMAGES_CDN_URL = ""                             # PLACEHOLDER: staging R2 public URL
+
+[[env.staging.r2_buckets]]
+binding = "IMAGES"
+bucket_name = "railbranch-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Production
+# Required secrets (set once): npx wrangler secret put DATABASE_URL --env production
+# (repeat for every secret listed in .dev.vars.example)
+# ─────────────────────────────────────────────────────────────────────────────
+[env.production]
+
+[env.production.vars]
+NODE_ENV = "production"
+STAGE = "production"
+PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+API_VERSION = "v1"
+SENTRY_ENVIRONMENT = "production"
+CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
+CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://yourdomain.com
+CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
+IMAGES_BUCKET = "railbranch-images-production"  # PLACEHOLDER: must match the R2 bucket below
+IMAGES_CDN_URL = ""                             # PLACEHOLDER: production R2 public URL
+
+[[env.production.r2_buckets]]
+binding = "IMAGES"
+bucket_name = "railbranch-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`

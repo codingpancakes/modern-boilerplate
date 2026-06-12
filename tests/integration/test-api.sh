@@ -50,30 +50,6 @@ curl -s $API_URL/v1/users/me \
   -H "Authorization: Bearer fake-token-12345" | jq .
 echo ""
 
-# Test 5: Check API Gateway endpoint (fallback)
-echo "5️⃣  Direct API Gateway Endpoint"
-STACK_PREFIX=$(get_stack_prefix "$STAGE")
-GATEWAY_URL=$(aws cloudformation describe-stacks \
-  --stack-name ${STACK_PREFIX}-ApiStack \
-  ${AWS_PROFILE:+--profile $AWS_PROFILE} \
-  --region us-east-1 \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
-  --output text 2>/dev/null)
-
-if [ -n "$GATEWAY_URL" ]; then
-  echo "GET ${GATEWAY_URL}v1/health"
-  curl -s ${GATEWAY_URL}v1/health | jq .
-else
-  echo "⚠️  Could not retrieve API Gateway URL"
-fi
-echo ""
-
-# Test 6: List available routes (if implemented)
-echo "6️⃣  Test Python Handler"
-echo "GET $API_URL/v1/test/python"
-curl -s $API_URL/v1/test/python | jq .
-echo ""
-
 echo "✅ API tests completed!"
 echo ""
 echo "📋 Summary:"

@@ -5,7 +5,7 @@ import { Errors, formatError } from "./lib/errors";
 import {
 	auditFlush,
 	corsAndSecurityHeaders,
-	originVerify,
+	dbScope,
 	requestId,
 } from "./lib/hono/middleware";
 import type { AppEnv } from "./lib/hono/types";
@@ -15,35 +15,34 @@ import { routes } from "./routes";
 /**
  * The single Hono app serving every REST route.
  *
- * On Lambda it is adapted via `handle(app)` (`src/node/lambda.ts`); locally
- * the SAME app is served with `@hono/node-server` — one routing layer, no
- * dev/prod drift. GraphQL is intentionally NOT mounted here; it stays a
- * separate Apollo Lambda (`src/node/handlers/graphql/`).
+ * On Cloudflare it is the Worker's `fetch` handler (`src/node/worker.ts`);
+ * locally the SAME app runs under `wrangler dev --local` (or
+ * `@hono/node-server`) — one routing layer, no dev/prod drift.
  *
- * Middleware order (mirrors the Lambda wrappers in `lib/middleware.ts` /
- * `lib/withPublicCors.ts`):
- *   1. request-id        — awsRequestId on Lambda, generated locally
- *   2. audit flush       — drain fire-and-forget logAudit() writes, always
- *   3. CORS + security   — answers OPTIONS preflight, decorates responses
- *   4. origin verify     — CloudFront shared-secret check (skips local/unset)
- * Auth is per-domain, applied in `routes/index.ts`.
+ * Middleware order:
+ *   1. request-id        — cf-ray on Cloudflare, generated locally
+ *   2. db scope          — per-request DB lifecycle (Workers forbids
+ *                          cross-request reuse of connections)
+ *   3. audit flush       — drain fire-and-forget logAudit() writes, always
+ *   4. CORS + security   — answers OPTIONS preflight, decorates responses
+ * Auth is per-domain, applied in `routes/index.ts`. (The old CloudFront
+ * origin-verify check is gone by construction: the Worker IS the edge.)
  */
 export const app = new Hono<AppEnv>();
 
 app.use(requestId());
+app.use(dbScope());
 app.use(auditFlush());
 app.use(corsAndSecurityHeaders());
-app.use(originVerify());
 
 app.route("/", routes);
 
 /**
  * Funnel unmatched paths through the standard error formatter.
  *
- * Exported (with {@link appOnError}) because Hono's `route()` does NOT carry
- * a sub-app's notFound/onError to a parent app — the local dev server
- * (`local-dev/server.ts`) wraps this app to add local-only routes and must
- * mirror both so unmatched paths and errors format identically everywhere.
+ * Exported (with {@link appOnError}) so any wrapper app that adds extra
+ * routes can mirror both — Hono's `route()` does NOT carry a sub-app's
+ * notFound/onError to a parent app.
  */
 export const appNotFound: NotFoundHandler<AppEnv> = () => {
 	throw Errors.NotFound("Route");
@@ -51,8 +50,8 @@ export const appNotFound: NotFoundHandler<AppEnv> = () => {
 
 export const appOnError: ErrorHandler<AppEnv> = async (err, c) => {
 	const error = toError(err);
-	// Same reporting as withAuth: capture everything; lib/sentry's beforeSend
-	// drops routine 4xx client errors (keeps 403 + 429).
+	// Capture everything; lib/sentry drops routine 4xx client errors
+	// (keeps 403 + 429).
 	Sentry.captureException(error);
 	await Sentry.flush();
 
@@ -61,7 +60,7 @@ export const appOnError: ErrorHandler<AppEnv> = async (err, c) => {
 	const formatted = formatError(err, c.get("requestId"));
 
 	// Error responses bypass the post-handler CORS middleware, so apply the
-	// same headers here — same merge order as the Lambda wrappers.
+	// same headers here — same merge order as always.
 	const headers = securityHeaders({
 		...formatted.headers,
 		...getCorsHeaders(c.req.header("origin")),

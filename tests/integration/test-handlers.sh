@@ -44,7 +44,7 @@ fi
 # Set API URL based on stage
 case "$STAGE" in
   local)
-    API_URL="http://localhost:3000"
+    API_URL="http://localhost:8787"
     ;;
   staging|production)
     API_URL=$(get_api_url "$STAGE")
@@ -149,7 +149,7 @@ test_endpoint \
   '{"filename":"test.jpg","contentType":"image/jpeg"}' \
   "200"
 
-# Test 4: List images (may return 500 if AWS credentials not configured)
+# Test 4: List images (may return 503 if R2 storage not configured)
 test_endpoint \
   "GET /v1/media/images" \
   "GET" \
@@ -157,7 +157,7 @@ test_endpoint \
   "" \
   "200"
 
-# Test 5: Upload image direct (may return 500 if AWS credentials not configured)
+# Test 5: Upload image direct (may return 503 if R2 storage not configured)
 test_endpoint \
   "POST /v1/media/upload-image-direct" \
   "POST" \

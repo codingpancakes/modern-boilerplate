@@ -1,31 +1,26 @@
-import { Logger } from "@aws-lambda-powertools/logger";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getDb } from "../lib/db";
 import { errorMessage } from "../lib/error-utils";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
+import { createLogger } from "../lib/logger";
 
 /**
  * Utility routes (public). Mounted at `/v1` by the barrel in
  * `routes/index.ts` — this module owns the health endpoints only.
  *
- * Ported from the Lambda handlers (which are now thin re-exports of the
- * shared app handler). The @swagger blocks stay in the entry files because
- * `scripts/generate-openapi.js` only globs `src/node/handlers/**`:
- *   GET /health           ← src/node/handlers/utils/health.ts          (API GW: GET /v1/health)
- *   GET /health/detailed  ← src/node/handlers/utils/health-detailed.ts (API GW: GET /v1/health/detailed)
+ *   GET /health           — liveness + version/stage info
+ *   GET /health/detailed  — DB / WorkOS / media-storage checks
  *
- * NOT ported here:
- *   - handlers/utils/options.ts — OPTIONS preflight (incl. API GW's
- *     OPTIONS /v1/{proxy+}) is answered globally by the CORS middleware in
- *     `lib/hono/middleware.ts`.
- *   - handlers/utils/janitor.ts / audit-retention.ts — scheduled Lambdas,
- *     not HTTP routes.
+ * OPTIONS preflight is answered globally by the CORS middleware in
+ * `lib/hono/middleware.ts` (documented below as /v1/utils/options for
+ * OpenAPI parity); the janitor and audit-retention jobs are Cron Triggers
+ * (`src/node/cron.ts`), not HTTP routes.
  */
 export const utils = new Hono<AppEnv>();
 
-const logger = new Logger({ serviceName: "health-detailed" });
+const logger = createLogger({ serviceName: "health-detailed" });
 
 interface HealthCheck {
 	status: "ok" | "error" | "skipped";
@@ -62,9 +57,8 @@ async function checkDatabase(): Promise<HealthCheck> {
 
 async function checkWorkOS(): Promise<HealthCheck> {
 	const clientId = process.env.WORKOS_CLIENT_ID;
-	const secretArn = process.env.WORKOS_SECRET_ARN;
 
-	if (!clientId || !secretArn) {
+	if (!clientId) {
 		return {
 			status: "skipped",
 			configured: false,
@@ -81,7 +75,7 @@ async function checkWorkOS(): Promise<HealthCheck> {
 	};
 }
 
-async function checkS3(): Promise<HealthCheck> {
+async function checkMediaStorage(): Promise<HealthCheck> {
 	const bucket = process.env.IMAGES_BUCKET;
 	const cdnUrl = process.env.IMAGES_CDN_URL;
 
@@ -89,19 +83,68 @@ async function checkS3(): Promise<HealthCheck> {
 		return {
 			status: "skipped",
 			configured: false,
-			message: "S3 not configured",
+			message: "Media storage not configured",
 		};
 	}
 
-	// S3 is configured - we don't make actual API calls in health check
+	// R2 is configured - we don't make actual API calls in health check
 	// to avoid costs, just verify configuration exists
 	return {
 		status: "ok",
 		configured: true,
-		message: "S3 configured",
+		message: "Media storage configured",
 	};
 }
 
+/**
+ * @swagger
+ * /v1/utils/options:
+ *   options:
+ *     tags: [Utils]
+ *     summary: CORS preflight handler
+ *     description: Handles OPTIONS preflight requests for CORS. Returns 204 No Content with proper CORS headers.
+ *     security: []
+ *     responses:
+ *       204:
+ *         description: No content - CORS preflight successful
+ */
+
+/**
+ * @swagger
+ * /v1/health:
+ *   get:
+ *     tags: [Utils]
+ *     summary: Health check endpoint
+ *     description: Returns API health status, version, and environment information. No authentication required.
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: API is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     status:
+ *                       type: string
+ *                       example: ok
+ *                     timestamp:
+ *                       type: string
+ *                       format: date-time
+ *                       example: "2025-12-05T20:00:00.000Z"
+ *                     version:
+ *                       type: string
+ *                       example: v1
+ *                     stage:
+ *                       type: string
+ *                       example: production
+ */
 utils.get("/health", (c) => {
 	return sendSuccess(c, {
 		status: "ok",
@@ -111,12 +154,78 @@ utils.get("/health", (c) => {
 	});
 });
 
+/**
+ * @swagger
+ * /v1/health/detailed:
+ *   get:
+ *     tags: [Utils]
+ *     summary: Detailed health check endpoint
+ *     description: Returns comprehensive health status including database connectivity and external service checks. No authentication required.
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Health check results
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     status:
+ *                       type: string
+ *                       enum: [healthy, degraded, unhealthy]
+ *                       example: healthy
+ *                     timestamp:
+ *                       type: string
+ *                       format: date-time
+ *                     version:
+ *                       type: string
+ *                       example: v1
+ *                     stage:
+ *                       type: string
+ *                       example: production
+ *                     checks:
+ *                       type: object
+ *                       properties:
+ *                         database:
+ *                           type: object
+ *                           properties:
+ *                             status:
+ *                               type: string
+ *                               enum: [ok, error]
+ *                             responseTime:
+ *                               type: number
+ *                               description: Response time in milliseconds
+ *                             message:
+ *                               type: string
+ *                         workos:
+ *                           type: object
+ *                           properties:
+ *                             status:
+ *                               type: string
+ *                               enum: [ok, error, skipped]
+ *                             configured:
+ *                               type: boolean
+ *                         s3:
+ *                           type: object
+ *                           properties:
+ *                             status:
+ *                               type: string
+ *                               enum: [ok, error, skipped]
+ *                             configured:
+ *                               type: boolean
+ */
 utils.get("/health/detailed", async (c) => {
 	// Run all health checks in parallel
-	const [database, workos, s3] = await Promise.all([
+	const [database, workos, storage] = await Promise.all([
 		checkDatabase(),
 		checkWorkOS(),
-		checkS3(),
+		checkMediaStorage(),
 	]);
 
 	// Determine overall status
@@ -128,14 +237,14 @@ utils.get("/health/detailed", async (c) => {
 	}
 
 	// Degraded: External services have issues but not critical
-	else if (workos.status === "error" || s3.status === "error") {
+	else if (workos.status === "error" || storage.status === "error") {
 		overallStatus = "degraded";
 	}
 
 	// Log full details for internal debugging; public response is minimal
 	logger.info("Health check completed", {
 		status: overallStatus,
-		checks: { database, workos, s3 },
+		checks: { database, workos, storage },
 	});
 
 	const httpStatus = overallStatus === "unhealthy" ? 503 : 200;

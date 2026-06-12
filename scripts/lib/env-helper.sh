@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Environment Helper - Load configuration from .env files or SSM
+# Environment Helper - Load configuration from .env files
 # Source this file in your test scripts: source "$(dirname "$0")/../scripts/lib/env-helper.sh"
 
 # Load environment variables from .env file if it exists

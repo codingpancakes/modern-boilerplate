@@ -4,7 +4,6 @@
  * Core utilities for validating data with Zod schemas.
  */
 
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { z } from "zod";
 import { Errors } from "../errors";
 
@@ -61,29 +60,29 @@ export function validate<T>(schema: z.ZodSchema<T>, data: unknown): T {
 }
 
 /**
- * Parse and validate request body
+ * Parse and validate a raw request body string
  * Handles JSON parsing errors and validation errors
  *
- * @param event - API Gateway event
+ * @param body - Raw request body (e.g. `await c.req.text()`)
  * @param schema - Zod schema to validate against
  * @returns Validated and typed data
  * @throws BadRequest if body is missing, invalid JSON, or fails validation
  *
  * @example
- * const input = parseBody(event, schemas.users.create);
+ * const input = parseBody(await c.req.text(), schemas.users.create);
  * // input is now typed and validated
  */
 export function parseBody<T>(
-	event: APIGatewayProxyEventV2,
+	body: string | null | undefined,
 	schema: z.ZodSchema<T>,
 ): T {
-	if (!event.body) {
+	if (!body) {
 		throw Errors.BadRequest("Request body is required");
 	}
 
 	try {
-		const body = JSON.parse(event.body);
-		return validate(schema, body);
+		const parsed: unknown = JSON.parse(body);
+		return validate(schema, parsed);
 	} catch (error) {
 		if (error instanceof SyntaxError) {
 			throw Errors.BadRequest("Invalid JSON in request body");
@@ -95,35 +94,33 @@ export function parseBody<T>(
 /**
  * Parse and validate query parameters
  *
- * @param event - API Gateway event
+ * @param queryParams - Query parameter map (e.g. `c.req.query()`)
  * @param schema - Zod schema to validate against
  * @returns Validated and typed query parameters
  *
  * @example
- * const query = parseQuery(event, schemas.common.pagination);
+ * const query = parseQuery(c.req.query(), schemas.common.pagination);
  */
 export function parseQuery<T>(
-	event: APIGatewayProxyEventV2,
+	queryParams: Record<string, string | undefined> | undefined,
 	schema: z.ZodSchema<T>,
 ): T {
-	const queryParams = event.queryStringParameters || {};
-	return validate(schema, queryParams);
+	return validate(schema, queryParams || {});
 }
 
 /**
  * Parse and validate path parameters
  *
- * @param event - API Gateway event
+ * @param pathParams - Path parameter map (e.g. `c.req.param()`)
  * @param schema - Zod schema to validate against
  * @returns Validated and typed path parameters
  *
  * @example
- * const { id } = parseParams(event, schemas.common.idParam);
+ * const { id } = parseParams(c.req.param(), schemas.common.idParam);
  */
 export function parseParams<T>(
-	event: APIGatewayProxyEventV2,
+	pathParams: Record<string, string | undefined> | undefined,
 	schema: z.ZodSchema<T>,
 ): T {
-	const pathParams = event.pathParameters || {};
-	return validate(schema, pathParams);
+	return validate(schema, pathParams || {});
 }

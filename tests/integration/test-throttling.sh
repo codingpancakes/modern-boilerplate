@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test API Gateway Throttling
+# Test API edge throttling / rate limiting
 # Usage: ./scripts/test-throttling.sh [staging|production]
 
 set -e
@@ -24,7 +24,7 @@ if [ "$STAGE" = "production" ]; then
   fi
 fi
 
-echo "🚀 Testing API Gateway Throttling on $STAGE"
+echo "🚀 Testing API throttling on $STAGE"
 echo "Base URL: $BASE_URL"
 echo ""
 echo "📊 Throttling Limits:"
@@ -125,8 +125,7 @@ if [ "$SUCCESS" -gt 0 ] && [ "$THROTTLED" -gt 0 ]; then
   echo "💡 Note: Exact numbers may vary due to:"
   echo "   - Network latency"
   echo "   - Request timing"
-  echo "   - Lambda cold starts"
-  echo "   - API Gateway processing time"
+  echo "   - Edge routing variance"
 else
   if [ "$THROTTLED" -eq 0 ]; then
     echo "⚠️  WARNING: No requests were throttled!"
