@@ -23,7 +23,7 @@ import { createLogger } from "./logger";
 
 const logger = createLogger({ serviceName: "sentry" });
 
-const SENTRY_CLIENT = "railbranch-fetch-shim/1.0.0";
+const SENTRY_CLIENT = "sidedoor-fetch-shim/1.0.0";
 
 interface ErrorWithStatusCode extends Error {
 	statusCode?: number;

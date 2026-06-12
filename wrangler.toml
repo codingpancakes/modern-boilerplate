@@ -10,7 +10,7 @@
 # process.env from [vars] + secrets, so existing `process.env.X` reads in
 # src/node keep working unchanged.
 
-name = "railbranch-backend"
+name = "sidedoor-backend"
 main = "src/node/worker.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
@@ -46,7 +46,7 @@ crons = [
 [vars]
 NODE_ENV = "development"
 STAGE = "local"
-PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+PROJECT_NAME = "sidedoor"                     # project identifier
 API_VERSION = "v1"
 # CORS — same semantics as the Lambda env (see src/node/lib/cors.ts)
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER: regex patterns, comma-separated
@@ -54,7 +54,7 @@ CORS_EXACT_ORIGINS = "http://localhost:3000"    # PLACEHOLDER: exact origins, co
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER: parent domains, comma-separated
 # Media — IMAGES_BUCKET must match [[r2_buckets]].bucket_name below; the CDN
 # URL becomes the R2 public/custom-domain URL (was CloudFront).
-IMAGES_BUCKET = "railbranch-images-local"
+IMAGES_BUCKET = "sidedoor-images-local"
 IMAGES_CDN_URL = ""                             # PLACEHOLDER: R2 public bucket / custom domain URL
 
 # R2 — replaces the S3 images bucket. Route code reaches it as c.env.IMAGES
@@ -62,7 +62,7 @@ IMAGES_CDN_URL = ""                             # PLACEHOLDER: R2 public bucket 
 # bucket on disk; the name does not need to exist on a real account.
 [[r2_buckets]]
 binding = "IMAGES"
-bucket_name = "railbranch-images-local"         # PLACEHOLDER: local-sim name, anything works
+bucket_name = "sidedoor-images-local"         # PLACEHOLDER: local-sim name, anything works
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Staging
@@ -74,18 +74,18 @@ bucket_name = "railbranch-images-local"         # PLACEHOLDER: local-sim name, a
 [env.staging.vars]
 NODE_ENV = "staging"
 STAGE = "staging"
-PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+PROJECT_NAME = "sidedoor"                     # project identifier
 API_VERSION = "v1"
 SENTRY_ENVIRONMENT = "staging"
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
 CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://staging.yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
-IMAGES_BUCKET = "railbranch-images-staging"     # PLACEHOLDER: must match the R2 bucket below
+IMAGES_BUCKET = "sidedoor-images-staging"     # PLACEHOLDER: must match the R2 bucket below
 IMAGES_CDN_URL = ""                             # PLACEHOLDER: staging R2 public URL
 
 [[env.staging.r2_buckets]]
 binding = "IMAGES"
-bucket_name = "railbranch-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
+bucket_name = "sidedoor-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Production
@@ -97,15 +97,15 @@ bucket_name = "railbranch-images-staging"       # PLACEHOLDER: create with `wran
 [env.production.vars]
 NODE_ENV = "production"
 STAGE = "production"
-PROJECT_NAME = "railbranch"                     # PLACEHOLDER: your project identifier
+PROJECT_NAME = "sidedoor"                     # project identifier
 API_VERSION = "v1"
 SENTRY_ENVIRONMENT = "production"
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
 CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
-IMAGES_BUCKET = "railbranch-images-production"  # PLACEHOLDER: must match the R2 bucket below
+IMAGES_BUCKET = "sidedoor-images-production"  # PLACEHOLDER: must match the R2 bucket below
 IMAGES_CDN_URL = ""                             # PLACEHOLDER: production R2 public URL
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"
-bucket_name = "railbranch-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`
+bucket_name = "sidedoor-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`
