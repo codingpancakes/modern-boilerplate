@@ -1,3 +1,5 @@
+> **LEGACY** — described the pre-atomic AWS stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
+
 # Lambda Concurrency & Dead Letter Queues
 
 **Last Updated:** March 2026  

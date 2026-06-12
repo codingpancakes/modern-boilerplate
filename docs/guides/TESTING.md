@@ -1,9 +1,9 @@
 # Testing Guide
 
-Complete guide for unit tests, integration tests, and testing the backend locally, staging, and production.
+Complete guide for unit tests, integration tests, and testing the backend locally and deployed.
 
-**Framework**: Vitest (unit + real-DB integration) + Bash scripts (deployed-API integration)  
-**Status**: Boilerplate — enough tests to show the patterns  
+**Framework**: Vitest (unit + real-DB integration) + Bash scripts (live-API integration)
+**Status**: Boilerplate — enough tests to show the patterns
 
 ---
 
@@ -11,632 +11,269 @@ Complete guide for unit tests, integration tests, and testing the backend locall
 
 ```
 tests/
-├── unit/                               # Vitest unit tests
+├── unit/                               # Vitest unit tests (no DB, no network*)
 │   ├── lib/
-│   │   ├── auth.test.ts                ✅ Authorizer claims (lambda-only source)
-│   │   ├── errors.test.ts              ✅ Error factory
+│   │   ├── auth.test.ts                ✅ Claims-object contract (normalization, sub required)
+│   │   ├── errors.test.ts              ✅ Error factory + wire format
 │   │   ├── validation-schemas.test.ts  ✅ Zod schemas
 │   │   ├── db.test.ts                  ✅ Driver-wiring guard (neon-serverless)
-│   │   └── sanitize.test.ts            ✅ XSS escaping + recursion depth
+│   │   ├── sanitize.test.ts            ✅ XSS escaping + recursion depth
+│   │   ├── audit.test.ts               ✅ Redaction + write-failure metric format
+│   │   └── pagination.test.ts          ✅ Lossless cursor round-trip
 │   ├── authorizers/
-│   │   └── verify-token.test.ts        ✅ WorkOS token verifier (real RS256)
-│   ├── infrastructure/
-│   │   └── api-stack.test.ts           ✅ CDK synth: authorizer/CORS/WAF
+│   │   └── verify-token.test.ts        ✅ WorkOS token verifier (real RS256 keys*)
+│   ├── cron.test.ts                    ✅ Cron registry ↔ wrangler.toml trigger parity
 │   └── graphql/
-│       └── resolvers/
-│           └── users.test.ts           ✅ Resolvers (mocked db.transaction)
+│       ├── yoga.test.ts                ✅ Yoga harness limits (depth/complexity/masking)
+│       └── resolvers/users.test.ts     ✅ Resolvers (mocked db.transaction)
 │
-├── integration/                        # Integration tests
+├── integration/
 │   ├── db-transactions.test.ts         ✅ Real-DB commit/rollback (Vitest)
-│   ├── helpers/test-db.ts              ✅ Real-DB harness
-│   ├── test-all.sh                     ✅ Master runner (deployed API)
-│   ├── test-api.sh                 ✅ Staging/prod runner
-│   ├── test-handlers.sh            ✅ REST API
-│   ├── test-graphql.sh             ✅ GraphQL
-│   ├── test-api-auth.sh            ✅ Auth
-│   ├── test-health-checks.sh       ✅ Health
-│   ├── test-middleware.sh          ✅ Middleware
-│   ├── test-image-upload.ts        ✅ Image upload (TypeScript)
-│   └── test-throttling.sh          ✅ Rate limiting
+│   ├── helpers/test-db.ts              ✅ Real-DB harness (migrations + citext)
+│   ├── test-all.sh                     ✅ Master runner (live API)
+│   ├── test-api.sh                     ✅ Deployed staging/prod smoke
+│   ├── test-handlers.sh                ✅ REST API
+│   ├── test-graphql.sh                 ✅ GraphQL
+│   ├── test-api-auth.sh                ✅ Authentication flow
+│   ├── test-health-checks.sh           ✅ Health endpoints
+│   ├── test-middleware.sh              ✅ Security/diagnostic endpoints (/v1/test/*)
+│   └── test-throttling.sh              ✅ Rate-limit probe
+└── manual/
+    └── test-image-upload.sh            Manual R2 upload walkthrough
 ```
+
+Current totals: **11 unit test files, 100 tests** (~0.5s) plus the real-DB
+transaction suite (3 tests).
 
 ---
 
 ## 🧪 Unit Tests
 
-### Test Suite Overview
+### Commands
 
-This project includes comprehensive unit tests to ensure code quality and catch regressions early.
-
-**Test Statistics:**
-- **Unit test files**: 8 (63 tests), plus 1 Vitest integration file (3 tests)
-- **Execution Time**: unit ~2s (CDK synth dominates), integration ~1s
-- **Coverage**: Auth + authorizer token verification, error handling, validation
-  schemas, input sanitization, DB driver wiring, CDK stack wiring, GraphQL user
-  resolvers, and real-DB transaction commit/rollback
-
-### Available Commands
-
-**Development:**
 ```bash
-pnpm test          # Run tests in watch mode (auto-rerun on file changes)
-pnpm test:ui       # Open visual test UI in browser
+pnpm test          # watch mode (auto-rerun on change)
+pnpm test:ui       # visual test UI in browser
+pnpm test:run      # run once (CI)
+pnpm check         # lint + typecheck + unit tests
 ```
 
-**CI/CD:**
-```bash
-pnpm test:run      # Run tests once (for CI pipelines)
-pnpm check         # Run lint + typecheck + tests
-pnpm build         # TypeScript compile + generate docs
-```
-
-### Test Coverage
-
-#### 1. Auth Helpers (`tests/unit/lib/auth.test.ts`)
-**8 tests** - Validates JWT claims extraction from API Gateway authorizer context
-
-- ✅ Extract claims from lambda authorizer
-- ✅ Throw error if `sub` claim missing
-- ✅ Throw error if no claims exist
-- ✅ Extract WorkOS user ID from claims
-- ✅ Extract org ID from claims
-- ✅ Handle missing org ID gracefully
-
-**Why it matters**: Ensures authentication doesn't break when refactoring middleware or auth logic.
-
-#### 2. Error Handling (`tests/unit/lib/errors.test.ts`)
-**12 tests** - Validates error creation and formatting
-
-- ✅ Create ApiError with correct status codes
-- ✅ Validate all error factory methods (Unauthorized, Forbidden, NotFound, etc.)
-- ✅ Format errors correctly for API responses
-- ✅ Include request IDs and timestamps
-- ✅ Handle unknown errors as 500 Internal Server Error
-
-**Why it matters**: Ensures consistent error responses across all API endpoints. Client apps depend on this format.
-
-#### 3. Validation Schemas (`tests/unit/lib/validation-schemas.test.ts`)
-**11+ tests** - Validates Zod schemas for media uploads
-
-- ✅ Accept valid image upload requests
-- ✅ Reject invalid content types
-- ✅ Reject empty filenames
-- ✅ Validate direct upload with base64 data
-- ✅ Validate list images query parameters
-- ✅ Enforce limit constraints (1-100)
-- ✅ Coerce string numbers to integers
-
-**Why it matters**: Prevents invalid data from reaching handlers. Security layer against malicious input.
-
-### Test Output Example
-
-```
-✓ tests/unit/lib/sanitize.test.ts (6 tests)
-✓ tests/unit/lib/validation-schemas.test.ts (11 tests)
-✓ tests/unit/lib/errors.test.ts (12 tests)
-✓ tests/unit/authorizers/verify-token.test.ts (9 tests)
-✓ tests/unit/lib/db.test.ts (3 tests)
-✓ tests/unit/lib/auth.test.ts (8 tests)
-✓ tests/unit/graphql/resolvers/users.test.ts (9 tests)
-✓ tests/unit/infrastructure/api-stack.test.ts (5 tests)
-
-Test Files  8 passed (8)
-      Tests  63 passed (63)
-```
-
-### Debugging Failed Tests
-
-**View detailed output:**
+**Debugging:**
 ```bash
 pnpm test:run --reporter=verbose
+pnpm test tests/unit/lib/auth.test.ts     # one file
 ```
 
-**Run specific test file:**
-```bash
-pnpm test tests/unit/lib/auth.test.ts
-```
+### What the suite guards
 
-**Run with UI for debugging:**
-```bash
-pnpm test:ui
-```
+- **Auth contract** (`lib/auth.test.ts`) — `getClaims` accepts only verified claims
+  objects, requires `sub`, rejects garbage. (The API-Gateway-event shape is gone; code
+  that resurrects it fails to compile.)
+- **Token verification** (`authorizers/verify-token.test.ts`) — RS256 against real
+  generated keys: algorithm pinning, audience/issuer, expiry.
+- **DB driver guard** (`lib/db.test.ts`) — `lib/db.ts` must stay on the
+  WebSocket-capable `neon-serverless` driver; `neon-http` would break `db.transaction()`.
+- **Error wire format** (`lib/errors.test.ts`) — clients depend on
+  `{ success:false, error, details:{ code, requestId, timestamp } }`.
+- **Cron registry parity** (`cron.test.ts`) — every wrangler.toml `[triggers]`
+  expression has a registered handler and vice versa.
+- **Yoga limits** (`graphql/yoga.test.ts`) — depth/complexity/mutation limits and
+  Apollo-parity error masking.
+- **Validation, sanitization, pagination, audit redaction** — the security-relevant
+  pure functions.
 
-### GraphQL Resolver Tests
-
-**File**: `tests/unit/graphql/resolvers/users.test.ts`
-
-**Coverage:**
-- ✅ Query: `me` - Get current user
-- ✅ Mutation: `updateMe` - Update user fields
-- ✅ Mutation: `updateProfile` - Update profile fields
-- ✅ Mutation: `updateMyAccount` - Combined user + profile update
-- ✅ Field resolver: `User.profile` - Nested profile data
-- ✅ Field resolver: `User.organizations` - User's organizations
-
-**Why it matters**: Ensures GraphQL resolvers correctly interact with the database and handle errors.
-
-### Unit Test Notes
-
-- Tests use **Vitest** (fast, modern test runner)
-- Path aliases configured: `@/*` → `src/node/*`
-- Configuration in `vitest.config.ts`
-- TypeScript paths configured in `tsconfig.json`
+Unit tests mock DB/Sentry — they never hit real infrastructure. Config:
+`vitest.config.ts` (path alias `@/*` → `src/node/*`).
 
 ---
 
 ## 🗄️ Database Transaction Tests (Vitest + real Postgres)
 
-These run our actual service code against a **real Postgres engine** to prove
-that multi-step writes COMMIT atomically and ROLL BACK fully on error —
-behaviour the unit suite cannot verify because it mocks `db.transaction` as a
-pass-through.
+These run our actual service code against a **real Postgres engine** to prove that
+multi-step writes COMMIT atomically and ROLL BACK fully on error — behaviour the unit
+suite cannot verify because it mocks `db.transaction` as a pass-through.
 
 **File**: `tests/integration/db-transactions.test.ts`
 **Config**: `vitest.integration.config.ts` (separate from the unit suite, so
-`pnpm check` / CI stay DB-free).
+`pnpm check` stays DB-free).
 
 ### Run it
 
 ```bash
-# Start a local Postgres (docker-compose `postgres` service, port 5432)
-docker compose up -d postgres
+pnpm test:integration:local      # starts docker `postgres-test` (--wait) + runs the suite
 
-# Run the suite
+# …or manually:
+pnpm test:integration:up
 pnpm test:integration
 
 # …or point at any Postgres
 TEST_DATABASE_URL="postgres://user:pass@host:5432/db" pnpm test:integration
 ```
 
-The harness (`tests/integration/helpers/test-db.ts`) connects, ensures the
-`citext` extension exists, and applies the project migrations before the tests
-run.
+The harness (`tests/integration/helpers/test-db.ts`) connects, ensures the `citext`
+extension exists, and applies the project migrations before the tests run.
 
 ### What it proves
 
 - ✅ `createUserWithIdentity` commits user + profile + identity together
 - ✅ A throw mid-transaction rolls back **all** rows (no partial writes)
-- ✅ A unique-constraint violation late in the transaction rolls back the
-  earlier inserts (no orphaned user/profile)
+- ✅ A unique-constraint violation late in the transaction rolls back the earlier
+  inserts (no orphaned user/profile)
 
-> **Driver note:** these tests use the `node-postgres` driver for a hermetic
-> local DB. Production uses `neon-serverless`; that wiring is guarded separately
-> by `tests/unit/lib/db.test.ts`. Drizzle's transaction API and the underlying
-> SQL are identical across both drivers, so the atomicity proven here matches
-> production.
+> **Driver note:** these tests use the `node-postgres` driver for a hermetic local DB.
+> Production uses `neon-serverless`; that wiring is guarded separately by
+> `tests/unit/lib/db.test.ts`. Drizzle's transaction API and the underlying SQL are
+> identical across both drivers, so the atomicity proven here matches production.
 
 ---
 
-## 🔄 Integration Tests (deployed API, Bash)
+## 🔄 Live-API Tests (Bash)
 
-### Available Test Suites
+The shell suites hit a running server — your local Worker by default
+(`http://localhost:8787`), or a deployed environment.
 
 ```bash
-# Run all integration tests
+# Run all (needs a JWT)
 ./tests/integration/test-all.sh "YOUR_JWT_TOKEN"
 
-# Individual test suites
-./tests/integration/test-handlers.sh "JWT"      # REST API handlers
-./tests/integration/test-graphql.sh "JWT"       # GraphQL queries/mutations
-./tests/integration/test-health-checks.sh       # Health endpoints (no auth)
-./tests/integration/test-middleware.sh          # Middleware variants (no auth)
-./tests/integration/test-api-auth.sh "JWT"      # Authentication flow
+# Individual suites
+./tests/integration/test-handlers.sh "JWT"       # REST endpoints
+./tests/integration/test-graphql.sh "JWT"        # GraphQL queries/mutations
+./tests/integration/test-health-checks.sh        # health (no auth)
+./tests/integration/test-middleware.sh           # /v1/test/* diagnostics (no auth)
+./tests/integration/test-api-auth.sh "JWT"       # auth flow
 ```
 
-### GraphQL Integration Tests
+Deployed targets resolve their URL from `HOSTED_ZONE_NAME` in `.env.<stage>`
+(`scripts/lib/env-helper.sh`):
 
-**File**: `tests/integration/test-graphql.sh`
+```bash
+./tests/integration/test-api.sh staging          # https://api-staging.<zone>
+./tests/integration/test-api.sh production       # https://api.<zone>
+```
 
-**Coverage:**
-- ✅ Query: `me` - Current user data
-- ✅ Query: `images` - User's uploaded images
-- ✅ Mutation: `updateMe` - Update user
-- ✅ Mutation: `updateProfile` - Update profile
-- ✅ Mutation: `updateMyAccount` - Combined update
-- ✅ Error cases: Invalid syntax, unauthorized access
-- ✅ Nested resolvers: Profile, organizations
+> `test-middleware.sh` exercises `/v1/test/api-key` and `/v1/test/webhook`
+> (`src/node/routes/test.ts`) — they require `TEST_API_KEY` / `WEBHOOK_SECRET` in
+> `.dev.vars` and intentionally 404 when `STAGE=production`.
 
 ---
 
 ## 🧪 Local Testing
 
 ### Prerequisites
-- Local dev server running: `pnpm dev`
-- Valid WorkOS JWT token
-- PostgreSQL running (if testing DB operations)
+- Local Worker running: `pnpm dev` → `http://localhost:8787`
+- Valid WorkOS JWT token (for authenticated endpoints)
+- `DATABASE_URL` set in `.dev.vars` (for DB-touching endpoints)
 
-### Step 1: Start Local Server
+### Get a JWT Token
+
+**Option A: From WorkOS Dashboard** — your application → Test Users → generate a token.
+
+**Option B: From Your Frontend** — log in, open DevTools → Network, copy the
+`Authorization` header value from any API request.
+
+### Smoke sequence
+
 ```bash
 pnpm dev
+curl http://localhost:8787/v1/health | jq .             # 200, security headers
+curl http://localhost:8787/v1/health/detailed | jq .    # real DB round-trip
+./tests/integration/test-handlers.sh "YOUR_JWT"
 ```
 
-Server should start on `http://localhost:3000`
+### Cron jobs
 
-### Step 2: Get a JWT Token
-
-**Option A: From WorkOS Dashboard**
-1. Go to WorkOS Dashboard
-2. Navigate to your application
-3. Use the "Test Users" section to generate a token
-
-**Option B: From Your Frontend**
-1. Log in to your app
-2. Open browser DevTools → Network tab
-3. Find any API request
-4. Copy the `Authorization` header value (the JWT token)
-
-### Step 3: Run Test Suite
 ```bash
-cd tests/integration
-chmod +x test-handlers.sh
-./test-handlers.sh "YOUR_JWT_TOKEN_HERE"
-```
-
-### Expected Results
-```
-🧪 Testing API Handlers
-API URL: http://localhost:3000
-
-=== User Endpoints ===
-
-Testing GET /v1/users/me... ✓ PASSED (HTTP 200)
-Testing PATCH /v1/users/me... ✓ PASSED (HTTP 200)
-
-=== Media Endpoints ===
-
-Testing POST /v1/media/upload-image... ✓ PASSED (HTTP 200)
-Testing GET /v1/media/images... ✓ PASSED (HTTP 200)
-Testing POST /v1/media/upload-image-direct... ✓ PASSED (HTTP 200)
-
-=== Health Check ===
-
-Testing GET /v1/health... ✓ PASSED (HTTP 200)
-
-=== Test Summary ===
-Passed: 6
-Failed: 0
-
-🎉 All tests passed!
+npx wrangler dev --local --test-scheduled
+curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"   # janitor
+curl "http://localhost:8787/__scheduled?cron=0+5+*+*+*"   # audit retention
 ```
 
 ---
 
-## 🚀 Staging Testing
+## 🚀 Testing a Deployment
 
-### Step 1: Deploy to Staging
 ```bash
-pnpm deploy:staging
-```
-
-Wait for deployment to complete (~5-10 minutes).
-
-### Step 2: Test Staging API
-
-**Quick Health Check:**
-```bash
+pnpm deploy:staging                          # seconds, not minutes
 curl https://api-staging.yourdomain.com/v1/health | jq .
-```
+./tests/integration/test-api.sh staging
 
-**Run Full Test Suite:**
-```bash
-cd tests/integration
-chmod +x test-api.sh
-./test-api.sh staging
-```
-
-### Step 3: Test with Authentication
-
-**Get a staging JWT token** (from your staging frontend or WorkOS)
-
-**Test authenticated endpoints:**
-```bash
-# Get current user
+# authenticated spot-checks
 curl -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
   https://api-staging.yourdomain.com/v1/users/me | jq .
-
-# Update user
-curl -X PATCH \
-  -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"user":{"firstName":"Test","lastName":"User"}}' \
-  https://api-staging.yourdomain.com/v1/users/me | jq .
-
-# Upload image
-curl -X POST \
-  -H "Authorization: Bearer YOUR_STAGING_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"filename":"test.jpg","contentType":"image/jpeg"}' \
-  https://api-staging.yourdomain.com/v1/media/upload-image | jq .
 ```
 
-### Expected Staging Results
+Same for production (`pnpm deploy:production`, `./tests/integration/test-api.sh production`)
+— **only after staging passes.** Roll back with `npx wrangler rollback --env <stage>`.
+
+### Expected results
 ```
 ✅ Health check returns 200
-✅ CORS headers present
-✅ Protected endpoints return 401 without auth
-✅ Protected endpoints return 200 with valid token
-✅ Custom domain working
-```
-
----
-
-## 🌐 Production Testing
-
-### Step 1: Deploy to Production
-```bash
-pnpm deploy:production
-```
-
-⚠️ **IMPORTANT:** Only deploy to production after staging tests pass!
-
-### Step 2: Test Production API
-
-**Quick Health Check:**
-```bash
-curl https://api.yourdomain.com/v1/health | jq .
-```
-
-**Run Full Test Suite:**
-```bash
-cd tests/integration
-./test-api.sh production
-```
-
-### Step 3: Test with Authentication
-
-**Get a production JWT token** (from your production frontend or WorkOS)
-
-**Test authenticated endpoints:**
-```bash
-# Get current user
-curl -H "Authorization: Bearer YOUR_PROD_TOKEN" \
-  https://api.yourdomain.com/v1/users/me | jq .
-
-# Update user
-curl -X PATCH \
-  -H "Authorization: Bearer YOUR_PROD_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"user":{"firstName":"Test","lastName":"User"}}' \
-  https://api.yourdomain.com/v1/users/me | jq .
-```
-
-### Expected Production Results
-```
-✅ Health check returns 200
-✅ CORS headers present
-✅ Protected endpoints require valid JWT
-✅ All endpoints return correct status codes
-✅ Custom domain working
-✅ SSL/TLS working
+✅ CORS + security headers present
+✅ Protected endpoints return 401 without auth, 200 with a valid token
+✅ Unknown paths return the formatted 404
+✅ /v1/test/* returns 404 in production
 ```
 
 ---
 
 ## 🔍 Troubleshooting
 
-### Local Testing Issues
+**"Connection refused" locally** — `pnpm dev` isn't running (or a stale `workerd`
+holds the port; kill it or pass `--port`).
 
-**Issue: "Connection refused"**
-- **Solution:** Make sure `pnpm dev` is running
+**401 Unauthorized** — JWT expired/invalid, or `WORKOS_CLIENT_ID` in `.dev.vars`
+doesn't match the token's audience.
 
-**Issue: "401 Unauthorized"**
-- **Solution:** Check your JWT token is valid and not expired
-- Get a fresh token from WorkOS or your frontend
+**503 on media endpoints** — R2 S3-API credentials not configured
+(`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`); see
+[CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md) §7c.
 
-**Issue: "500 Internal Server Error" on media endpoints**
-- **Solution:** Check AWS credentials are configured
-- Verify S3 bucket exists and is accessible
+**"Database connection failed"** — check `DATABASE_URL` in `.dev.vars` (Worker) and
+`.env.local` (migrate/drizzle-kit); for integration tests, is `postgres-test` up?
 
-**Issue: "Database connection failed"**
-- **Solution:** Make sure PostgreSQL is running
-- Check `DATABASE_URL` in `.env.local`
+**CORS errors in browser** — origin not in `CORS_*` vars (`wrangler.toml [vars]`);
+logic in `src/node/lib/cors.ts`.
 
-### Staging/Production Issues
-
-**Issue: "Could not resolve host"**
-- **Solution:** Wait a few minutes for DNS propagation
-- Check Route 53 records are correct
-
-**Issue: "403 Forbidden"**
-- **Solution:** Check API Gateway authorizer is configured
-- Verify WorkOS JWKS URL is accessible
-
-**Issue: "CORS errors in browser"**
-- **Solution:** Check CORS_ORIGIN in environment variables
-- Verify origin is in allowed list in `src/node/lib/cors.ts`
-
-**Issue: "502 Bad Gateway"**
-- **Solution:** Check Lambda function logs in CloudWatch
-- Verify Lambda has correct environment variables
-
----
-
-## 📊 Test Coverage
-
-### Endpoints Tested
-
-| Endpoint | Method | Auth | Local | Staging | Prod |
-|----------|--------|------|-------|---------|------|
-| `/v1/health` | GET | No | ✅ | ✅ | ✅ |
-| `/v1/users/me` | GET | Yes | ✅ | ✅ | ✅ |
-| `/v1/users/me` | PATCH | Yes | ✅ | ✅ | ✅ |
-| `/v1/media/upload-image` | POST | Yes | ✅ | ✅ | ✅ |
-| `/v1/media/images` | GET | Yes | ✅ | ✅ | ✅ |
-| `/v1/media/upload-image-direct` | POST | Yes | ✅ | ✅ | ✅ |
-| `/v1/health/detailed` | GET | No | ✅ | ✅ | ✅ |
-| `/v1/webhooks/workos` | POST | Signature | — | ✅ | ✅ |
-| `/v1/graphql` | POST | Yes | ✅ | ✅ | ✅ |
-
-### What's Tested
-
-- ✅ Authentication (JWT validation)
-- ✅ CORS headers
-- ✅ Request validation (Zod schemas)
-- ✅ Response format (success/error)
-- ✅ Database operations
-- ✅ S3 operations
-- ✅ Error handling
-- ✅ Custom domain routing
-
----
-
-## 🎯 Quick Test Commands
-
-### Local
-```bash
-# Start server
-pnpm dev
-
-# Run tests
-./tests/integration/test-handlers.sh "YOUR_JWT_TOKEN"
-```
-
-### Staging
-```bash
-# Deploy
-pnpm deploy:staging
-
-# Test
-./tests/integration/test-api.sh staging
-
-# Test with auth
-curl -H "Authorization: Bearer TOKEN" \
-  https://api-staging.yourdomain.com/v1/users/me | jq .
-```
-
-### Production
-```bash
-# Deploy
-pnpm deploy:production
-
-# Test
-./tests/integration/test-api.sh production
-
-# Test with auth
-curl -H "Authorization: Bearer TOKEN" \
-  https://api.yourdomain.com/v1/users/me | jq .
-```
+**Deployed 500s** — `npx wrangler tail --env <stage>` streams live Worker logs;
+Workers Logs are also in the Cloudflare dashboard. Check Sentry if `SENTRY_DSN` is set.
 
 ---
 
 ## 🔄 Workflow Integration
 
-### Pre-Commit
 ```bash
-# Before committing code
+# Before committing
 pnpm check
-git add .
-git commit -m "feat: add new feature"
-```
 
-### CI/CD Pipeline
+# Full local gate (matches what CI should run — no CI pipeline exists yet, see
+# Migration Plan Phase 2)
+pnpm check && pnpm test:integration:local
 
-The `buildspec.yml` runs `pnpm test:run` (unit) **and** `pnpm test:integration`
-(against an ephemeral Postgres provisioned in the build container) before
-building and deploying via CodePipeline/CodeBuild. A failing transaction
-commit/rollback test blocks the deploy.
-
-### Before Deployment
-```bash
-# Ensure everything passes before deploying
-pnpm check && pnpm run deploy:staging
+# Before deploying
+pnpm check && pnpm deploy:staging
 ```
 
 ---
 
 ## 🎯 Best Practices
 
-1. **Run unit tests during development** - Use watch mode (`pnpm test`)
-2. **Always run before committing** - Use `pnpm check`
-3. **Keep tests fast** - Current suite runs in <300ms
-4. **Write tests for bug fixes** - Prevent regressions
-5. **Test critical paths** - Auth, validation, error handling
-6. **Always test locally first** before deploying
-7. **Test staging before production** - never skip staging
-8. **Keep JWT tokens secure** - don't commit them
-9. **Check CloudWatch logs** if tests fail in staging/prod
+1. **Run unit tests during development** — watch mode (`pnpm test`)
+2. **Always run before committing** — `pnpm check`
+3. **Keep tests fast** — the unit suite runs in well under a second
+4. **Write tests for bug fixes** — prevent regressions
+5. **Test critical paths** — auth, validation, error handling, transactions
+6. **Always test locally first** — the local Worker IS the production code path
+7. **Test staging before production** — never skip staging
+8. **Keep JWT tokens secure** — don't commit them
+9. **Use `wrangler tail`** when deployed tests fail
 10. **Use `jq` for pretty JSON output** in terminal
-
----
-
-## 📝 Test Checklist
-
-### Before Deploying to Staging
-- [ ] All unit tests pass (`pnpm test:run`)
-- [ ] All local integration tests pass
-- [ ] Build passes (`pnpm build`)
-- [ ] No TypeScript errors
-- [ ] Environment variables configured
-
-### Before Deploying to Production
-- [ ] All staging tests pass
-- [ ] Tested with real JWT tokens
-- [ ] Verified CORS works from frontend
-- [ ] Checked CloudWatch logs for errors
-- [ ] Database migrations applied
-
-### After Deployment
-- [ ] Health check returns 200
-- [ ] Custom domain resolves
-- [ ] SSL certificate valid
-- [ ] CORS headers present
-- [ ] Authentication works
-- [ ] All endpoints return correct status codes
 
 ---
 
 ## 🚀 Future Test Additions
 
-### Integration Tests (Recommended)
-Test deployed Lambda functions against real AWS services:
-```typescript
-// tests/integration/auth-identity-mapping.test.ts
-test('getUserIdFromClaims returns correct internal user ID', async () => {
-  // Test with real database connection
-  // Verify WorkOS subject maps to internal UUID
-});
-```
-
-### CDK Infrastructure Tests
-Validate CDK stack configuration:
-```typescript
-// tests/infrastructure/api-stack.test.ts
-test('API Gateway has WorkOS authorizer configured', () => {
-  const template = Template.fromStack(apiStack);
-  // Verify infrastructure is correct
-});
-```
-
-### E2E Tests
-Test complete API flows:
-```typescript
-// tests/e2e/media-upload.test.ts
-test('User can upload and retrieve images', async () => {
-  // Test full flow: auth → upload → list → verify
-});
-```
-
----
-
-## 🔗 Useful Links
-
-- **Local API:** http://localhost:3000
-- **Staging API:** https://api-staging.yourdomain.com
-- **Production API:** https://api.yourdomain.com
-- **API Docs:** Run `pnpm docs:serve`
-- **CloudWatch Logs:** AWS Console → CloudWatch → Log Groups
-
----
-
-## ✅ Current Status
-
-- ✅ **Unit tests passing** (8 test files, 63 tests)
-- ✅ **Real-DB integration tests passing** (transaction commit/rollback)
-- ✅ **Lint checks passing**
-- ✅ **TypeScript checks passing**
-- ✅ **Build successful**
-- ✅ **Ready for deployment**
-
----
-
-**Happy Testing!** 🎉
+- **Workers-runtime tests** — run the suites under `@cloudflare/vitest-pool-workers` /
+  miniflare to catch `nodejs_compat` edge cases in CI
+- **E2E media flow** — auth → presign → upload to R2 → list → verify
+- **Auth identity mapping** — `getUserIdFromClaims` JIT provisioning against a real DB

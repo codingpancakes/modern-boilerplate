@@ -1,8 +1,11 @@
+> **LEGACY** — described the pre-atomic AWS stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
+> Still useful exactly once: when decommissioning the old AWS account. The CDK code it
+> references was deleted from this branch — run it from a pre-atomic checkout (e.g. `main`).
+
 # CDK Complete Teardown Guide
 
 > ⚠️ There is no `destroy-all.sh` script — teardown is the manual sequence below.
-> Before tearing down for the [Cloudflare migration](../direction/MIGRATION_PLAN.md),
-> archive CloudTrail logs first (compliance retention evidence).
+> Before tearing down, archive CloudTrail logs first (compliance retention evidence).
 
 ## Quick Commands
 

@@ -1,129 +1,131 @@
 # Serverless Backend Boilerplate
 
-Production-grade serverless API built with AWS Lambda, TypeScript, and WorkOS authentication.
+Production-grade API running as **one Cloudflare Worker** — Hono + Neon Postgres +
+WorkOS authentication. Built to be owned end-to-end by one person
+(see [docs/direction/NORTH_STAR.md](./docs/direction/NORTH_STAR.md)).
 
-All project naming flows from `PROJECT_NAME` in your (gitignored) `.env` files — run
-`pnpm init-project` to spin off a new project (see `docs/BOILERPLATE_SETUP.md`).
+All project naming flows from `PROJECT_NAME` — run `pnpm init-project` to spin off a
+new project (see [docs/CLOUDFLARE_SETUP.md](./docs/CLOUDFLARE_SETUP.md)).
 
 ## Stack
 
-- **Runtime:** Node.js 24 / TypeScript 5 / pnpm
-- **API:** AWS Lambda + API Gateway HTTP v2 + GraphQL (Apollo Server)
-- **Database:** PostgreSQL on Neon (`drizzle-orm/neon-http`)
-- **Auth:** WorkOS JWT (custom Lambda authorizer)
-- **Infra:** AWS CDK v2 (CloudFront + WAF + S3 + CodeDeploy blue-green)
-- **Observability:** CloudWatch + X-Ray + Sentry + structured logging (Powertools)
+- **Runtime:** Cloudflare Workers (`nodejs_compat`) / TypeScript 5 / pnpm
+- **HTTP:** One Hono app serving REST + GraphQL (GraphQL Yoga)
+- **Database:** PostgreSQL on Neon (`drizzle-orm` + `@neondatabase/serverless`)
+- **Auth:** WorkOS JWT, verified in middleware (`jose`, RS256-pinned)
+- **Media:** Cloudflare R2 (S3-compatible API via `aws4fetch` presigning)
+- **Jobs:** Cloudflare Cron Triggers (`src/node/cron.ts`)
+- **Edge:** Cloudflare WAF/DDoS/CDN (included — the Worker *is* the edge)
 - **Validation:** Zod | **Linter:** Biome | **Tests:** Vitest
 
 ## Quick Start
 
 ```bash
 pnpm install
-# Create .env.local with your credentials — see docs/ENVIRONMENT_VARIABLES.md
+cp .dev.vars.example .dev.vars       # fill in DATABASE_URL, WORKOS_CLIENT_ID, …
+# also put DATABASE_URL in .env.local (used by migrate/drizzle-kit)
 pnpm migrate
-pnpm dev                            # http://localhost:3000
+pnpm dev                             # wrangler dev --local → http://localhost:8787
 ```
+
+No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.md](./docs/CLOUDFLARE_SETUP.md).
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `pnpm dev` | Start local Express server (Lambda parity) |
+| `pnpm dev` | Run the Worker locally (`wrangler dev --local`, port 8787) |
 | `pnpm check` | Lint + typecheck + unit tests |
 | `pnpm test:run` | Unit tests only |
-| `pnpm test:integration` | Real-DB transaction tests (needs Postgres; `docker compose up -d postgres`) |
+| `pnpm test:integration:local` | Real-DB transaction tests (starts docker `postgres-test`) |
 | `pnpm lint:fix` | Auto-fix lint issues |
 | `pnpm typecheck` | TypeScript check |
 | `pnpm migrate` | Run Drizzle migrations |
-| `pnpm deploy:staging` | Deploy to staging |
-| `pnpm build` | TypeScript compile + generate docs |
-| `pnpm deploy:production` | Deploy to production |
-| `pnpm sync-secrets <stage>` | Sync env vars to AWS (e.g. `pnpm sync-secrets staging`) |
+| `pnpm db:generate` | Generate a migration from schema changes |
+| `pnpm sync-secrets <stage>` | Push secrets to Cloudflare (`wrangler secret put`) |
+| `pnpm deploy:staging` | `wrangler deploy --env staging` |
+| `pnpm deploy:production` | `wrangler deploy --env production` |
+| `pnpm build` | TypeScript compile + generate OpenAPI docs |
 
 ## Project Structure
 
 ```
 src/node/
-  handlers/              Lambda handlers — one per file
-    users/               me.ts, update.ts
-    media/               upload-image.ts, upload-image-direct.ts, list-images.ts
-    webhooks/            workos.ts
-    graphql/             handler.ts, context.ts, resolvers/, schema/
-    utils/               health.ts, health-detailed.ts, janitor.ts, options.ts
+  worker.ts              Worker entry: fetch → Hono app, scheduled → cron registry
+  app.ts                 THE Hono app: request-id, db scope, audit flush, CORS, errors
+  cron.ts                Cron Trigger registry (keys = wrangler.toml [triggers] expressions)
+  routes/                One Hono sub-app per domain, barrel in index.ts
+    users.ts media.ts graphql.ts webhooks.ts utils.ts test.ts
+  authorizers/           verify-token.ts — WorkOS JWT verifier (single source of auth trust)
+  handlers/
+    graphql/             Yoga context, plugins, resolvers/, schema/
+    utils/               janitor.ts, audit-retention.ts (cron jobs)
   lib/                   Shared libraries
+    hono/                auth (requireAuth), middleware, respond, types
     validation/          Zod schemas by domain
     services/            Business logic (user-provisioning.ts)
-    middleware.ts        withAuth wrapper
-    cors.ts              Dynamic CORS
-    db.ts                Neon connection with retry + TTL rotation
-    errors.ts            Error factory
-    audit.ts             Audit logging
-    sanitize.ts          Input sanitization
-    sentry.ts            Error tracking
-    idempotency.ts       Request deduplication
-  authorizers/           workos-jwt.ts (Lambda authorizer)
-  db/schema/             Drizzle schema (8 tables, 3 enums)
+    cors.ts db.ts errors.ts audit.ts sanitize.ts idempotency.ts media.ts logger.ts …
+  db/                    Drizzle schema (schema/) + SQL migrations (migrations/)
 
-infrastructure/          CDK stacks (security, database, media, api, monitoring, pipeline)
-local-dev/server.ts      Express dev server mimicking Lambda
-templates/               Handler templates (.ts.template)
-tests/                   Unit + integration tests
+wrangler.toml            Worker config: vars, R2 bindings, cron triggers, staging/production envs
+.dev.vars.example        Registry of every secret the Worker reads (copy to .dev.vars)
+scripts/                 migrate, sync-secrets, init-project, generate-openapi
+templates/               Lambda-era handler templates (see templates/README.md)
+tests/                   Unit (vitest) + integration (vitest + shell scripts)
+docs/                    Human docs (legacy AWS docs under docs/legacy-aws/)
 ```
 
 ## Architecture
 
 ```
-Client → CloudFront (WAF) → API Gateway HTTP v2 → Lambda Authorizer (JWT)
-                                                  → Lambda Handlers → Neon Postgres
-                                                                    → S3 (presigned URLs)
+Client → Cloudflare edge (WAF/DDoS/CDN) → Worker
+           fetch     → Hono app → routes → Neon Postgres (Drizzle)
+                                         → R2 (presigned URLs)
+           scheduled → cron registry (janitor, audit retention)
 ```
 
-- **Auth:** WorkOS JWT verified by Lambda authorizer → claims forwarded to handlers
-- **REST:** `withAuth` middleware wraps handlers, validates claims, adds CORS/security headers
-- **GraphQL:** Apollo Server with depth limiting, complexity analysis, mutation limits
-- **Deploys:** Blue-green via CodeDeploy (canary 10%/5min in prod, all-at-once in staging)
-- **Idempotency:** Hash-based dedup with TTL for webhooks and critical mutations
+- **Auth:** `requireAuth()` Hono middleware verifies the WorkOS JWT (RS256, JWKS,
+  `client_id` audience binding) and puts claims on `c.get("claims")`. No gateway,
+  no separate authorizer.
+- **REST:** route modules under `src/node/routes/`; app-level middleware handles
+  request IDs, per-request DB lifecycle, audit flushing, CORS + security headers,
+  and error formatting.
+- **GraphQL:** GraphQL Yoga at `/v1/graphql` with DataLoaders, depth limiting,
+  complexity/mutation limits (`src/node/handlers/graphql/`).
+- **Idempotency:** DB-backed hash dedup with TTL for webhooks and critical mutations.
+- **Deploys:** `wrangler deploy` (seconds, atomic versions); `wrangler rollback` to revert.
 
 ## Auth Flow
 
 1. Client sends `Authorization: Bearer <JWT>`
-2. Lambda authorizer verifies RS256 signature via WorkOS JWKS
-3. Claims forwarded to handler via `event.requestContext.authorizer.lambda`
-4. `getUserIdFromClaims(event)` resolves `authIdentity → userId` (JIT creates user on first login)
+2. `requireAuth()` middleware verifies the RS256 signature against the WorkOS JWKS
+3. Verified claims are set on the Hono context (`c.get("claims")`)
+4. `getUserIdFromClaims(claims)` resolves `authIdentity → userId` (JIT-creates the user on first login)
 
-## Creating a New Handler
+## Adding an Endpoint
 
-```bash
-cp templates/user-scoped.ts.template src/node/handlers/{domain}/{action}.ts
-```
-
-Then: add Zod schema in `lib/validation/`, register route in `infrastructure/lib/routes/` and `local-dev/server.ts`, run `pnpm check`.
-
-See [templates/README.md](./templates/README.md) for detailed guide.
+Copy the nearest sibling in `src/node/routes/` (e.g. `users.ts`), add your handler to
+the domain's Hono sub-app, add a Zod schema in `lib/validation/`, and — only for a new
+domain — mount it in `routes/index.ts` (with `requireAuth()` if protected). Then
+`pnpm check`. Patterns and invariants: [AGENTS.md](./AGENTS.md).
 
 ## Documentation
 
 | Doc | Purpose |
 |-----|---------|
-| [Setup Guide](./docs/BOILERPLATE_SETUP.md) | First-time project setup from zero |
-| [Environment Variables](./docs/ENVIRONMENT_VARIABLES.md) | All env vars, secrets, SSM params |
-| [Security Model](./docs/SECURITY.md) | Auth, CORS, WAF, origin verification, blue-green deploys, error masking |
-| [Audit Logging](./docs/AUDIT_LOGGING_GUIDE.md) | How audit trail works, integration patterns |
+| [Cloudflare Setup](./docs/CLOUDFLARE_SETUP.md) | Zero-to-running: local dev, tests, secrets, deploy |
+| [Environment Variables](./docs/ENVIRONMENT_VARIABLES.md) | wrangler vars, secrets, `.dev.vars` |
+| [Security Model](./docs/SECURITY.md) | Auth, CORS, edge protection, error masking |
+| [Audit Logging](./docs/AUDIT_LOGGING_GUIDE.md) | How the audit trail works, integration patterns |
 | [Testing Guide](./docs/guides/TESTING.md) | Unit + integration testing |
-| [CDK Teardown](./docs/guides/CDK_TEARDOWN.md) | How to destroy AWS stacks |
-| [Lambda & DLQ](./docs/LAMBDA_CONCURRENCY_DLQ.md) | Concurrency settings, dead letter queues |
 | [Data Retention](./docs/DATA_RETENTION_POLICY.md) | Retention policies per data type |
 | [SOC 2 Checklist](./docs/SOC2_READINESS_CHECKLIST.md) | Compliance readiness tracker |
+| [North Star](./docs/direction/NORTH_STAR.md) | Why this stack; one-person maintainability principles |
+| [Migration Plan](./docs/direction/MIGRATION_PLAN.md) | AWS → Cloudflare migration record + remaining work |
+| [Legacy AWS docs](./docs/legacy-aws/) | Pre-migration stack (kept for decommissioning/reference) |
 
 ## AI Coding Rules
 
-This project uses `.cursor/rules/` for AI pattern enforcement:
-
-| Rule | Scope | Purpose |
-|------|-------|---------|
-| `backend-core.mdc` | Always | Core invariants, directory layout |
-| `handlers.mdc` | `src/node/handlers/**` | REST handler patterns |
-| `graphql.mdc` | `src/node/handlers/graphql/**` | GraphQL resolver patterns |
-| `validation-security.mdc` | `src/node/lib/**` | Validation, sanitization, security |
-| `infrastructure.mdc` | `infrastructure/**` | CDK patterns |
-| `testing.mdc` | `tests/**` | Test patterns, mock conventions |
+[AGENTS.md](./AGENTS.md) is the canonical guide (invariants, Definition of Done).
+`.cursor/rules/` holds per-domain pattern files; note `infrastructure.mdc` and parts
+of `handlers.mdc`/`backend-core.mdc` still describe the Lambda-era layout.

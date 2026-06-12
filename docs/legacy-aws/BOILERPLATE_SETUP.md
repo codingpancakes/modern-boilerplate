@@ -1,3 +1,5 @@
+> **LEGACY** — described the pre-atomic AWS stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
+
 # Deploying a New Project from This Boilerplate
 
 A complete guide to setting up and deploying a new system using this CDK backend — from zero to running in AWS.
@@ -467,7 +469,7 @@ Then re-trigger the pipeline.
 
 ## Further Reading
 
-- [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) — full reference for every env var
-- [SECURITY.md](./SECURITY.md) — security architecture and threat model
-- [TESTING.md](./guides/TESTING.md) — unit and integration testing guide
-- [CDK_TEARDOWN.md](./guides/CDK_TEARDOWN.md) — how to destroy AWS stacks
+- [ENVIRONMENT_VARIABLES.md](../ENVIRONMENT_VARIABLES.md) — env var reference (now rewritten for Cloudflare)
+- [SECURITY.md](../SECURITY.md) — security architecture (now rewritten for Cloudflare)
+- [TESTING.md](../guides/TESTING.md) — unit and integration testing guide
+- [CDK_TEARDOWN.md](./CDK_TEARDOWN.md) — how to destroy AWS stacks

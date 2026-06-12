@@ -1,3 +1,11 @@
+> **NOTE (June 2026)** — the database-level retention rules here (audit trail 7 years,
+> idempotency-key janitor, user data lifecycle) are current; both cleanup jobs now run
+> as Cloudflare Cron Triggers (`src/node/cron.ts`). The infrastructure sections
+> (CloudWatch, CloudTrail, S3 lifecycle, Secrets Manager) described the pre-atomic AWS
+> stack and need re-mapping to Cloudflare equivalents (Workers Logs retention, R2
+> lifecycle rules, Logpush) — not yet configured. See
+> [direction/MIGRATION_PLAN.md](./direction/MIGRATION_PLAN.md) Phase 4.
+
 # 📋 Data Retention Policy
 
 **Effective Date:** December 10, 2025  

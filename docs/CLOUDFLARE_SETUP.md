@@ -1,0 +1,177 @@
+# Cloudflare Setup — Zero to Running
+
+The entire backend is **one Cloudflare Worker** (`src/node/worker.ts` → the single Hono
+app in `src/node/app.ts`). Local development runs the same Worker under
+`wrangler dev --local` — no Cloudflare account needed until you deploy.
+
+---
+
+## 1. Prerequisites
+
+- **Node.js 24** and **pnpm**
+- **Docker** — only for the real-Postgres integration tests (`postgres-test` service)
+- **A Neon Postgres database** (or any Postgres reachable by URL) for `DATABASE_URL`
+- **A WorkOS application** for `WORKOS_CLIENT_ID` (JWT auth)
+- **A Cloudflare account** — only for `wrangler deploy` / remote secrets; never for local dev
+
+## 2. Install
+
+```bash
+pnpm install
+```
+
+## 3. Configure local secrets — `.dev.vars`
+
+```bash
+cp .dev.vars.example .dev.vars
+# fill in real values (file is gitignored — never commit it)
+```
+
+`.dev.vars.example` is the **single checked-in registry of every secret the Worker
+reads** — `scripts/sync-secrets.ts` also uses it as the list of names to push to
+deployed environments. Required to boot meaningfully: `DATABASE_URL`,
+`WORKOS_CLIENT_ID`. Everything else is feature-dependent (see comments in the file).
+
+Non-secret config (STAGE, CORS lists, `IMAGES_BUCKET`, …) lives in `wrangler.toml`
+`[vars]` — edit the `PLACEHOLDER` values there for your project.
+
+`pnpm migrate` and drizzle-kit read `DATABASE_URL` from **`.env.local`** (dotenv),
+not `.dev.vars` — keep the same `DATABASE_URL` in both files.
+
+## 4. Migrate the database
+
+```bash
+pnpm migrate        # tsx scripts/migrate.ts — applies src/node/db/migrations/ via drizzle
+```
+
+Schema change workflow: edit `src/node/db/schema/`, then `pnpm db:generate` (creates a
+new SQL migration), then `pnpm migrate`. Migrations must stay expand/contract-safe
+(see AGENTS.md invariant).
+
+## 5. Run locally
+
+```bash
+pnpm dev            # wrangler dev --local → http://localhost:8787
+```
+
+- No Cloudflare account or login required: `--local` runs everything in workerd on
+  your machine; the R2 binding is simulated on disk under `.wrangler/state`.
+- Smoke check: `curl http://localhost:8787/v1/health` (and `/v1/health/detailed`
+  for a real DB round-trip).
+- GraphQL (GraphQL Yoga) is at `POST http://localhost:8787/v1/graphql` (auth required).
+- Cron triggers: run `npx wrangler dev --local --test-scheduled`, then
+  `curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` (janitor) or
+  `cron=0+5+*+*+*` (audit retention).
+
+## 6. Test
+
+```bash
+pnpm check                    # lint + typecheck + unit tests (no DB needed)
+pnpm test                     # unit tests, watch mode
+pnpm test:integration:local   # starts docker postgres-test, runs real-DB transaction tests
+```
+
+Shell-based API tests run against a live server (local `pnpm dev` by default,
+port 8787): see `tests/integration/*.sh` and [guides/TESTING.md](./guides/TESTING.md).
+
+## 7. Deploy (Cloudflare account required from here on)
+
+```bash
+npx wrangler login            # once per machine
+```
+
+### 7a. Push secrets
+
+Create `.env.staging` / `.env.production` (gitignored) with values for the secret
+names listed in `.dev.vars.example`, then:
+
+```bash
+pnpm sync-secrets staging     # pipes each value to `wrangler secret put <NAME> --env staging`
+pnpm sync-secrets production
+npx wrangler secret list --env staging    # verify
+```
+
+Values travel over stdin only — never argv or logs.
+
+### 7b. Deploy the Worker
+
+```bash
+pnpm deploy:staging           # wrangler deploy --env staging
+pnpm deploy:production        # wrangler deploy --env production
+npx wrangler deploy --dry-run --env staging   # build-only sanity check, no account writes
+```
+
+Rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior versions).
+Note there is **no automated canary/auto-rollback yet** — the CodeDeploy blue-green
+machinery did not carry over; see Phase 4 of
+[direction/MIGRATION_PLAN.md](./direction/MIGRATION_PLAN.md).
+
+### 7c. R2 (media storage) — setup placeholder
+
+Media routes need both the R2 bucket binding **and** S3-API credentials
+(`lib/media.ts` presigns via `aws4fetch` against R2's S3-compatible endpoint).
+Until configured, media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED`.
+
+1. `npx wrangler r2 bucket create <name>` per environment; make the name match
+   `[[env.<stage>.r2_buckets]].bucket_name` and `IMAGES_BUCKET` in `wrangler.toml`.
+2. Create an R2 API token (Cloudflare dashboard → R2 → Manage API Tokens) and push
+   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` as secrets
+   (they are in `.dev.vars.example`, so `pnpm sync-secrets` covers them).
+3. Set `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
+
+### 7d. Hyperdrive (DB pooling) — setup placeholder
+
+Not configured yet. The Worker currently talks to Neon directly via
+`@neondatabase/serverless` (per-request connections, as Workers requires). When
+connection latency or pooling becomes a measured problem, add a `[[hyperdrive]]`
+binding in `wrangler.toml` and point `lib/db.ts` at it — see the North Star's
+target stack table.
+
+## 8. API docs (optional)
+
+```bash
+pnpm docs:generate   # swagger-jsdoc over src/node/routes/**/*.ts → docs/api/openapi.json
+pnpm docs:serve      # serves docs/api on a local Express server
+```
+
+`docs:generate` requires `PROJECT_NAME` and `HOSTED_ZONE_NAME` in `.env.staging`
+(it stamps server URLs into the spec).
+
+## 9. New project from this boilerplate
+
+```bash
+pnpm init-project <project-name> <domain> [--github-owner <owner>]
+```
+
+Generates the `.env.*` files and sets the package name. Then update `wrangler.toml`
+yourself: worker `name`, `[vars]` placeholders (CORS, `IMAGES_CDN_URL`), and the R2
+bucket names.
+
+---
+
+## Where things live
+
+| Concern | Location |
+|---|---|
+| Worker entry (`fetch` + `scheduled`) | `src/node/worker.ts` |
+| The Hono app (middleware + error shape) | `src/node/app.ts` |
+| Routes (one module per domain) | `src/node/routes/*.ts`, barrel in `routes/index.ts` |
+| Auth middleware (WorkOS JWT) | `src/node/lib/hono/auth.ts` → `authorizers/verify-token.ts` |
+| Cron jobs (janitor, audit retention) | `src/node/cron.ts` + `wrangler.toml [triggers]` |
+| Config (non-secret) | `wrangler.toml [vars]` per environment |
+| Secrets | `.dev.vars` locally; `wrangler secret` deployed |
+| DB schema + migrations | `src/node/db/` |
+
+## Troubleshooting
+
+- **`Missing entry-point` / wrong routes** — you're not at the repo root; wrangler
+  reads `wrangler.toml` from cwd.
+- **401 on every protected route** — `WORKOS_CLIENT_ID` missing/wrong in `.dev.vars`,
+  or the JWT is for a different WorkOS client.
+- **`/v1/health/detailed` fails** — `DATABASE_URL` in `.dev.vars` is wrong or the
+  database is unreachable.
+- **Media routes return 503** — R2 credentials not set; see 7c.
+- **`/v1/test/*` returns 404** — by design when `STAGE=production`; these are
+  dev/staging-only diagnostics (`src/node/routes/test.ts`).
+- **Port already in use** — a stale `workerd` process from a previous `wrangler dev`;
+  kill it or pass `--port`.

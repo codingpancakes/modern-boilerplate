@@ -1,7 +1,9 @@
 # North Star — The One-Person Backend
 
-> Status: **direction document.** The code in this repo is still the AWS/CDK stack.
-> This describes where we're going and why. The path is in [MIGRATION_PLAN.md](./MIGRATION_PLAN.md).
+> Status: **largely realized (June 2026).** The migration executed: this branch runs the
+> whole backend as one Cloudflare Worker (Hono + Neon), all AWS code deleted. The
+> "Today (AWS)" column below is historical context. Remaining gaps (Hyperdrive, Queues,
+> CI, deploy safety/operational shell) are tracked in [MIGRATION_PLAN.md](./MIGRATION_PLAN.md).
 
 ## Goal
 

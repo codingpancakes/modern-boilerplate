@@ -1,3 +1,10 @@
+> **NOTE** — platform-level items below (Lambda, CloudWatch, CloudTrail, Secrets Manager,
+> WAF stacks) described the pre-atomic AWS stack and need re-mapping to Cloudflare
+> equivalents (Workers Logs, Cloudflare account audit logs, Logpush, wrangler secrets).
+> App-level controls (audit trail, validation, sanitization, RBAC, idempotency) are
+> unchanged and current. See [docs/CLOUDFLARE_SETUP.md](./CLOUDFLARE_SETUP.md) and
+> [direction/NORTH_STAR.md](./direction/NORTH_STAR.md) "Security & compliance posture".
+
 # 🔒 SOC 2 Compliance Readiness Checklist
 
 **Generated:** December 10, 2025  

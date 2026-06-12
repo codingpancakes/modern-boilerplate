@@ -1,217 +1,128 @@
 # Environment Variables Reference
 
-This document lists all environment variables used in the project and where they are stored in AWS.
+How configuration and secrets reach the Worker, and which files hold what.
 
-## 📋 Table of Contents
-- [Local Development (.env files)](#local-development-env-files)
-- [AWS SSM Parameter Store](#aws-ssm-parameter-store)
-- [AWS Secrets Manager](#aws-secrets-manager)
-- [Lambda Runtime Environment](#lambda-runtime-environment)
+There are exactly **two kinds of values**:
 
----
+1. **Non-secret config** → `wrangler.toml [vars]` (committed; per-environment blocks)
+2. **Secrets** → `.dev.vars` locally / `wrangler secret put` deployed (never committed)
 
-## 🔧 Environment Files
-
-- **`.env.local`** — local development (`pnpm dev`, `pnpm migrate`, `pnpm db:generate`)
-- **`.env.staging`** — staging deployment (`pnpm deploy:staging`, `pnpm sync-secrets staging`)
-- **`.env.production`** — production deployment (`pnpm deploy:production`, `pnpm sync-secrets production`)
-
-All files share the same variable schema. None are committed to git.
-
-### Required Variables
-- `PROJECT_NAME` - Project identifier (e.g., "your-project")
-- `STAGE` - Environment stage ("staging" or "production")
-- `AWS_REGION` - AWS region (e.g., "us-east-1")
-- `HOSTED_ZONE_ID` - Route53 hosted zone ID
-- `HOSTED_ZONE_NAME` - Domain name (e.g., "yourdomain.com")
-- `GITHUB_OWNER` - GitHub organization/user
-- `GITHUB_REPO` - Repository name
-- `GITHUB_BRANCH` - Branch to deploy from
-- `WORKOS_CLIENT_ID` - WorkOS client ID (sensitive)
-- `DATABASE_URL` - PostgreSQL connection string (sensitive)
-- `IMAGES_BUCKET` - S3 bucket for images
-- `IMAGES_CDN_URL` - CloudFront CDN URL
-- `CORS_DOMAIN_PATTERNS` - CORS allowed domain patterns
-
-### Optional Variables
-- `IMAGES_BUCKET_PREFIX` - S3 key prefix for images
-- `API_DOMAIN` - Custom API domain
-- `CORS_EXACT_ORIGINS` - Exact CORS origins (comma-separated)
-- `CORS_PARENT_DOMAINS` - Parent domains for CORS (comma-separated)
-- `ALERT_EMAIL` - Email for monitoring alerts
-- `ORIGIN_VERIFY_SECRET` - Shared secret between CloudFront and Lambda to block direct execute-api access. Generate with `openssl rand -hex 32`. Leave empty to disable (gradual rollout).
-- `ENABLE_WAF` - Set to `"true"` to deploy AWS WAF v2 in front of CloudFront (~$10/month). Any other value or omission disables WAF.
+With `nodejs_compat` and the 2025+ `compatibility_date`, the Workers runtime populates
+`process.env` from both, so application code reads `process.env.X` everywhere.
+Workers **bindings** (R2 buckets) are not strings — they arrive on `c.env`
+(typed by `WorkerBindings` in `src/node/worker.ts`).
 
 ---
 
-## 📦 AWS SSM Parameter Store
+## Files
 
-Non-sensitive configuration stored in SSM Parameter Store.
+| File | Committed | Used by | Purpose |
+|---|---|---|---|
+| `wrangler.toml` | ✅ | `wrangler dev` / `wrangler deploy` | Non-secret config (`[vars]`), R2 bindings, cron triggers, per-env blocks |
+| `.dev.vars.example` | ✅ | humans + `scripts/sync-secrets.ts` | **The registry of every secret name the Worker reads** |
+| `.dev.vars` | ❌ gitignored | `wrangler dev --local` | Local secret values (copy from `.dev.vars.example`) |
+| `.env.local` | ❌ gitignored | `pnpm migrate`, `pnpm db:generate` | `DATABASE_URL` for local DB tooling (dotenv, not wrangler) |
+| `.env.staging` / `.env.production` | ❌ gitignored | `pnpm sync-secrets <stage>`, `pnpm docs:generate` | Secret values to push per stage; `PROJECT_NAME`/`HOSTED_ZONE_NAME` for docs generation |
 
-### Global Parameters
-**Path:** `/github/*`
-- `/github/project-name` - Project name (used by CI/CD pipeline)
-
-### Stage-Specific Parameters
-**Path:** `/{PROJECT_NAME}/{STAGE}/*`
-
-#### Infrastructure
-- `/{PROJECT_NAME}/{STAGE}/hosted-zone-id`
-- `/{PROJECT_NAME}/{STAGE}/hosted-zone-name`
-- `/{PROJECT_NAME}/{STAGE}/api-domain`
-
-#### GitHub Configuration (CI/CD)
-- `/{PROJECT_NAME}/{STAGE}/github-owner`
-- `/{PROJECT_NAME}/{STAGE}/github-repo`
-- `/{PROJECT_NAME}/{STAGE}/github-branch`
-
-#### Media/Storage
-- `/{PROJECT_NAME}/{STAGE}/images-bucket`
-- `/{PROJECT_NAME}/{STAGE}/images-bucket-prefix`
-- `/{PROJECT_NAME}/{STAGE}/images-cdn-url`
-
-#### CORS Configuration
-- `/{PROJECT_NAME}/{STAGE}/cors-domain-patterns`
-- `/{PROJECT_NAME}/{STAGE}/cors-exact-origins`
-- `/{PROJECT_NAME}/{STAGE}/cors-parent-domains`
-
-#### Monitoring
-- `/{PROJECT_NAME}/{STAGE}/alert-email`
-
-#### Security
-- `/{PROJECT_NAME}/{STAGE}/origin-verify-secret`
+> `pnpm init-project <name> <domain>` generates the `.env.*` files.
+> Keep `DATABASE_URL` identical in `.dev.vars` and `.env.local`.
 
 ---
 
-## 🔐 AWS Secrets Manager
+## Non-secret config — `wrangler.toml [vars]`
 
-Sensitive credentials stored in Secrets Manager (JSON format).
+Defined once at top level (used by `wrangler dev --local`) and **repeated in full**
+under `[env.staging.vars]` / `[env.production.vars]` (named environments do not
+inherit `[vars]` or R2 bindings).
 
-### WorkOS Credentials
-**Secret ID:** `/{PROJECT_NAME}/{STAGE}/workos`
+| Variable | Purpose |
+|---|---|
+| `NODE_ENV` | `development` / `staging` / `production`. Gates 5xx error masking (`lib/errors.ts`) and dev CORS origins (`lib/cors.ts`) |
+| `STAGE` | Deployment stage (`local` / `staging` / `production`). `production` disables the dev-only `/v1/test/*` routes |
+| `PROJECT_NAME` | Project identifier (drives naming, docs) |
+| `API_VERSION` | URL version prefix (`v1`) |
+| `SENTRY_ENVIRONMENT` | Sentry environment tag (staging/production blocks only) |
+| `CORS_DOMAIN_PATTERNS` | Regex patterns for allowed origins (comma-separated) |
+| `CORS_EXACT_ORIGINS` | Exact allowed origins (comma-separated) |
+| `CORS_PARENT_DOMAINS` | Parent domains whose subdomains are allowed |
+| `IMAGES_BUCKET` | R2 bucket name — must match the `[[r2_buckets]]` binding's `bucket_name` |
+| `IMAGES_CDN_URL` | Public/custom-domain URL of the R2 bucket (was CloudFront) |
 
-**JSON Structure:**
-```json
-{
-  "clientId": "WORKOS_CLIENT_ID"
-}
-```
+## Bindings — `wrangler.toml [[r2_buckets]]`
 
-### Database Credentials
-**Secret ID:** `/{PROJECT_NAME}/{STAGE}/database`
+| Binding | Purpose |
+|---|---|
+| `IMAGES` | R2 images bucket, available as `c.env.IMAGES`. Simulated on disk under `.wrangler/state` in local dev |
 
-**JSON Structure:**
-```json
-{
-  "url": "DATABASE_URL"
-}
-```
-
----
-
-## 🚀 Lambda Runtime Environment
-
-Environment variables injected into Lambda functions at runtime.
-
-### Core Configuration
-- `PROJECT_NAME` - Project identifier
-- `NODE_ENV` - Node environment ("production" or "staging")
-- `STAGE` - Deployment stage
-
-### Authentication
-- `WORKOS_CLIENT_ID` - WorkOS client ID
-- `WORKOS_SECRET_ARN` - ARN of WorkOS secret in Secrets Manager
-
-### Database
-- `DATABASE_URL` - Direct database URL (if available)
-- `DB_SECRET_ARN` - ARN of database secret in Secrets Manager
-
-### Media/Storage
-- `IMAGES_BUCKET` - S3 bucket name
-- `IMAGES_CDN_URL` - CloudFront distribution URL
-- `IMAGES_BUCKET_PREFIX` - S3 key prefix
-
-### CORS Configuration
-- `CORS_DOMAIN_PATTERNS` - Regex patterns for allowed domains
-- `CORS_EXACT_ORIGINS` - Exact origin URLs
-- `CORS_PARENT_DOMAINS` - Parent domain names
-
-### Security
-- `ORIGIN_VERIFY_SECRET` - CloudFront origin verification header secret
+Add a property to `WorkerBindings` in `src/node/worker.ts` whenever you add a binding.
 
 ---
 
-## 🔄 Syncing Process
+## Secrets — registry in `.dev.vars.example`
 
-### 1. Create/Update `.env.{stage}` files locally
-Add all required variables to your environment files.
+Every uncommented `KEY` in `.dev.vars.example` is a secret the Worker may read, and is
+exactly what `pnpm sync-secrets <stage>` pushes. Current registry:
 
-### 2. Run sync script
+### Required
+| Secret | Purpose |
+|---|---|
+| `DATABASE_URL` | Neon Postgres connection string |
+| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`) |
+
+### Feature-dependent
+| Secret | Purpose |
+|---|---|
+| `WORKOS_WEBHOOK_SECRET` | Signature verification for `POST /v1/webhooks/workos` |
+| `SENTRY_DSN` | Sentry error reporting (empty = disabled) |
+| `TEST_API_KEY` | Constant-time-compared key for `GET /v1/test/api-key` (dev/staging only) |
+| `WEBHOOK_SECRET` | HMAC secret for `POST /v1/test/webhook` (dev/staging only) |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 S3-API credentials for presigning/listing (`lib/media.ts`). Unset → media endpoints return 503 `MEDIA_STORAGE_NOT_CONFIGURED` |
+
+### Optional overrides (commented out in the registry — not synced)
+| Variable | Purpose |
+|---|---|
+| `AUTH_ISSUER` | JWT issuer override; defaults to `https://api.workos.com/` |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARN` / `ERROR` for `lib/logger.ts` (default `INFO`; `POWERTOOLS_LOG_LEVEL` honored first for parity) |
+| `R2_BUCKET` | Override; falls back to `IMAGES_BUCKET` |
+
+---
+
+## Syncing secrets to Cloudflare
+
 ```bash
-# Sync staging environment
+# 1. Put values in .env.staging / .env.production (gitignored)
+# 2. Push (names from .dev.vars.example, values from .env.<stage>):
 pnpm sync-secrets staging
-
-# Sync production environment
 pnpm sync-secrets production
+
+# 3. Verify
+npx wrangler secret list --env staging
 ```
 
-### 3. What gets synced where
-
-| Variable | Destination | Type |
-|----------|-------------|------|
-| `PROJECT_NAME` | SSM: `/github/project-name` | String |
-| `HOSTED_ZONE_ID` | SSM: `/{PROJECT_NAME}/{STAGE}/hosted-zone-id` | String |
-| `HOSTED_ZONE_NAME` | SSM: `/{PROJECT_NAME}/{STAGE}/hosted-zone-name` | String |
-| `GITHUB_OWNER` | SSM: `/{PROJECT_NAME}/{STAGE}/github-owner` | String |
-| `GITHUB_REPO` | SSM: `/{PROJECT_NAME}/{STAGE}/github-repo` | String |
-| `GITHUB_BRANCH` | SSM: `/{PROJECT_NAME}/{STAGE}/github-branch` | String |
-| `IMAGES_BUCKET` | SSM: `/{PROJECT_NAME}/{STAGE}/images-bucket` | String |
-| `IMAGES_BUCKET_PREFIX` | SSM: `/{PROJECT_NAME}/{STAGE}/images-bucket-prefix` | String |
-| `IMAGES_CDN_URL` | SSM: `/{PROJECT_NAME}/{STAGE}/images-cdn-url` | String |
-| `API_DOMAIN` | SSM: `/{PROJECT_NAME}/{STAGE}/api-domain` | String |
-| `CORS_DOMAIN_PATTERNS` | SSM: `/{PROJECT_NAME}/{STAGE}/cors-domain-patterns` | String |
-| `CORS_EXACT_ORIGINS` | SSM: `/{PROJECT_NAME}/{STAGE}/cors-exact-origins` | String |
-| `CORS_PARENT_DOMAINS` | SSM: `/{PROJECT_NAME}/{STAGE}/cors-parent-domains` | String |
-| `ALERT_EMAIL` | SSM: `/{PROJECT_NAME}/{STAGE}/alert-email` | String |
-| `ORIGIN_VERIFY_SECRET` | SSM: `/{PROJECT_NAME}/{STAGE}/origin-verify-secret` | String |
-| `ENABLE_WAF` | SSM: `/{PROJECT_NAME}/{STAGE}/enable-waf` | String |
-| `WORKOS_CLIENT_ID` | Secrets Manager: `/{PROJECT_NAME}/{STAGE}/workos` | JSON |
-| `DATABASE_URL` | Secrets Manager: `/{PROJECT_NAME}/{STAGE}/database` | JSON |
+Values are piped to `wrangler secret put` over **stdin** — they never appear in argv,
+`ps` output, or logs. Keys with no value in `.env.<stage>` are skipped (reported).
 
 ---
 
-## 🔍 Verification Commands
+## Adding a new variable
 
-### List all SSM parameters for a stage
-```bash
-aws ssm get-parameters-by-path --path "/{PROJECT_NAME}/staging" --region us-east-1
-```
-
-### List all secrets for a stage
-```bash
-aws secretsmanager list-secrets --filters Key=name,Values=/{PROJECT_NAME}/staging --region us-east-1
-```
-
-### Get specific SSM parameter
-```bash
-aws ssm get-parameter --name "/{PROJECT_NAME}/staging/hosted-zone-name" --region us-east-1
-```
-
-### Get specific secret
-```bash
-aws secretsmanager get-secret-value --secret-id "/{PROJECT_NAME}/staging/workos" --region us-east-1
-```
+- **Secret?** Add it (uncommented, with a comment) to `.dev.vars.example`, set the real
+  value in `.dev.vars` and `.env.<stage>`, run `pnpm sync-secrets <stage>`.
+- **Non-secret config?** Add it to `wrangler.toml` under top-level `[vars]` **and** both
+  `[env.*.vars]` blocks (no inheritance).
+- **Binding (R2 etc.)?** Add to `wrangler.toml` (all three scopes) and type it in
+  `WorkerBindings` (`src/node/worker.ts`).
 
 ---
 
-## 📝 Notes
+## Gone since the AWS era (do not re-add)
 
-1. **Never commit `.env.*` files** - They are gitignored and contain sensitive data
-2. **SSM vs Secrets Manager** - Use SSM for non-sensitive config, Secrets Manager for credentials
-3. **CI/CD Pipeline** - The `buildspec.yml` loads all variables from SSM/Secrets at build time
-4. **Lambda Functions** - Get variables injected by CDK at deployment time
-5. **Fail-Fast** - All required variables are validated; missing values cause immediate failure
+| Variable | Why it's gone |
+|---|---|
+| `ORIGIN_VERIFY_SECRET` | The Worker **is** the edge — there is no origin URL to protect |
+| `WORKOS_SECRET_ARN`, `DB_SECRET_ARN`, `AWS_REGION` | Secrets Manager is gone; secrets are wrangler secrets |
+| `ENABLE_WAF`, `ALERT_EMAIL`, SSM parameters | Cloudflare WAF/DDoS is account-level platform config, not deploy-time toggles |
+| `HOSTED_ZONE_ID`, `GITHUB_*` (as deploy inputs) | No CDK/CodePipeline. (`PROJECT_NAME`/`HOSTED_ZONE_NAME` survive only in `.env.staging` for `pnpm docs:generate`) |
 
----
-
-**Last Updated:** March 2026
+The AWS-era version of this document is preserved in git history and the surrounding
+setup in [legacy-aws/BOILERPLATE_SETUP.md](./legacy-aws/BOILERPLATE_SETUP.md).

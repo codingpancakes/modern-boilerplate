@@ -1,3 +1,11 @@
+> **NOTE (June 2026)** — the app-level audit system described here (`lib/audit.ts`, DB
+> immutability, redaction, `flushAudits()`, the retention job) is current and unchanged.
+> Platform references are partly pre-migration: handler code samples show the Lambda
+> shape (routes now live in `src/node/routes/`), "EventBridge-scheduled Lambda" is now a
+> Cloudflare Cron Trigger (`src/node/cron.ts` + `wrangler.toml [triggers]`), the
+> "CloudWatch fallback" is now a structured Workers log line (same EMF-shaped JSON), and
+> SSM/WAF/CDK mentions no longer apply. See [CLOUDFLARE_SETUP.md](./CLOUDFLARE_SETUP.md).
+
 # 📋 Audit Logging Guide
 
 **Purpose:** SOC 2 compliance - Track all user actions for security, compliance, and forensics  
