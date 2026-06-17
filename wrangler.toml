@@ -55,7 +55,7 @@ CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER: parent domains, c
 # Media — IMAGES_BUCKET must match [[r2_buckets]].bucket_name below; the CDN
 # URL becomes the R2 public/custom-domain URL (was CloudFront).
 IMAGES_BUCKET = "sidedoor-images-local"
-IMAGES_CDN_URL = ""                             # PLACEHOLDER: R2 public bucket / custom domain URL
+IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
 
 # R2 — replaces the S3 images bucket. Route code reaches it as c.env.IMAGES
 # (see src/node/worker.ts WorkerBindings). `wrangler dev --local` simulates the
@@ -81,7 +81,7 @@ CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
 CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://staging.yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
 IMAGES_BUCKET = "sidedoor-images-staging"     # PLACEHOLDER: must match the R2 bucket below
-IMAGES_CDN_URL = ""                             # PLACEHOLDER: staging R2 public URL
+IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
 
 [[env.staging.r2_buckets]]
 binding = "IMAGES"

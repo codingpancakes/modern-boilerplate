@@ -36,7 +36,9 @@ export const auditLogs = pgTable(
 		// What action was performed
 		action: text("action").notNull(),
 		resourceType: text("resource_type").notNull(),
-		resourceId: uuid("resource_id"), // ID of the affected resource
+		// ID of the affected resource — text, not uuid, so it can hold any
+		// identifier: a DB row UUID, an R2 object key, an external ID, etc.
+		resourceId: text("resource_id"),
 
 		// Details of the change
 		changes: jsonb("changes"), // { before: {...}, after: {...} }

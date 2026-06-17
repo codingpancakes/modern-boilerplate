@@ -1,41 +1,48 @@
 {
-	"version": "5",
-	"dialect": "pg",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "5",
-			"when": 1774102183757,
-			"tag": "0000_calm_silvermane",
-			"breakpoints": true
-		},
-		{
-			"idx": 1,
-			"version": "5",
-			"when": 1774402693271,
-			"tag": "0001_robust_the_renegades",
-			"breakpoints": true
-		},
-		{
-			"idx": 2,
-			"version": "5",
-			"when": 1774403879513,
-			"tag": "0002_faithful_fallen_one",
-			"breakpoints": true
-		},
-		{
-			"idx": 3,
-			"version": "5",
-			"when": 1774405380988,
-			"tag": "0003_brainy_the_professor",
-			"breakpoints": true
-		},
-		{
-			"idx": 4,
-			"version": "5",
-			"when": 1774500000000,
-			"tag": "0004_audit_hardening",
-			"breakpoints": true
-		}
-	]
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1774102183757,
+      "tag": "0000_calm_silvermane",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1774402693271,
+      "tag": "0001_robust_the_renegades",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1774403879513,
+      "tag": "0002_faithful_fallen_one",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1774405380988,
+      "tag": "0003_brainy_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1774500000000,
+      "tag": "0004_audit_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1781702137299,
+      "tag": "0005_foamy_hobgoblin",
+      "breakpoints": true
+    }
+  ]
 }
