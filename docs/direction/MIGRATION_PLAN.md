@@ -19,7 +19,7 @@
 > | 1 — Hono unification | ✅ Done (one app, `src/node/app.ts`; Express shim deleted) |
 > | 2 — Cloudflare foundations | ✅ wrangler.toml + envs, secrets sync, R2 bindings · ⬜ Hyperdrive, real R2 buckets, GitHub Actions CI |
 > | 3 — Cutover | ✅ All routes, GraphQL Yoga, Cron Triggers, structured logger · ⬜ Queues (webhook DLQ — DB idempotency only for now) |
-> | 4 — Operational shell | ⬜ Not started (gradual deploys/auto-rollback, alerting, Logpush) — **do before real users** |
+> | 4 — Operational shell | 🟦 Partial — ✅ gradual deploy + auto-rollback (`scripts/deploy.ts`), ✅ CI (`.github/workflows/ci.yml`) · ⬜ alerting (SENTRY_DSN), Logpush, Queues |
 > | 5 — Decommission AWS | ✅ Code purged from this branch; docs updated · ⬜ Actual AWS account teardown ([legacy guide](../legacy-aws/CDK_TEARDOWN.md), run from a pre-atomic checkout) |
 >
 > Current setup/operations: [CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
@@ -88,7 +88,7 @@ Migration order (least → most stateful):
 > `src/node/lib/logger.ts`. ⬜ Cloudflare Queues — the webhook DLQ has no replacement yet;
 > webhook resilience currently rests on signature checks + DB-backed idempotency alone.
 
-### Phase 4 — Operational shell (do not under-invest here) — ⬜ NOT STARTED
+### Phase 4 — Operational shell (do not under-invest here) — 🟦 PARTIAL
 
 - **Deploy safety:** gradual deployments (percentage rollout between Worker versions)
   + a health-check script that auto-promotes or auto-reverts. This replaces the
@@ -97,9 +97,11 @@ Migration order (least → most stateful):
 - Alerting: Workers analytics + Cloudflare notifications + Sentry alert rules.
 - Logpush → retention sink for compliance evidence (pairs with the app audit trail).
 
-> ⬜ This is the remaining work before real users. `wrangler deploy` is currently
-> all-at-once with manual `wrangler rollback`; Workers Logs are enabled
-> (`[observability]`) but no alerting rules or Logpush sink exist yet.
+> ✅ Deploy safety: `scripts/deploy.ts` (wired to `pnpm deploy:*`) does the health-gated
+> canary + auto-rollback; `deploy:*:simple` keeps the all-at-once path. ✅ CI:
+> `.github/workflows/ci.yml` gates every push/PR and gradual-deploys staging on
+> `atomic`/`main`. ⬜ Remaining: alerting (set `SENTRY_DSN` + Cloudflare notifications),
+> Logpush retention sink, and Cloudflare Queues for the webhook DLQ.
 
 ### Phase 5 — Decommission AWS — ✅ CODE / ⬜ ACCOUNT
 

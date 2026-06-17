@@ -1,10 +1,16 @@
 ---
 description: GraphQL resolver patterns and conventions
-globs: src/node/handlers/graphql/**/*.ts
+globs: src/node/handlers/graphql/**/*.ts,src/node/routes/graphql.ts
 alwaysApply: false
 ---
 
 # GraphQL Resolver Pattern
+
+GraphQL is **GraphQL Yoga** (Workers-native), not Apollo-on-Lambda. The Yoga
+instance is mounted on the Hono app at `/v1/graphql` in `src/node/routes/graphql.ts`
+(behind `requireAuth()` from the route barrel — auth is never re-applied in Yoga).
+Schema, resolvers, DataLoaders, and the depth/complexity/mutation-limit plugins
+live under `src/node/handlers/graphql/`.
 
 ## Context
 `GraphQLContext` provides: `userId`, `organizationId?`, `role`, `email`, `providerSubject`, `db`, `loaders`, `claims`

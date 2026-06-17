@@ -154,12 +154,19 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
 
 - **Local:** `pnpm dev` (`wrangler dev --local`, port 8787) — no Cloudflare account needed;
   R2/cron are simulated on disk. Secrets from `.dev.vars`.
-- **Deploy:** `pnpm deploy:staging` / `pnpm deploy:production` (`wrangler deploy --env <stage>`).
-  Run `pnpm migrate` against the stage's database as a separate step — invariant 12
-  (expand/contract) exists because code and schema are never updated atomically.
-- **Rollback:** `npx wrangler rollback --env <stage>`. There is currently **no automated
-  canary/auto-rollback** (the CodeDeploy blue-green machinery did not carry over) — see
-  Phase 4 of `docs/direction/MIGRATION_PLAN.md` before shipping to real users.
+- **Deploy:** `pnpm deploy:staging` / `pnpm deploy:production` run `scripts/deploy.ts` — a
+  health-gated gradual rollout: upload new version → canary (`CANARY_PERCENT`, default 10%)
+  → soak → probe `/v1/health/detailed` → promote to 100% and re-probe → **auto-rollback to
+  the previous version and exit 1 on any health failure**. `deploy:*:simple` is the plain
+  all-at-once `wrangler deploy` escape hatch. Run `pnpm migrate` against the stage's database
+  as a separate step — invariant 12 (expand/contract) exists because code and schema are
+  never updated atomically.
+- **CI:** `.github/workflows/ci.yml` runs the gate (lint, typecheck, unit, integration vs a
+  Postgres service) on every push/PR, and on push to `atomic`/`main` runs `deploy:staging`
+  (needs repo secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`). Production deploy is
+  a manual `workflow_dispatch`.
+- **Manual rollback:** `npx wrangler rollback --env <stage>` (the deploy script also rolls
+  back automatically on a failed health gate).
 - **Secrets:** `pnpm sync-secrets <stage>` pushes every name in `.dev.vars.example` from
   `.env.<stage>`. Never commit `.env*` / `.dev.vars` (gitignored).
 - **Edge security:** Cloudflare WAF/DDoS is account-level platform config, not code. The

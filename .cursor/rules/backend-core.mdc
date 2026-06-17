@@ -5,38 +5,52 @@ alwaysApply: true
 
 # Backend — Core Rules
 
+`AGENTS.md` (repo root) is the canonical guide; these rules mirror it. When in
+doubt, copy the nearest sibling file.
+
 ## Stack
-Node.js 24 / TypeScript 5 / pnpm / AWS Lambda + API Gateway HTTP v2 / Neon Postgres (drizzle-orm) / WorkOS JWT / Zod / Biome / Vitest
+Node.js 24 / TypeScript 5 / pnpm / **one Cloudflare Worker** (Hono, deployed via
+wrangler) / Neon Postgres (drizzle-orm) / WorkOS JWT / Zod / Biome / Vitest.
+No AWS, no CDK, no Lambda, no API Gateway — the Worker IS the edge.
 
 ## Critical Invariants
-- **No try-catch in handlers** — middleware (`withAuth`, `withPublicCors`) catches all errors
-- **Zod for all validation** — `parseBody(event, schema)` for POST/PATCH, `parseQuery(event, schema)` for GET
-- **Drizzle ORM only** — never raw SQL
-- **sanitizeObject()** on all user input before DB write
-- **logAudit()** on all mutations (fire-and-forget: `void logAudit(...)`); the request wrappers call `flushAudits()` before returning so writes aren't lost when Lambda freezes
-- **ACTIVE filter** on all membership queries: `eq(organizationMembers.status, "ACTIVE")`
-- **Response helpers** — `createSuccessResponse(data)`, never raw `{ statusCode, body }`
-- **Errors factory** — `throw Errors.NotFound("User")`, never manual JSON error responses
-- **CDN URLs only** — `${IMAGES_CDN_URL}/${key}` for images, never raw S3 URLs
-- **Transactions** for multi-step writes — use `db.transaction(async (tx) => { ... })` (works because `lib/db.ts` uses the `neon-serverless` driver; `neon-http` throws on `.transaction()`)
+- **No try-catch in route handlers** — `app.ts` `onError` catches and formats every error (`{ success:false, error, details }` wire shape + Sentry capture).
+- **Zod for all validation** — REST: `parseBody(rawBody, schema)` (pass `await c.req.text()`, not the request); GraphQL: `schema.parse(input)` in resolvers.
+- **Drizzle ORM only** — never raw SQL (migrations are the only SQL).
+- **`sanitizeObject()`** on all user input before any DB write.
+- **`logAudit()`** on all mutations, fire-and-forget (`void logAudit(...)`); never `await` it on the hot path. The app-level `auditFlush()` middleware drains in-flight writes after every request.
+- **ACTIVE filter** on all membership queries: `eq(organizationMembers.status, "ACTIVE")`.
+- **Response factories** — REST: `sendSuccess(c, data)` or `createSuccessResponse(data)`; never hand-roll a `Response`/body.
+- **Errors factory** — `throw Errors.NotFound("User")` (REST) / `throw new GraphQLError(msg, { extensions: { code } })` (GraphQL); never manual JSON error bodies.
+- **CDN URLs only** — `${IMAGES_CDN_URL}/${key}` for images (R2 public/custom-domain URL), never raw bucket URLs.
+- **Transactions** for multi-step writes — `db.transaction(async (tx) => { ... })` (works because `lib/db.ts` uses the `neon-serverless` driver; `neon-http` throws on `.transaction()`).
+- **DB lifecycle is per-request** — always `await getDb()`; never cache pools/clients at module scope (Workers forbids reusing I/O across requests). The `dbScope()` middleware gives each request its own pool.
+- **Auth only from `requireAuth()`** — read `c.get("claims")`; never re-parse JWTs. New protected domains get `routes.use("/v1/<domain>/*", requireAuth())` in `routes/index.ts`.
 
 ## Directory Layout
 ```
-src/node/handlers/       # One Lambda handler per file (create.ts, update.ts, list.ts)
-src/node/lib/            # Shared libs (middleware, cors, db, errors, audit, sanitize)
-src/node/lib/validation/ # Zod schemas by domain (users.ts, media.ts, organizations.ts)
-src/node/lib/services/   # Business logic (user-provisioning.ts)
-src/node/db/schema/      # Drizzle schema (8 tables, 3 enums)
-src/node/authorizers/    # Lambda authorizer (workos-jwt.ts)
-infrastructure/          # CDK stacks (api-stack, monitoring-stack, pipeline-stack)
-local-dev/server.ts      # Express dev server mimicking Lambda
-templates/               # Handler templates (.ts.template)
+src/node/worker.ts           # Worker entry: fetch → app.ts; scheduled → cron.ts registry
+src/node/app.ts              # THE Hono app: request-id → dbScope → auditFlush → CORS/security → routes
+src/node/routes/             # One Hono sub-app per domain (users.ts, media.ts, graphql.ts, webhooks.ts, utils.ts, test.ts); barrel index.ts mounts them + applies requireAuth()
+src/node/cron.ts             # Cron Trigger registry (keys == wrangler.toml [triggers] expressions)
+src/node/authorizers/        # verify-token.ts — WorkOS JWT verifier (single source of auth trust)
+src/node/handlers/graphql/   # Yoga context, plugins, resolvers/, schema/
+src/node/handlers/utils/     # janitor.ts, audit-retention.ts (cron job bodies)
+src/node/lib/                # Shared libs (db, errors, audit, sanitize, idempotency, cors, logger, media)
+src/node/lib/hono/           # auth (requireAuth), middleware, respond, types (AppEnv)
+src/node/lib/validation/     # Zod schemas by domain (users.ts, media.ts, …), re-exported from index.ts
+src/node/lib/services/       # Business logic (user-provisioning.ts); routes stay thin
+src/node/db/schema/          # Drizzle schema; db/migrations/ holds SQL + journal
+wrangler.toml                # Worker config: [vars], R2 bindings, [triggers], env.staging/env.production
+scripts/                     # migrate, sync-secrets, deploy, init-project, generate-openapi
 ```
+Layering is strict: `routes → lib/services → lib → db`. Routes orchestrate; they don't hold logic.
 
 ## Adding New Code
-1. Handler → `src/node/handlers/{domain}/{action}.ts`
-2. Validation → `src/node/lib/validation/{domain}.ts`, export from `index.ts`
-3. Schema → `src/node/db/schema/{domain}.ts`, export from `index.ts`
-4. Route → register in `infrastructure/lib/routes/` AND `local-dev/server.ts`
-5. Test → `tests/unit/` or `tests/integration/`
-6. Run `pnpm check` (lint + typecheck + tests) before committing
+1. Schema → `src/node/db/schema/{domain}.ts`, export from `index.ts`; `pnpm db:generate` for the migration.
+2. Validation → `src/node/lib/validation/{domain}.ts`, export `{domain}Schemas`, re-export from `index.ts`.
+3. Logic → `src/node/lib/services/{domain}.ts` if non-trivial; keep route handlers thin.
+4. Route → add the handler to `src/node/routes/{domain}.ts` (copy the nearest sibling). New domain: mount in `routes/index.ts` with `requireAuth()` if protected.
+5. Scheduled work → register in `cron.ts` + add the `[triggers]` cron in `wrangler.toml` (keys must match byte-for-byte).
+6. Test → `tests/unit/{domain}/` (mock DB/Sentry).
+7. Run `pnpm check` (Biome lint + `tsc --noEmit` + Vitest) before committing.

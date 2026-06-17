@@ -5,31 +5,34 @@ alwaysApply: true
 
 # Quality Bar — Keep It Production-Grade
 
-This is a platform-quality boilerplate. New code must match the existing bar, not regress it.
-Full guide: `AGENTS.md` (root). Match the nearest sibling file over personal preference.
+This is a platform-quality boilerplate on one Cloudflare Worker. New code must
+match the existing bar, not regress it. Full guide: `AGENTS.md` (root). Match the
+nearest sibling file over personal preference.
 
 ## Definition of Done (every feature)
 - Zod-validated input (bounded arrays/strings) → `sanitizeObject()` → DB write.
-- Auth enforced + **org-scoped** for org-owned data; null-guard every DB result.
-- `logAudit()` on mutations (`void logAudit(...)`) with request context; wrappers `flushAudits()` before returning so detached writes aren't dropped on Lambda freeze.
+- Auth enforced (`requireAuth()` on the domain) + **org-scoped** for org-owned data; null-guard every DB result.
+- `logAudit()` on mutations (`void logAudit(...)`) with request context (`c.get("requestId")`, `cf-connecting-ip`, `user-agent`); the app-level `auditFlush()` middleware drains detached writes after each request.
 - Multi-step writes in `db.transaction()` (needs the `neon-serverless` driver — `neon-http` can't do transactions); errors via `Errors.*` / `GraphQLError` only.
-- Route registered in `infrastructure/lib/routes/` AND `local-dev/server.ts`.
+- Endpoint added in `src/node/routes/{domain}.ts`; new domains mounted in `routes/index.ts` (auth applied there). Scheduled work registered in `cron.ts` + `wrangler.toml [triggers]`.
+- New secrets registered in `.dev.vars.example`; new bindings typed in `worker.ts` `WorkerBindings` and declared in `wrangler.toml`.
 - `pnpm check` passes (Biome + tsc + Vitest) before commit.
 
 ## Non-negotiables
-- No try-catch in handlers — middleware handles errors.
+- No try-catch in route handlers — `app.ts` `onError` handles errors.
 - Drizzle only (no raw SQL); `ACTIVE` filter on all membership queries.
-- Auth only from the API Gateway authorizer — never re-parse JWT in handlers.
-- Secrets via Secrets Manager; never plaintext credentials.
+- Auth only from `requireAuth()` (`c.get("claims")`) — never re-parse JWTs in handlers.
+- DB lifecycle per-request: `await getDb()`; never cache pools/clients at module scope.
+- Secrets via wrangler (`.dev.vars` local, `wrangler secret` deployed); never plaintext credentials.
 
 ## Scaling patterns to replicate
-- **Idempotency:** `withIdempotency()` for non-idempotent REST mutations (atomic upsert, never SELECT-then-INSERT).
+- **Idempotency:** `withIdempotency()` for non-idempotent REST mutations (atomic upsert, never SELECT-then-INSERT) — see `routes/users.ts`.
 - **N+1:** use `context.loaders.*` (DataLoader) in GraphQL field resolvers.
-- **Async/scheduled Lambdas:** MUST set a `deadLetterQueue` + per-function error alarm.
+- **Async/scheduled work:** Cloudflare Cron Triggers (`cron.ts` + `wrangler.toml [triggers]`); job bodies MUST throw on failure (a swallowed error records a false success — there is no DLQ).
 - **Recursive utils:** depth-bound them (mirror `redactSensitive`).
 - **Audit rows are immutable** (DB rejects UPDATE / in-window DELETE) — never put secrets in `metadata`.
-- **New Lambdas** via `RouteBuilder.createHandler()`; grant IAM on the shared `lambdaRole`.
+- **Workers limits:** 128MB isolate memory + CPU-time caps; push heavy media/batch work to a cron job (or future Queues), not the request path.
 
 ## Don't
-- Don't hand-roll `{ statusCode, body }` responses, skip sanitize, `await` audit on the hot path,
-  create ad-hoc DB clients, or add per-function IAM roles.
+- Don't hand-roll a `Response`/`{ statusCode, body }`, skip sanitize, `await` audit on the hot path,
+  cache a DB pool at module scope, or re-add AWS-era toggles (`ORIGIN_VERIFY_SECRET`, `ENABLE_WAF`).

@@ -15,18 +15,20 @@ alwaysApply: false
 
 ## Input Flow
 ```
-request → parseBody(event, schema) → sanitizeObject(validated) → DB write
+REST:    parseBody(await c.req.text(), schema) → sanitizeObject(validated) → DB write
+GraphQL: schema.parse(input)                   → sanitizeObject(validated) → DB write
 ```
 Never skip steps. `sanitizeObject` HTML-escapes strings and validates URLs on `RAW_STRING_KEYS`.
+`parseBody` takes the raw body string (not a Lambda event).
 
 ## Security Checklist for New Endpoints
 - [ ] Zod schema validates all input fields with appropriate constraints
 - [ ] `sanitizeObject()` applied before any DB write
-- [ ] Auth: `withAuth` (REST) or authorizer (GraphQL) protects the route
+- [ ] Auth: `requireAuth()` (applied in `routes/index.ts`) protects the route; claims via `c.get("claims")`. GraphQL `/v1/graphql` is mounted behind the same `requireAuth()`.
 - [ ] Null guard: check DB results before returning (`if (!result) throw ...`)
 - [ ] Audit: `logAudit()` called on all mutations
 - [ ] Transactions: multi-step writes wrapped in `db.transaction()`
-- [ ] File uploads: validate magic bytes, content-type/extension match, size limit
+- [ ] File uploads: validate magic bytes, content-type/extension match, size limit (see `lib/media.ts`)
 
 ## Error Handling
 - REST: `throw Errors.NotFound("User")` — middleware formats the response
@@ -35,6 +37,6 @@ Never skip steps. `sanitizeObject` HTML-escapes strings and validates URLs on `R
 - Safe GraphQL codes: BAD_USER_INPUT, GRAPHQL_VALIDATION_FAILED, GRAPHQL_PARSE_FAILED, FORBIDDEN, UNAUTHENTICATED, NOT_FOUND, CONFLICT
 
 ## CORS
-- Dynamic origin matching via `CORS_EXACT_ORIGINS`, `CORS_PARENT_DOMAINS`
+- Dynamic origin matching via `CORS_EXACT_ORIGINS`, `CORS_PARENT_DOMAINS`, `CORS_DOMAIN_PATTERNS` (`wrangler.toml [vars]`)
 - HTTPS enforced for non-localhost origins
-- `withAuth` and `withPublicCors` add CORS headers automatically
+- The app-level `corsAndSecurityHeaders()` middleware (`lib/hono/middleware.ts`) answers OPTIONS preflight and decorates every response; `app.ts` `onError` re-applies the same CORS + security headers to error responses. Routes never set CORS themselves.

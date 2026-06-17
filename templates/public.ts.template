@@ -1,49 +1,64 @@
+// TEMPLATE — copy into src/node/routes/<domain>.ts and adapt. Not compiled.
+
 /**
- * Public/Webhook Handler Template
- * 
- * USE THIS TEMPLATE FOR:
- * - Public endpoints without authentication
- * - Webhook endpoints (Stripe, WorkOS, etc.)
- * - Health checks
- * 
- * USAGE:
- * 1. Copy this file to handlers/{resource}/{action}.ts
- * 2. Update serviceName and swagger docs
- * 3. Add webhook signature validation if needed
- * 4. Add route to local-dev/server.ts and infrastructure
- * 
- * EXAMPLES:
- * - GET /v1/health - Health check
- * - POST /v1/webhooks/stripe - Stripe webhook
- * - POST /v1/webhooks/workos - WorkOS webhook
+ * Public domain template (NO requireAuth) + signature-verified webhook variant.
+ *
+ * Two shapes live here:
+ *   A) A plain public endpoint (health-style — see `src/node/routes/utils.ts`).
+ *   B) A webhook that verifies its own signature in-handler (the full,
+ *      production-grade pattern is `src/node/routes/webhooks.ts` — copy that
+ *      when you build a real webhook; the sketch below is the shape, not the
+ *      whole race-safe idempotency machinery).
+ *
+ * ── How to wire it up ─────────────────────────────────────────────────────
+ * 1. Save as `src/node/routes/<domain>.ts` (imports relative to
+ *    `src/node/routes/` → `../lib/...`).
+ * 2. In `src/node/routes/index.ts` (the barrel), mount it WITHOUT a
+ *    `routes.use("/v1/<domain>/*", requireAuth())` line — that omission is what
+ *    makes it public:
+ *      import { <domain> } from "./<domain>";
+ *      routes.route("/v1/<domain>", <domain>);
+ *    A public route NEVER calls `c.get("claims")` — claims are unset here.
+ *    A webhook does NOT use `requireAuth()`; it verifies its own signature
+ *    inside the handler (auth comes from the HMAC, not a JWT).
+ * 3. KEEP the `@swagger` JSDoc blocks (use `security: []` to mark them public).
+ *
+ * ── Invariants this template observes (see AGENTS.md) ─────────────────────
+ *  - No try-catch for error FORMATTING (#1) — `app.ts` onError owns that. The
+ *    webhook variant's try/catch exists ONLY to release the idempotency lock
+ *    and rethrows; it is not an error handler. See webhooks.ts for the rationale.
+ *  - Zod-validate input (#2); `sanitizeObject()` before any write (#3);
+ *    `logAudit()` on mutations (#4); `getDb()` per request (#9).
+ *  - Throw via `Errors.*`; respond via `sendSuccess` (#7). No `any`.
+ *  - Verify signatures against the RAW body (`c.req.text()`), constant-time
+ *    (`lib/constant-time.ts`) — never a JSON round-trip (it breaks the HMAC).
+ *  - Missing webhook config is a 500 (we are misconfigured), not a 401.
  */
 
-import { Logger } from '@aws-lambda-powertools/logger';
-import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
+import { createHmac } from "node:crypto";
+import { Hono } from "hono";
+import { constantTimeEqual } from "../lib/constant-time";
+import { Errors } from "../lib/errors";
+import { sendSuccess } from "../lib/hono/respond";
+import type { AppEnv } from "../lib/hono/types";
+import { createLogger } from "../lib/logger";
+// import { parseBody } from "../lib/validation/helpers";
+// import * as schemas from "../lib/validation/<domain>";
 
-// Uncomment as needed:
-import { parseBody, webhookSchemas } from '../lib/validation';
-import { createSuccessResponse } from '../lib/response';
-import { Errors } from '../lib/errors';
+export const publicRoutes = new Hono<AppEnv>();
 
-const logger = new Logger({ serviceName: 'template-public' });
+const logger = createLogger({ serviceName: "public-template" });
+
+/* ───────────────────────── A) Public endpoint ──────────────────────────── */
 
 /**
  * @swagger
- * /v1/public/endpoint:
- *   post:
+ * /v1/public/status:
+ *   get:
  *     tags: [Public]
- *     summary: Public endpoint
- *     description: Public endpoint without authentication
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               data:
- *                 type: object
+ *     summary: Public status endpoint
+ *     description: Returns a public payload. No authentication required.
+ *     security: []
  *     responses:
  *       200:
  *         description: Success
@@ -52,98 +67,101 @@ const logger = new Logger({ serviceName: 'template-public' });
  *             schema:
  *               type: object
  *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
+ *                 success: { type: boolean, example: true }
  *                 data:
  *                   type: object
- *       400:
- *         description: Bad request
+ *                   properties:
+ *                     status: { type: string, example: ok }
+ *                     timestamp: { type: string, format: date-time }
  */
+publicRoutes.get("/status", (c) => {
+	// No claims on a public route — do not read c.get("claims").
+	return sendSuccess(c, {
+		status: "ok",
+		timestamp: new Date().toISOString(),
+	});
+});
 
-// OPTION 1: No authentication (for health checks, public endpoints)
-const handlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
-  logger.addContext(context);
-  
-  logger.info('Public endpoint accessed');
+/* ─────────────────── B) Signature-verified webhook variant ──────────────── */
 
-  // For health checks
-  return {
-    statusCode: 200,
-    body: JSON.stringify({
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      version: 'v1',
-    })
-  };
-};
+/**
+ * Secret read PER REQUEST from env (wrangler secret / .dev.vars) — never cached
+ * at module init. A missing secret is a server misconfiguration (500), not a
+ * client auth failure (401). Register the name in `.dev.vars.example`.
+ */
+function getWebhookSecret(): string {
+	const secret = process.env.PROVIDER_WEBHOOK_SECRET;
+	if (!secret) {
+		throw new Error("PROVIDER_WEBHOOK_SECRET is not configured");
+	}
+	return secret;
+}
 
-export const handler = handlerFn;
+/**
+ * Verify an HMAC-SHA256 signature over the RAW body, constant-time. Adapt the
+ * header parsing / signed-payload format to your provider — webhooks.ts shows
+ * the WorkOS `t=...,v1=...` format with a 5-minute replay window. Always
+ * compare with `constantTimeEqual`, never `===`.
+ */
+function verifySignature(
+	rawBody: string,
+	signature: string,
+	secret: string,
+): boolean {
+	const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+	return constantTimeEqual(
+		Buffer.from(signature, "hex"),
+		Buffer.from(expected, "hex"),
+	);
+}
 
-// OPTION 2: With webhook signature validation
-// Uncomment and modify for webhook endpoints:
-/*
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || '';
+/**
+ * @swagger
+ * /v1/public/webhook:
+ *   post:
+ *     tags: [Webhooks]
+ *     summary: Signature-verified webhook
+ *     description: |
+ *       Public route that authenticates via an HMAC signature header (not a
+ *       JWT). Processes events idempotently — see `routes/webhooks.ts` for the
+ *       full atomic-claim/lock-release implementation to copy.
+ *     security: []
+ *     responses:
+ *       200:
+ *         description: Webhook processed successfully
+ *       401:
+ *         description: Missing or invalid signature
+ *       500:
+ *         description: Server misconfiguration
+ */
+publicRoutes.post("/webhook", async (c) => {
+	// 1. RAW body — this exact byte sequence is what the provider signed.
+	//    Never JSON.parse/stringify before verifying (changes byte order).
+	const rawBody = await c.req.text();
+	const signature = c.req.header("x-provider-signature");
 
-const webhookHandlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
-  logger.addContext(context);
-  
-  logger.info('Webhook received');
+	logger.info("Webhook received", {
+		hasSignature: !!signature,
+		bodyLength: rawBody.length,
+	});
 
-  // Parse webhook payload
-  const payload = JSON.parse(event.body || '{}');
-  
-  // Process webhook
-  logger.info('Processing webhook', { type: payload.type });
+	if (!signature) {
+		throw Errors.Unauthorized();
+	}
 
-  // 1. Validate request body
-  const input = parseBody(event, webhookSchemas.workos);
+	// 2. Verify signature before touching the payload.
+	const secret = getWebhookSecret(); // throws → 500 if unconfigured
+	if (!verifySignature(rawBody, signature, secret)) {
+		throw Errors.Unauthorized();
+	}
 
-  // Your webhook logic here
-  // Example: Handle Stripe webhook events
-  // switch (payload.type) {
-  //   case 'payment_intent.succeeded':
-  //     // Handle successful payment
-  //     break;
-  //   case 'customer.created':
-  //     // Handle new customer
-  //     break;
-  // }
+	// 3. Now it is safe to parse + Zod-validate the body.
+	//    const event = parseBody(rawBody, schemas.webhook);
+	//
+	// 4. Process idempotently. For a real webhook, copy the atomic
+	//    INSERT-ON-CONFLICT claim + lock-release pattern from webhooks.ts so a
+	//    provider retry can re-run a failed event instead of being dropped.
+	//    `sanitizeObject()` anything you persist; `logAudit()` mutations.
 
-  // 4. Return result using response helper
-  logger.info('Webhook processed');
-  return createSuccessResponse({ processed: true });
-};
-
-export const handler = webhookHandlerFn;
-*/
-
-// OPTION 3: Custom validation
-// For endpoints that need custom validation logic:
-const customHandlerFn = async (event: APIGatewayProxyEventV2, context: Context) => {
-  logger.addContext(context);
-  
-  // Custom validation
-  const apiKey = event.headers['x-api-key'];
-  if (!apiKey || apiKey !== process.env.PUBLIC_API_KEY) {
-    return {
-      statusCode: 401,
-      body: JSON.stringify({
-        success: false,
-        error: 'Invalid API key'
-      })
-    };
-  }
-
-  logger.info('Public API accessed with valid key');
-
-  // Your logic here
-
-  // 4. Return result using response helper
-  logger.info('Request processed');
-  return createSuccessResponse({
-    message: 'Replace with actual implementation'
-  });
-};
-
-export const handler = customHandlerFn;
+	return sendSuccess(c, { status: "processed" });
+});

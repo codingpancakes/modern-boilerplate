@@ -59,7 +59,7 @@ const createMockContext = (): GraphQLContext => ({
 
 ## Rules
 - Test files: `tests/unit/{domain}/{feature}.test.ts`
-- Mock external services (DB, S3, Sentry) — never hit real infra in unit tests
+- Mock external services (DB, R2/media, Sentry) — never hit real infra in unit tests
 - `transaction` mock must pass the same mock object as `tx` to the callback
 - `auditResolver`-wrapped resolvers take 4 args: `(parent, args, context, info)` — pass `{} as any` for `info` in tests
 - `createMockContext` should accept optional overrides for flexible test setup

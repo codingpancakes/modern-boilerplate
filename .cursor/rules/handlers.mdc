@@ -1,50 +1,69 @@
 ---
-description: REST Lambda handler patterns and conventions
-globs: src/node/handlers/**/*.ts
+description: REST route (Hono) patterns and conventions
+globs: src/node/routes/**/*.ts
 alwaysApply: false
 ---
 
-# REST Handler Pattern
+# REST Route Pattern
 
-Every REST handler follows this exact shape:
+REST endpoints are Hono routes on a per-domain sub-app in
+`src/node/routes/{domain}.ts`, mounted by the barrel `routes/index.ts`. There
+are no Lambda handlers. A simple authenticated handler follows this shape:
 
 ```typescript
-import { Logger } from "@aws-lambda-powertools/logger";
-import type { Context } from "aws-lambda";
-import { getUserIdFromClaims } from "../../lib/auth";
-import { getDb } from "../../lib/db";
-import { type AuthenticatedEvent, withAuth } from "../../lib/middleware";
-import { createSuccessResponse } from "../../lib/response";
-import { sanitizeObject } from "../../lib/sanitize";
-import { parseBody } from "../../lib/validation/helpers";
-import { resourceSchemas } from "../../lib/validation";
+import { Hono } from "hono";
+import {
+  AUDIT_ACTIONS,
+  AUDIT_RESOURCE_TYPES,
+  AUDIT_STATUS,
+  logAudit,
+} from "../lib/audit";
+import { getUserIdFromClaims } from "../lib/auth";
+import { getDb } from "../lib/db";
+import { Errors } from "../lib/errors";
+import { sendSuccess } from "../lib/hono/respond";
+import type { AppEnv } from "../lib/hono/types";
+import { createLogger } from "../lib/logger";
+import { sanitizeObject } from "../lib/sanitize";
+import { parseBody } from "../lib/validation/helpers";
+import { resourceSchemas } from "../lib/validation";
 
-const logger = new Logger({ serviceName: "resource-action" });
+export const resource = new Hono<AppEnv>();
+const logger = createLogger({ serviceName: "resource-create" });
 
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  logger.addContext(context);
-  const userId = await getUserIdFromClaims(event);  // async — resolves authIdentity → userId
-  const input = parseBody(event, resourceSchemas.create);
+resource.post("/", async (c) => {
+  // requireAuth() (applied in routes/index.ts) has set c.get("claims").
+  const userId = await getUserIdFromClaims(c.get("claims")); // async — always await
+  const input = parseBody(await c.req.text(), resourceSchemas.create);
   const sanitized = sanitizeObject(input);
   const db = await getDb();
   const [result] = await db.insert(table).values({ ...sanitized, userId }).returning();
   if (!result) throw Errors.InternalServerError();
-  void logAudit({ userId, action: AUDIT_ACTIONS.CREATE, resourceType: AUDIT_RESOURCE_TYPES.RESOURCE, resourceId: result.id, status: AUDIT_STATUS.SUCCESS });
-  return createSuccessResponse(result);
-};
-
-export const handler = withAuth(handlerFn);
+  void logAudit({
+    userId,
+    action: AUDIT_ACTIONS.CREATE,
+    resourceType: AUDIT_RESOURCE_TYPES.RESOURCE,
+    resourceId: result.id,
+    ipAddress: c.req.header("cf-connecting-ip"),
+    userAgent: c.req.header("user-agent"),
+    requestId: c.get("requestId"),
+    status: AUDIT_STATUS.SUCCESS,
+  });
+  return sendSuccess(c, result);
+});
 ```
 
 ## Rules
-- One handler per file, named by action: `create.ts`, `update.ts`, `list.ts`, `me.ts`
-- `withAuth` wraps authenticated handlers, `withPublicCors` wraps public/webhook
-- Never try-catch — middleware handles errors
-- Always `sanitizeObject()` before DB write
-- Always `logAudit()` on mutations
-- Add `@swagger` JSDoc for REST endpoint documentation
-- Guard null results: `if (!result) throw Errors.NotFound("Resource")`
-- Use `withIdempotency(event, async () => { ... })` for non-idempotent mutations
-- For updates: wrap multi-step reads + writes in `db.transaction()`
-- Import validation schemas directly: `import { resourceSchemas } from "../../lib/validation"`
-- `getUserIdFromClaims` is **async** — always `await` it
+- One Hono sub-app per domain in `routes/{domain}.ts`; add handlers there, not in `app.ts`.
+- Mount new domains in `routes/index.ts`. Protect them with `routes.use("/v1/<domain>/*", requireAuth())` in that barrel — never call `requireAuth()` inside the sub-app.
+- Auth comes from `requireAuth()`; read verified claims via `c.get("claims")`, then `await getUserIdFromClaims(c.get("claims"))`. Never re-parse JWTs (no `withAuth`, no Lambda authorizer).
+- Logging via `createLogger({ serviceName })` from `lib/logger.ts` (NOT AWS Powertools; there is no `logger.addContext`).
+- Never try-catch — `app.ts` `onError` formats all errors.
+- Always `sanitizeObject()` before a DB write; always `void logAudit()` on mutations (with `c.req.header("cf-connecting-ip")`, `user-agent`, `c.get("requestId")`).
+- Return via `sendSuccess(c, data)` (or `createSuccessResponse(data)` inside an idempotency callback); never build a raw `Response`.
+- Guard null results: `if (!result) throw Errors.NotFound("Resource")`.
+- Non-idempotent mutations: wrap in `withIdempotency({ key, sub, method, path, body, query }, async () => { ... })` (returns a `StoredResponse`; adapt it to a `Response` — see `routes/users.ts` PATCH /me).
+- Multi-step reads + writes go in `db.transaction(async (tx) => { ... })`.
+- Import validation schemas from `../lib/validation` (barrel) or `../lib/validation/{domain}`.
+- Add `@swagger` JSDoc on each endpoint for OpenAPI generation.
+- `routes/webhooks.ts` is public and verifies its own signatures; `routes/test.ts` 404s entirely when `STAGE=production`.

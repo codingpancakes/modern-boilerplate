@@ -1,38 +1,43 @@
 ---
-description: AWS CDK infrastructure patterns
-globs: infrastructure/**/*.ts
+description: Cloudflare Workers infrastructure (wrangler, R2, cron, secrets, deploy)
+globs: wrangler.toml,scripts/**/*.ts
 alwaysApply: false
 ---
 
-# Infrastructure (CDK) Patterns
+# Infrastructure — Cloudflare Workers Model
 
-## Stack Structure (instantiation order in `bin/app.ts`)
-- `SecurityStack` — Secrets Manager, shared IAM role (created first — other stacks depend on it)
-- `DatabaseStack` — migration runner Lambda
-- `MonitoringStack` — SNS alarms, Lambda metrics, CloudWatch dashboard
-- `CostMonitoringStack` — AWS Budgets + alerts
-- `CloudTrailStack` — CloudTrail + S3 lifecycle
-- `MediaStack` / `PublicAssetsStack` — S3 + CloudFront CDNs
-- `ApiStack` — HTTP API, Lambda handlers, WAF, API Gateway alarms, CodeDeploy
-- `PipelineStack` — CodePipeline + CodeBuild CI/CD (staging/production only)
+The entire backend is **one Cloudflare Worker**, configured by `wrangler.toml`
+and deployed with `wrangler`. There is no CDK, no Lambda, no API Gateway, no
+Secrets Manager, no CodeDeploy. The Worker IS the edge (Cloudflare WAF/DDoS/CDN
+are account-level platform config, not code).
 
-## Adding a New Lambda Handler
-1. Use `RouteBuilder.createHandler()` — it applies the shared `lambdaRole`, blue-green wrapping, and standard config
-2. Register the route via the appropriate route group: `PublicRoutes`, `ProtectedRoutes`, or `InternalRoutes`
-3. The `lambdaRole` includes: Secrets Manager, S3, X-Ray permissions
-4. If the handler needs additional permissions, grant them on `lambdaRole` — NOT on individual functions
+## wrangler.toml (single source of infra truth)
+- `name`, `main = "src/node/worker.ts"`, `compatibility_date`, `compatibility_flags = ["nodejs_compat"]` (nodejs_compat + a 2025+ date populate `process.env` from `[vars]` + secrets, so `process.env.X` reads work).
+- `[observability]` — Workers Logs (replaces CloudWatch).
+- `[triggers] crons = [...]` — Cron Triggers; expressions are the DISPATCH KEYS and must match the keys of `cronRegistry` in `src/node/cron.ts` byte-for-byte. `[triggers]` IS inherited by named envs, so it is declared once at top level.
+- `[vars]` — **non-secret** config (NODE_ENV, STAGE, PROJECT_NAME, API_VERSION, CORS_* lists, IMAGES_BUCKET, IMAGES_CDN_URL, SENTRY_ENVIRONMENT). `[vars]` and `[[r2_buckets]]` are NOT inherited by named envs — they are repeated in full under `[env.staging]`/`[env.production]`. Never put secrets here.
+- `[[r2_buckets]] binding = "IMAGES"` — R2 media bucket (replaces the S3 images bucket); route code reaches it as `c.env.IMAGES`. `bucket_name` must match `IMAGES_BUCKET`. `wrangler dev --local` simulates it on disk under `.wrangler/state`.
+- `[env.staging]` / `[env.production]` — each repeats `*.vars` and `*.r2_buckets`.
 
-## Key Conventions
-- All handlers use `lambdaRole` (shared IAM role with S3 + Secrets Manager + X-Ray)
-- Blue-green deployment via `wrapWithBlueGreen()` — canary 10% for 5 min in prod, ALL_AT_ONCE in staging
-- Source maps only when `stage === "development"` (disabled for staging/prod)
-- GraphQL GET only when `stage === "development"` (POST-only otherwise, including dev/local CDK stages)
-- GraphiQL docs deployed when `stage` is `development`, `dev`, or `local`
-- API Gateway metrics use `ApiId` dimension (NOT `ApiName` — that's REST v1)
-- WAF scope is `CLOUDFRONT`, attached to distribution (not directly to HTTP API v2)
-- apigatewayv2 L2 constructs come from **stable** `aws-cdk-lib/aws-apigatewayv2{,-integrations,-authorizers}` (HttpApi/HttpLambdaIntegration/HttpLambdaAuthorizer). Do NOT reintroduce the abandoned `@aws-cdk/aws-apigatewayv2-*-alpha` packages — they're frozen at 2.114.x.
+## Adding infra
+- **New binding** (R2/KV/Queue/etc.): declare it in `wrangler.toml` (top level AND every `[env.*]` block), add the property to `WorkerBindings` in `src/node/worker.ts`, and extend `AppEnv["Bindings"]` (lib/hono/types.ts) so routes see `c.env.<NAME>` typed.
+- **New cron job**: add the cron expression to `[triggers].crons` AND a same-key entry to `cronRegistry` in `src/node/cron.ts` (a mismatch throws by design). Job bodies live in `src/node/handlers/utils/` and MUST throw on failure (a swallowed error records a false success). `worker.ts` `scheduled` dispatches by exact cron string.
+- **New secret**: add the name to `.dev.vars.example` (the checked-in registry), set it locally in `.dev.vars`, and push it with `pnpm sync-secrets <stage>` (`wrangler secret put`). Values travel over stdin only.
+- **New non-secret var**: add to `[vars]` and to each `[env.*].vars`.
 
-## Environment
-- Secrets via AWS Secrets Manager (never plaintext env vars for credentials)
-- Non-secret config via `commonEnv` object shared across all Lambdas
-- `CORS_EXACT_ORIGINS` is required at synth time (throws if missing)
+## Secrets & config
+- Secrets: `.dev.vars` locally (gitignored), `wrangler secret put` deployed (driven by `pnpm sync-secrets <stage>` from `.env.<stage>` over the `.dev.vars.example` registry). Never plaintext credentials in code or committed files.
+- `pnpm migrate` / drizzle-kit read `DATABASE_URL` from `.env.local` (dotenv), not `.dev.vars` — keep both in sync.
+- Media S3-API path needs `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (presigned via `aws4fetch` in `lib/media.ts`); unset → media routes return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED`.
+- Do NOT reintroduce Lambda-era toggles (`ORIGIN_VERIFY_SECRET`, `ENABLE_WAF`) — gone by construction.
+
+## Deploy (scripts/)
+- **Local:** `pnpm dev` (`wrangler dev --local`, port 8787) — no Cloudflare account; R2/cron simulated on disk.
+- **Deploy:** `pnpm deploy:staging` / `pnpm deploy:production` run `scripts/deploy.ts`, a **health-gated gradual rollout with automatic rollback** (records the active version → uploads the new version at 0% → canary split + soak → promotes to 100% → probes `/v1/health/detailed` at each gate → any failure redeploys the prior version and exits 1). First deploy goes straight to 100%. The plain `wrangler deploy --env <stage>` lives at `pnpm deploy:{staging,production}:simple`.
+- **Migrations are a separate step** from code deploy (`pnpm migrate` against the stage DB) — expand/contract-safe per release (AGENTS.md invariant 12).
+- **Rollback:** `npx wrangler rollback --env <stage>` (Workers keeps prior versions); `scripts/deploy.ts` also auto-rolls-back a failed canary/promotion.
+
+## Local cron testing
+`npx wrangler dev --local --test-scheduled`, then
+`curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` (janitor) /
+`cron=0+5+*+*+*` (audit retention).

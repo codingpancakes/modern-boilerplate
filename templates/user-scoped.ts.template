@@ -1,108 +1,224 @@
+// TEMPLATE — copy into src/node/routes/<domain>.ts and adapt. Not compiled.
+
 /**
- * User-Scoped API Handler Template
- * 
- * USE THIS TEMPLATE FOR:
- * - Handlers that operate on the authenticated user's own data
- * - No organization membership required
- * - Examples: /users/me, /media/upload, /profile/update
- * 
- * USAGE:
- * 1. Copy this file to handlers/{resource}/{action}.ts
- * 2. Update serviceName, swagger docs, and handler logic
- * 3. Add Zod schema to validation.ts if needed
- * 4. Add route to local-dev/server.ts and infrastructure
- * 
- * STANDARDS:
- * - Use withAuth middleware for JWT authentication
- * - Use parseBody() for request validation with Zod
- * - Use logger.appendKeys() for persistent context
- * - Let middleware handle errors (don't catch/rethrow)
- * - Return standardized { success, data } format
- * - Add comprehensive Swagger documentation
+ * User-scoped domain template (protected; operates on the CALLER's own data).
+ *
+ * Modeled on `src/node/routes/users.ts` — copy that file too if you want a
+ * second worked example. Use this shape when the resource belongs to a single
+ * user and no organization membership is involved (e.g. the caller's settings,
+ * notifications, saved items).
+ *
+ * ── How to wire it up ─────────────────────────────────────────────────────
+ * 1. Save as `src/node/routes/<domain>.ts` (this header assumes that location,
+ *    so all imports are written relative to `src/node/routes/` → `../lib/...`).
+ * 2. In `src/node/routes/index.ts` (the barrel):
+ *      import { <domain> } from "./<domain>";
+ *      routes.use("/v1/<domain>/*", requireAuth());   // PROTECTED — required
+ *      routes.route("/v1/<domain>", <domain>);
+ *    Because `requireAuth()` runs first, `c.get("claims")` is ALWAYS set here.
+ *    Never re-parse a JWT or read claims yourself (invariant #10).
+ * 3. Add a Zod schema in `src/node/lib/validation/<domain>.ts`, export
+ *    `<domain>Schemas`, and re-export it from `lib/validation/index.ts`.
+ * 4. KEEP the `@swagger` JSDoc blocks — `pnpm docs:generate` reads them.
+ *
+ * ── Invariants this template observes (see AGENTS.md) ─────────────────────
+ *  - No try-catch in handlers; `app.ts` onError owns error formatting (#1).
+ *  - Zod-validate every input via `parseBody` (#2).
+ *  - `sanitizeObject()` before every DB write (#3).
+ *  - `logAudit()` fire-and-forget on every mutation, with request context (#4).
+ *  - Multi-step writes wrapped in `db.transaction()` (#8).
+ *  - `getDb()` per request; never cache the client at module scope (#9).
+ *  - Throw via `Errors.*`; respond via `sendSuccess` / `createSuccessResponse`
+ *    (#7). No hand-rolled bodies, no `any` / `as unknown as`.
+ *  - Non-idempotent mutations wrapped in `withIdempotency`.
  */
 
-import { Logger } from '@aws-lambda-powertools/logger';
-import { withAuth } from '../lib/middleware';
-import type { AuthenticatedEvent } from '../lib/middleware';
-import type { Context } from 'aws-lambda';
+import { eq } from "drizzle-orm";
+import { Hono } from "hono";
+// Replace `widgets` with your table; import from the schema barrel.
+import { widgets } from "../db/schema/index";
+import {
+	AUDIT_ACTIONS,
+	AUDIT_RESOURCE_TYPES,
+	AUDIT_STATUS,
+	logAudit,
+} from "../lib/audit";
+import { getUserIdFromClaims } from "../lib/auth";
+import { getDb } from "../lib/db";
+import { Errors } from "../lib/errors";
+import { sendSuccess } from "../lib/hono/respond";
+import type { AppEnv } from "../lib/hono/types";
+import { type StoredResponse, withIdempotency } from "../lib/idempotency";
+import { createLogger } from "../lib/logger";
+import { createSuccessResponse } from "../lib/response";
+import { sanitizeObject } from "../lib/sanitize";
+import { parseBody } from "../lib/validation/helpers";
+// import * as schemas from "../lib/validation/<domain>";
 
-// Uncomment as needed:
-// import { getDb } from '../lib/db';
-// import { parseBody, userSchemas } from '../lib/validation';
-// import { createSuccessResponse } from '../lib/response';
-// import { Errors } from '../lib/errors';
+export const widgetRoutes = new Hono<AppEnv>();
 
-const logger = new Logger({ serviceName: 'template-user-scoped' });
+const getLogger = createLogger({ serviceName: "widgets-get" });
+const updateLogger = createLogger({ serviceName: "widgets-update" });
+
+/**
+ * Adapt a stored/replayed idempotency result into a Hono `Response`.
+ * `withIdempotency` both produces (via `createSuccessResponse`) and replays
+ * (from `idempotency_keys`) `{ statusCode, headers, body }` objects — that
+ * stored shape is part of its replay contract, so it is preserved here.
+ * CORS + security headers are applied by app-level middleware.
+ */
+function toResponse(result: StoredResponse): Response {
+	const headers = new Headers();
+	for (const [key, value] of Object.entries(result.headers ?? {})) {
+		headers.set(key, value);
+	}
+	return new Response(result.body ?? null, {
+		status: result.statusCode,
+		headers,
+	});
+}
 
 /**
  * @swagger
- * /v1/resource:
- *   post:
- *     tags: [Resource]
- *     summary: Create user resource
- *     description: Creates a new resource for the authenticated user
+ * /v1/widgets:
+ *   get:
+ *     tags: [Widgets]
+ *     summary: List the caller's widgets
+ *     description: Returns widgets owned by the authenticated user.
  *     security:
  *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Widgets retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean, example: true }
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     widgets: { type: array, items: { type: object } }
+ *       401:
+ *         description: Unauthorized - Invalid or missing JWT token
+ */
+widgetRoutes.get("/", async (c) => {
+	// claims.sub is the WorkOS subject — resolve to the internal user id
+	// (looks up authIdentities; JIT-provisions on first-login races).
+	const userId = await getUserIdFromClaims(c.get("claims"));
+
+	getLogger.info("Listing widgets", { userId });
+
+	const db = await getDb();
+
+	// Scope EVERY query to the caller's user id — never trust a body/path id.
+	const rows = await db
+		.select()
+		.from(widgets)
+		.where(eq(widgets.userId, userId));
+
+	return sendSuccess(c, { widgets: rows });
+});
+
+/**
+ * @swagger
+ * /v1/widgets:
+ *   post:
+ *     tags: [Widgets]
+ *     summary: Create a widget for the caller
+ *     description: Creates a widget owned by the authenticated user. Idempotent via the Idempotency-Key header.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: header
+ *         name: Idempotency-Key
+ *         schema: { type: string }
+ *         description: Optional. Repeats with the same key replay the first response.
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - name
+ *             required: [name]
  *             properties:
- *               name:
- *                 type: string
- *                 example: "My Resource"
+ *               name: { type: string, example: "My widget" }
  *     responses:
  *       200:
- *         description: Resource created successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
+ *         description: Widget created successfully
  *       400:
- *         description: Invalid request body
+ *         description: Bad request - validation failed
  *       401:
- *         description: Unauthorized - Invalid or missing JWT
+ *         description: Unauthorized
  */
-const handlerFn = async (event: AuthenticatedEvent, context: Context) => {
-  // Setup logging context
-  logger.addContext(context);
-  const userId = event.claims.sub;
-  logger.appendKeys({ userId });
+widgetRoutes.post("/", async (c) => {
+	const claims = c.get("claims");
+	const rawBody = await c.req.text();
+	const queryParams = c.req.query();
 
-  logger.info('Operation started');
+	const result = await withIdempotency(
+		{
+			key: c.req.header("idempotency-key"),
+			sub: claims.sub,
+			method: c.req.method,
+			path: c.req.path,
+			// Hash parity: a bodyless request hashes `undefined` (never ""),
+			// and an empty query map hashes `undefined`.
+			body: rawBody === "" ? undefined : rawBody,
+			query: Object.keys(queryParams).length > 0 ? queryParams : undefined,
+		},
+		async () => {
+			const userId = await getUserIdFromClaims(claims);
 
-  // TODO: Uncomment and implement your logic:
-  
-  // 1. Validate request body (if POST/PATCH/PUT)
-  // const input = parseBody(event, userSchemas.create);
-  
-  // 2. Database operations
-  // const db = await getDb();
-  // const [result] = await db
-  //   .insert(resources)
-  //   .values({ userId, name: input.name })
-  //   .returning();
-  
-  // 3. Return result using response helper
-  // logger.info('Operation completed', { resourceId: result.id });
-  // return createSuccessResponse(result);
+			// 1. Validate the raw body with Zod (bounded strings/arrays in the schema).
+			//    Replace `schemas.create` with your domain schema.
+			const input = parseBody(rawBody, schemas.create);
 
-  // Placeholder response (replace with actual logic)
-  logger.info('Operation completed');
-  return createSuccessResponse({
-    message: 'Replace this with your actual implementation',
-    userId
-  });
-};
+			updateLogger.info("Creating widget", {
+				userId,
+				fields: Object.keys(input),
+			});
 
-export const handler = withAuth(handlerFn);
+			const db = await getDb();
+
+			// 2. Sanitize all string fields (XSS prevention) BEFORE the write.
+			const clean = sanitizeObject(input as Record<string, unknown>);
+
+			// 3. Multi-step write → transaction. (A single insert technically does
+			//    not need one, but anything that reads-then-writes or touches >1
+			//    table MUST — this is the shape to copy when you add those steps.)
+			const created = await db.transaction(async (tx) => {
+				const [row] = await tx
+					.insert(widgets)
+					.values({ ...clean, userId })
+					.returning();
+				return row;
+			});
+
+			// 4. Null-guard the DB result before use.
+			if (!created) {
+				throw Errors.InternalServerError("Widget creation failed");
+			}
+
+			// 5. Audit the mutation, fire-and-forget, with request context.
+			void logAudit({
+				userId,
+				action: AUDIT_ACTIONS.CREATE,
+				resourceType: AUDIT_RESOURCE_TYPES.SETTINGS, // pick the right type
+				resourceId: created.id,
+				changes: { after: created },
+				ipAddress: c.req.header("cf-connecting-ip"),
+				userAgent: c.req.header("user-agent"),
+				requestId: c.get("requestId"),
+				status: AUDIT_STATUS.SUCCESS,
+			});
+
+			// 6. Return the STORED-RESPONSE shape (not sendSuccess) — withIdempotency
+			//    persists this so a replay returns the identical body.
+			return createSuccessResponse({ widget: created });
+		},
+	);
+
+	return toResponse(result);
+});
