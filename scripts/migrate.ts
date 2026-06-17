@@ -10,7 +10,7 @@ import * as dotenv from "dotenv";
 import { drizzle } from "drizzle-orm/neon-http";
 import { migrate } from "drizzle-orm/neon-http/migrator";
 
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".dev.vars" });
 
 function getDbUrl(): string {
 	const url = process.env.DATABASE_URL;
@@ -28,6 +28,10 @@ async function runMigrations() {
 		// generic; instantiate neon() with it directly (no casts).
 		const sql = neon<boolean, boolean>(getDbUrl());
 		const db = drizzle(sql);
+
+		// The schema uses the `citext` type; enable it before migrating so a
+		// brand-new database works without a separate setup step.
+		await sql`CREATE EXTENSION IF NOT EXISTS citext`;
 
 		await migrate(db, {
 			migrationsFolder: path.join(__dirname, "../src/node/db/migrations"),

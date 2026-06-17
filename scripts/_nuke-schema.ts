@@ -3,7 +3,7 @@ import * as dotenv from "dotenv";
 import * as path from "path";
 import { confirmDestructiveDb } from "./lib/destructive-db-guard";
 
-dotenv.config({ path: path.join(__dirname, "..", ".env.local") });
+dotenv.config({ path: path.join(__dirname, "..", ".dev.vars") });
 
 async function nukeSchema() {
 	await confirmDestructiveDb(process.env.DATABASE_URL);

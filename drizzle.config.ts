@@ -1,15 +1,15 @@
-import type { Config } from 'drizzle-kit';
-import * as dotenv from 'dotenv';
+import * as dotenv from "dotenv";
+import type { Config } from "drizzle-kit";
 
-dotenv.config();
+dotenv.config({ path: ".dev.vars" });
 
 export default {
-  schema: './src/node/db/schema/index.ts',
-  out: './src/node/db/migrations',
-  driver: 'pg',
-  dbCredentials: {
-    connectionString: process.env.DATABASE_URL || '',
-  },
-  verbose: true,
-  strict: true,
+	schema: "./src/node/db/schema/index.ts",
+	out: "./src/node/db/migrations",
+	driver: "pg",
+	dbCredentials: {
+		connectionString: process.env.DATABASE_URL || "",
+	},
+	verbose: true,
+	strict: true,
 } satisfies Config;
