@@ -19,6 +19,7 @@
  * `captureException(error, context)` instead.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createLogger } from "./logger";
 
 const logger = createLogger({ serviceName: "sentry" });
@@ -98,10 +99,23 @@ function isRoutineClientError(error: Error): boolean {
 }
 
 /**
- * In-flight envelope sends, drained by {@link flush}. Module-level is fine:
- * draining another request's send is harmless (allSettled, never rejects).
+ * In-flight envelope sends, drained by {@link flush}. Held PER-REQUEST in
+ * AsyncLocalStorage (mirroring the DB pool and audit buffer): a module-level
+ * set would be shared by every concurrent request in the isolate, so one
+ * request's `flush()` would await — and head-of-line-block on — another
+ * request's Sentry POST during an error storm. Outside a scope (cron/queue)
+ * sends are detached and `flush()` is a no-op.
  */
-const pendingSends = new Set<Promise<void>>();
+const sentryScopeStorage = new AsyncLocalStorage<Set<Promise<void>>>();
+
+/**
+ * Run `fn` with a per-request Sentry send buffer. The request middleware wraps
+ * every HTTP request in this; `captureException` sends started inside are
+ * drained by {@link flush} (called from `app.onError`).
+ */
+export function runWithSentryScope<T>(fn: () => Promise<T>): Promise<T> {
+	return sentryScopeStorage.run(new Set<Promise<void>>(), fn);
+}
 
 function sendEnvelope(endpoint: SentryEndpoint, event: object): void {
 	const eventId = crypto.randomUUID().replace(/-/g, "");
@@ -133,8 +147,13 @@ function sendEnvelope(endpoint: SentryEndpoint, event: object): void {
 			});
 		},
 	);
-	pendingSends.add(send);
-	void send.finally(() => pendingSends.delete(send));
+	const pending = sentryScopeStorage.getStore();
+	if (pending) {
+		pending.add(send);
+		void send.finally(() => pending.delete(send));
+	}
+	// Outside a request scope the send is detached (fire-and-forget) — there is
+	// no flush() boundary to await it, which is fine for cron/queue paths.
 }
 
 /**
@@ -186,7 +205,8 @@ export function captureException(
  * are not cancelled with the request context). Never rejects.
  */
 export async function flush(): Promise<boolean> {
-	if (pendingSends.size === 0) return true;
-	await Promise.allSettled([...pendingSends]);
+	const pending = sentryScopeStorage.getStore();
+	if (!pending || pending.size === 0) return true;
+	await Promise.allSettled([...pending]);
 	return true;
 }

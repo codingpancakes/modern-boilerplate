@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import { flushAudits, runWithAuditScope } from "../audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "../cors";
 import { runWithDbScope } from "../db";
+import { runWithSentryScope } from "../sentry";
 import type { AppEnv } from "./types";
 
 /**
@@ -37,20 +38,23 @@ export const dbScope = (): MiddlewareHandler<AppEnv> => (_c, next) =>
 	runWithDbScope(() => next());
 
 /**
- * Drain fire-and-forget `logAudit()` writes before the request finishes,
- * even when a downstream handler throws — an un-awaited promise alone is not
- * guaranteed to complete once the response is returned. Must run inside
- * `dbScope()` (mounted after it) so the drained writes can still use the
- * request's pool.
+ * Establish the per-request audit + Sentry buffers and drain the audit writes
+ * before the request finishes (even when a downstream handler throws — an
+ * un-awaited promise alone isn't guaranteed to complete once the response is
+ * returned). The Sentry buffer is scoped here too so `app.onError`'s `flush()`
+ * drains only THIS request's error sends, not the whole isolate's. Must run
+ * inside `dbScope()` (mounted after it) so drained writes can use the pool.
  */
 export const auditFlush = (): MiddlewareHandler<AppEnv> => (_c, next) =>
-	runWithAuditScope(async () => {
-		try {
-			await next();
-		} finally {
-			await flushAudits();
-		}
-	});
+	runWithSentryScope(() =>
+		runWithAuditScope(async () => {
+			try {
+				await next();
+			} finally {
+				await flushAudits();
+			}
+		}),
+	);
 
 /**
  * Dynamic CORS + standard security headers.

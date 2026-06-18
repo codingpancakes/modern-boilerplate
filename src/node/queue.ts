@@ -38,24 +38,32 @@ export async function handleQueueBatch(
 ): Promise<void> {
 	const isDeadLetter = batch.queue.includes("dlq");
 
+	// Each message is isolated: a throw (e.g. a transient DB error) must retry
+	// only THAT message — never abort the rest of the batch, and never let a
+	// failed dead-letter write get silently acked away (losing the audit row).
 	for (const message of batch.messages) {
-		if (isDeadLetter) {
-			await handleDeadLetter(message.body);
-			message.ack();
-			continue;
-		}
-
 		try {
-			await runWithDbScope(() => processWorkosEvent(message.body));
+			if (isDeadLetter) {
+				await handleDeadLetter(message.body);
+			} else {
+				await runWithDbScope(() => processWorkosEvent(message.body));
+			}
 			message.ack();
 		} catch (error) {
-			// Do NOT ack — let Queues redeliver (and eventually dead-letter).
-			logger.error("Webhook processing failed; will retry", {
-				eventId: message.body?.id,
-				eventType: message.body?.event,
-				attempts: message.attempts,
-				error: errorMessage(error),
-			});
+			// Do NOT ack — let Queues redeliver. For the main queue this leads to
+			// the DLQ after max_retries; for the DLQ itself it retries until the
+			// audit/alert write succeeds (so a DB blip can't drop the record).
+			logger.error(
+				isDeadLetter
+					? "Dead-letter handling failed; will retry"
+					: "Webhook processing failed; will retry",
+				{
+					eventId: message.body?.id,
+					eventType: message.body?.event,
+					attempts: message.attempts,
+					error: errorMessage(error),
+				},
+			);
 			message.retry();
 		}
 	}

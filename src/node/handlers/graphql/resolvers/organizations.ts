@@ -410,51 +410,58 @@ export const organizationResolvers = {
 
 			const validated = organizationSchemas.updateMemberRole.parse(input);
 
-			// Fetch target membership
-			const [target] = await context.db
-				.select()
-				.from(organizationMembers)
-				.where(
-					and(
-						eq(organizationMembers.id, validated.memberId),
-						eq(organizationMembers.organizationId, organizationId),
-						eq(organizationMembers.status, "ACTIVE"),
-					),
-				)
-				.limit(1);
+			// Read-check-write in one transaction with the target row locked
+			// (FOR UPDATE) so concurrent role changes to the same member can't
+			// both pass the role checks and race the write.
+			const { updated, target } = await context.db.transaction(async (tx) => {
+				const [target] = await tx
+					.select()
+					.from(organizationMembers)
+					.where(
+						and(
+							eq(organizationMembers.id, validated.memberId),
+							eq(organizationMembers.organizationId, organizationId),
+							eq(organizationMembers.status, "ACTIVE"),
+						),
+					)
+					.limit(1)
+					.for("update");
 
-			if (!target) {
-				throw new GraphQLError("Membership not found", {
-					extensions: { code: "NOT_FOUND" },
-				});
-			}
+				if (!target) {
+					throw new GraphQLError("Membership not found", {
+						extensions: { code: "NOT_FOUND" },
+					});
+				}
 
-			if (
-				!hasHigherRole(
-					callerMembership.role ?? "MEMBER",
-					target.role ?? "MEMBER",
-				)
-			) {
-				throw new GraphQLError(
-					"Cannot modify a member with equal or higher role",
-					{ extensions: { code: "FORBIDDEN" } },
-				);
-			}
+				if (
+					!hasHigherRole(
+						callerMembership.role ?? "MEMBER",
+						target.role ?? "MEMBER",
+					)
+				) {
+					throw new GraphQLError(
+						"Cannot modify a member with equal or higher role",
+						{ extensions: { code: "FORBIDDEN" } },
+					);
+				}
 
-			if (!hasMinRole(callerMembership.role ?? "MEMBER", validated.role)) {
-				throw new GraphQLError("Cannot assign a role higher than your own", {
-					extensions: { code: "FORBIDDEN" },
-				});
-			}
+				if (!hasMinRole(callerMembership.role ?? "MEMBER", validated.role)) {
+					throw new GraphQLError("Cannot assign a role higher than your own", {
+						extensions: { code: "FORBIDDEN" },
+					});
+				}
 
-			const [updated] = await context.db
-				.update(organizationMembers)
-				.set({
-					role: validated.role,
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(organizationMembers.id, validated.memberId))
-				.returning();
+				const [updated] = await tx
+					.update(organizationMembers)
+					.set({
+						role: validated.role,
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizationMembers.id, validated.memberId))
+					.returning();
+
+				return { updated, target };
+			});
 
 			void logAudit({
 				userId: context.userId,
@@ -492,50 +499,55 @@ export const organizationResolvers = {
 				"ADMIN",
 			);
 
-			const [target] = await context.db
-				.select()
-				.from(organizationMembers)
-				.where(
-					and(
-						eq(organizationMembers.id, memberId),
-						eq(organizationMembers.organizationId, organizationId),
-						eq(organizationMembers.status, "ACTIVE"),
-					),
-				)
-				.limit(1);
+			const target = await context.db.transaction(async (tx) => {
+				const [target] = await tx
+					.select()
+					.from(organizationMembers)
+					.where(
+						and(
+							eq(organizationMembers.id, memberId),
+							eq(organizationMembers.organizationId, organizationId),
+							eq(organizationMembers.status, "ACTIVE"),
+						),
+					)
+					.limit(1)
+					.for("update");
 
-			if (!target) {
-				throw new GraphQLError("Membership not found", {
-					extensions: { code: "NOT_FOUND" },
-				});
-			}
+				if (!target) {
+					throw new GraphQLError("Membership not found", {
+						extensions: { code: "NOT_FOUND" },
+					});
+				}
 
-			if (
-				!hasHigherRole(
-					callerMembership.role ?? "MEMBER",
-					target.role ?? "MEMBER",
-				)
-			) {
-				throw new GraphQLError(
-					"Cannot remove a member with equal or higher role",
-					{ extensions: { code: "FORBIDDEN" } },
-				);
-			}
+				if (
+					!hasHigherRole(
+						callerMembership.role ?? "MEMBER",
+						target.role ?? "MEMBER",
+					)
+				) {
+					throw new GraphQLError(
+						"Cannot remove a member with equal or higher role",
+						{ extensions: { code: "FORBIDDEN" } },
+					);
+				}
 
-			if (target.userId === context.userId) {
-				throw new GraphQLError(
-					"Cannot remove yourself. Use leaveOrganization instead.",
-					{ extensions: { code: "BAD_USER_INPUT" } },
-				);
-			}
+				if (target.userId === context.userId) {
+					throw new GraphQLError(
+						"Cannot remove yourself. Use leaveOrganization instead.",
+						{ extensions: { code: "BAD_USER_INPUT" } },
+					);
+				}
 
-			await context.db
-				.update(organizationMembers)
-				.set({
-					status: "INACTIVE",
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(organizationMembers.id, memberId));
+				await tx
+					.update(organizationMembers)
+					.set({
+						status: "INACTIVE",
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizationMembers.id, memberId));
+
+				return target;
+			});
 
 			void logAudit({
 				userId: context.userId,
@@ -562,32 +574,38 @@ export const organizationResolvers = {
 		) => {
 			const membership = await requireMembership(context, organizationId);
 
-			if (membership.role === "OWNER") {
-				const otherOwners = await context.db.query.organizationMembers.findMany(
-					{
-						where: and(
-							eq(organizationMembers.organizationId, organizationId),
-							eq(organizationMembers.role, "OWNER"),
-							eq(organizationMembers.status, "ACTIVE"),
-						),
-					},
-				);
+			await context.db.transaction(async (tx) => {
+				if (membership.role === "OWNER") {
+					// Lock the ACTIVE owner rows so two owners can't both pass the
+					// "more than one owner" check and leave concurrently → 0 owners.
+					const owners = await tx
+						.select()
+						.from(organizationMembers)
+						.where(
+							and(
+								eq(organizationMembers.organizationId, organizationId),
+								eq(organizationMembers.role, "OWNER"),
+								eq(organizationMembers.status, "ACTIVE"),
+							),
+						)
+						.for("update");
 
-				if (otherOwners.length <= 1) {
-					throw new GraphQLError(
-						"Cannot leave: you are the only owner. Transfer ownership first.",
-						{ extensions: { code: "FORBIDDEN" } },
-					);
+					if (owners.length <= 1) {
+						throw new GraphQLError(
+							"Cannot leave: you are the only owner. Transfer ownership first.",
+							{ extensions: { code: "FORBIDDEN" } },
+						);
+					}
 				}
-			}
 
-			await context.db
-				.update(organizationMembers)
-				.set({
-					status: "INACTIVE",
-					updatedAt: new Date().toISOString(),
-				})
-				.where(eq(organizationMembers.id, membership.id));
+				await tx
+					.update(organizationMembers)
+					.set({
+						status: "INACTIVE",
+						updatedAt: new Date().toISOString(),
+					})
+					.where(eq(organizationMembers.id, membership.id));
+			});
 
 			void logAudit({
 				userId: context.userId,
