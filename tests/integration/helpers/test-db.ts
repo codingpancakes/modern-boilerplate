@@ -51,3 +51,23 @@ export async function createTestDb(): Promise<{ db: TestDb; pool: Pool }> {
 export async function truncateUserGraph(pool: Pool): Promise<void> {
 	await pool.query("TRUNCATE TABLE users RESTART IDENTITY CASCADE;");
 }
+
+/**
+ * Wipe the idempotency-key table between tests.
+ *
+ * The user graph (truncateUserGraph) is separate; the idempotency and webhook
+ * suites also write lock rows here, so they must clean up after themselves.
+ */
+export async function truncateIdempotencyKeys(pool: Pool): Promise<void> {
+	await pool.query("TRUNCATE TABLE idempotency_keys RESTART IDENTITY CASCADE;");
+}
+
+/** Wipe audit-log rows between tests (provisioning + dead-letter handling write here). */
+export async function truncateAuditLogs(pool: Pool): Promise<void> {
+	await pool.query("TRUNCATE TABLE audit_logs RESTART IDENTITY CASCADE;");
+}
+
+/** Wipe the organization graph between tests (cascades to members). */
+export async function truncateOrganizations(pool: Pool): Promise<void> {
+	await pool.query("TRUNCATE TABLE organizations RESTART IDENTITY CASCADE;");
+}
