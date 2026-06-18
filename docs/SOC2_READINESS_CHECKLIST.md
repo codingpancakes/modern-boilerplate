@@ -1,11 +1,34 @@
-> **NOTE** — platform-level items below (Lambda, CloudWatch, CloudTrail, Secrets Manager,
-> WAF stacks) described the pre-atomic AWS stack and need re-mapping to Cloudflare
-> equivalents (Workers Logs, Cloudflare account audit logs, Logpush, wrangler secrets).
-> App-level controls (audit trail, validation, sanitization, RBAC, idempotency) are
-> unchanged and current. See [docs/CLOUDFLARE_SETUP.md](./CLOUDFLARE_SETUP.md) and
-> [direction/NORTH_STAR.md](./direction/NORTH_STAR.md) "Security & compliance posture".
+> **NOTE** — the per-criterion checklist further below still uses AWS platform names
+> (Lambda, CloudWatch, CloudTrail, Secrets Manager, WAF stacks). The Cloudflare mapping
+> for those is now consolidated in the **Observability & Evidence Trail** section
+> immediately below; app-level controls (audit trail, validation, sanitization, RBAC,
+> idempotency) are unchanged and current.
 
 # 🔒 SOC 2 Compliance Readiness Checklist
+
+## Observability & Evidence Trail (Cloudflare mapping)
+
+What an auditor asks for, and where it lives on the current stack:
+
+| Evidence | AWS (before) | Cloudflare (now) | Status |
+|---|---|---|---|
+| **Application audit trail** (who did what to data) | RDS audit table | `audit_logs` — immutable (UPDATE/in-window-DELETE rejected), **7-year** retention, secret-redacted, written on every mutation via `logAudit` | ✅ present |
+| **Infra / account change log** | CloudTrail | **Cloudflare Account Audit Logs** (built-in, all plans, dashboard → Manage Account → Audit Log) — records API tokens, deploys, R2/queue/secret changes | ✅ built-in |
+| **Request / platform logs** | CloudWatch Logs | **Workers Logs** (`[observability] enabled` in `wrangler.toml`) — invocations, console output, errors; in-dashboard, short retention | ✅ enabled |
+| **Error alerting** | CloudWatch Alarms → SNS | **Sentry** (`app.onError` → `captureException`) + Cloudflare notifications | ✅ wired (set a Sentry alert rule) |
+| **Deploy safety / change mgmt** | CodeDeploy blue-green | `scripts/deploy.ts` — health-gated canary + auto-rollback; CI gate on every push | ✅ present |
+| **Async failure durability** | SQS DLQ | Cloudflare **Queues** `max_retries=5` → dead-letter queue → Sentry + `WEBHOOK_FAILED` audit | ✅ present |
+| **Long-term log export** (optional forensics) | CloudWatch → S3 | **Logpush → R2** | ⬜ optional — see below |
+
+**Logpush note:** exporting Workers request logs to R2/external for long-term retention
+is **Enterprise-gated** and configured via the Cloudflare dashboard/API (not `wrangler`).
+It is *not* required for the audit evidence above — the application `audit_logs` table is
+the primary SOC 2 record and already has 7-year retention. Add Logpush only if you need
+raw request-log forensics beyond Workers Logs' window; on Workers Paid the code-level
+alternative is a Tail Worker (`tail_consumers`) shipping trace events to R2.
+
+---
+
 
 **Generated:** December 10, 2025  
 **Last Updated:** March 2026  

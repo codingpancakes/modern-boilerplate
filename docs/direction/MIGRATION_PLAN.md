@@ -19,7 +19,7 @@
 > | 1 — Hono unification | ✅ Done (one app, `src/node/app.ts`; Express shim deleted) |
 > | 2 — Cloudflare foundations | ✅ wrangler.toml + envs, secrets sync, R2 bindings · ⬜ Hyperdrive, real R2 buckets, GitHub Actions CI |
 > | 3 — Cutover | ✅ All routes, GraphQL Yoga, Cron Triggers, structured logger · ⬜ Queues (webhook DLQ — DB idempotency only for now) |
-> | 4 — Operational shell | 🟦 Partial — ✅ gradual deploy + auto-rollback (`scripts/deploy.ts`), ✅ CI (`.github/workflows/ci.yml`) · ⬜ alerting (SENTRY_DSN), Logpush, Queues |
+> | 4 — Operational shell | ✅ Largely done — gradual deploy + auto-rollback (`scripts/deploy.ts`), CI (`.github/workflows/ci.yml`), Sentry alerting, Queues + DLQ for webhooks · ⬜ Logpush (Enterprise-gated, optional — evidence trail covered by `audit_logs` + CF account audit logs; see SOC2 checklist) |
 > | 5 — Decommission AWS | ✅ Code purged from this branch; docs updated · ⬜ Actual AWS account teardown ([legacy guide](../legacy-aws/CDK_TEARDOWN.md), run from a pre-atomic checkout) |
 >
 > Current setup/operations: [CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
