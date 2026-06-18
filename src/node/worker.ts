@@ -1,11 +1,15 @@
 import type {
 	ExecutionContext,
+	MessageBatch,
+	Queue,
 	R2Bucket,
 	ScheduledController,
 } from "@cloudflare/workers-types";
 import { app } from "./app";
 import { cronRegistry } from "./cron";
 import { createLogger } from "./lib/logger";
+import type { WorkOSWebhookEvent } from "./lib/validation/webhooks";
+import { handleQueueBatch } from "./queue";
 
 /**
  * Cloudflare Workers entry point (`main` in wrangler.toml) — the replacement
@@ -33,6 +37,16 @@ import { createLogger } from "./lib/logger";
 export type WorkerBindings = {
 	/** R2 images bucket — `[[r2_buckets]] binding = "IMAGES"` in wrangler.toml. */
 	IMAGES: R2Bucket;
+	/**
+	 * WorkOS webhook queue — `[[queues.producers]] binding = "WEBHOOK_QUEUE"` in
+	 * wrangler.toml. The HTTP ingest route (routes/webhooks.ts) sends verified
+	 * events here; `worker.queue` consumes them via `handleQueueBatch`.
+	 *
+	 * OPTIONAL because local dev (`wrangler dev --local`) and the Node test
+	 * server run without a real queue binding — the route falls back to inline
+	 * processing when it is absent (see routes/webhooks.ts).
+	 */
+	WEBHOOK_QUEUE?: Queue<WorkOSWebhookEvent>;
 };
 
 /**
@@ -40,7 +54,7 @@ export type WorkerBindings = {
  * string vars/secrets (also mirrored onto `process.env` by nodejs_compat).
  */
 export type WorkerEnv = WorkerBindings & {
-	[key: string]: R2Bucket | string | undefined;
+	[key: string]: R2Bucket | Queue<WorkOSWebhookEvent> | string | undefined;
 };
 
 /**
@@ -83,6 +97,19 @@ const worker = {
 			throw new Error(`No cron handler registered for "${controller.cron}"`);
 		}
 		await job(env, ctx);
+	},
+
+	/**
+	 * Cloudflare Queues consumer entry point. Both the main webhook queue and
+	 * its dead-letter queue route here; `handleQueueBatch` (src/node/queue.ts)
+	 * branches on `batch.queue`. Replaces the old webhook DLQ + alarm.
+	 */
+	async queue(
+		batch: MessageBatch<WorkOSWebhookEvent>,
+		env: WorkerEnv,
+		ctx: ExecutionContext,
+	): Promise<void> {
+		return handleQueueBatch(batch, env, ctx);
 	},
 };
 

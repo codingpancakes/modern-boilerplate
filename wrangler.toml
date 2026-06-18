@@ -65,6 +65,21 @@ binding = "IMAGES"
 bucket_name = "sidedoor-images-local"         # PLACEHOLDER: local-sim name, anything works
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Cloudflare Queues — WorkOS webhook ingest/processing (replaces the webhook
+# DLQ + alarm). The HTTP route (routes/webhooks.ts) verifies + enqueues onto
+# WEBHOOK_QUEUE; `worker.queue` (src/node/queue.ts) consumes. The binding name
+# is WEBHOOK_QUEUE in every environment. Local queues are SIMULATED on disk by
+# `wrangler dev --local` (no Cloudflare account / no real queue needed); the
+# route also falls back to inline processing when the binding is absent.
+# ─────────────────────────────────────────────────────────────────────────────
+[[queues.producers]]
+queue = "sidedoor-webhooks-local"
+binding = "WEBHOOK_QUEUE"
+
+[[queues.consumers]]
+queue = "sidedoor-webhooks-local"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Staging
 # Required secrets (set once): npx wrangler secret put DATABASE_URL --env staging
 # (repeat for every secret listed in .dev.vars.example)
@@ -86,6 +101,22 @@ IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
 [[env.staging.r2_buckets]]
 binding = "IMAGES"
 bucket_name = "sidedoor-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
+
+# Queues (staging) — these queues ALREADY EXIST:
+#   sidedoor-webhooks-staging, sidedoor-webhooks-dlq-staging.
+# Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
+# DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
+[[env.staging.queues.producers]]
+queue = "sidedoor-webhooks-staging"
+binding = "WEBHOOK_QUEUE"
+
+[[env.staging.queues.consumers]]
+queue = "sidedoor-webhooks-staging"
+max_retries = 5
+dead_letter_queue = "sidedoor-webhooks-dlq-staging"
+
+[[env.staging.queues.consumers]]
+queue = "sidedoor-webhooks-dlq-staging"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Production
@@ -109,3 +140,21 @@ IMAGES_CDN_URL = ""                             # PLACEHOLDER: production R2 pub
 [[env.production.r2_buckets]]
 binding = "IMAGES"
 bucket_name = "sidedoor-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`
+
+# Queues (production) — these queues DO NOT EXIST YET. Create them before the
+# first production deploy:
+#   wrangler queues create sidedoor-webhooks-production
+#   wrangler queues create sidedoor-webhooks-dlq-production
+# Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
+# DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
+[[env.production.queues.producers]]
+queue = "sidedoor-webhooks-production"
+binding = "WEBHOOK_QUEUE"
+
+[[env.production.queues.consumers]]
+queue = "sidedoor-webhooks-production"
+max_retries = 5
+dead_letter_queue = "sidedoor-webhooks-dlq-production"
+
+[[env.production.queues.consumers]]
+queue = "sidedoor-webhooks-dlq-production"

@@ -82,6 +82,7 @@ export const workosWebhookEvent = z.object({
 	created_at: z.string(),
 });
 
+export type WorkOSWebhookEvent = z.infer<typeof workosWebhookEvent>;
 export type WorkOSUserData = z.infer<typeof workosUserData>;
 export type WorkOSOrgData = z.infer<typeof workosOrgData>;
 export type WorkOSAuthData = z.infer<typeof workosAuthData>;

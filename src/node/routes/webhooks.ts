@@ -1,34 +1,30 @@
 import { createHmac } from "node:crypto";
-import { and, eq, lt, or } from "drizzle-orm";
 import { Hono } from "hono";
-import { idempotencyKeys } from "../db/schema/index";
 import { constantTimeEqual } from "../lib/constant-time";
-import { getDb } from "../lib/db";
-import { errorMessage } from "../lib/error-utils";
+import { runWithDbScope } from "../lib/db";
 import { Errors } from "../lib/errors";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
-import {
-	deleteOrgFromWorkOS,
-	deleteUserFromWorkOS,
-	recordAuthEventFromWorkOS,
-	upsertOrgFromWorkOS,
-	upsertUserFromWorkOS,
-} from "../lib/services/user-provisioning";
+import { processWorkosEvent } from "../lib/services/webhook-processor";
 import { validate, webhookSchemas } from "../lib/validation";
-import {
-	isWorkOSAuthEvent,
-	parseWorkOSAuthData,
-	parseWorkOSOrgData,
-	parseWorkOSUserData,
-} from "../lib/validation/webhooks";
 
 /**
  * /v1/webhooks/* — webhook routes (public; each webhook verifies its own
  * signature/HMAC inside the handler, never via `requireAuth()`).
  *
  *   POST /workos — WorkOS user/org lifecycle events
+ *
+ * This route is INGEST-ONLY: it reads the raw body, enforces the size limit,
+ * verifies the HMAC signature, Zod-validates the event, then enqueues it onto
+ * the Cloudflare Queue (`c.env.WEBHOOK_QUEUE`) and returns 200 immediately. The
+ * idempotency lock + provisioning switch run in the queue consumer
+ * (lib/services/webhook-processor.ts via src/node/queue.ts), so retries and the
+ * dead-letter queue give durability that a synchronous handler could not.
+ *
+ * Local dev / the Node test server have no queue binding; there the route falls
+ * back to processing the event inline (inside a DB scope) so behaviour is
+ * unchanged without a real queue.
  *
  * Signature verification MUST run against the raw request body string
  * (`c.req.text()`) — never a re-serialized JSON.parse/stringify round-trip,
@@ -106,7 +102,9 @@ function verifySignature(
  *     summary: WorkOS webhook handler
  *     description: |
  *       Handles WorkOS webhook events for user and organization lifecycle management.
- *       Verifies webhook signature and processes events idempotently.
+ *       Verifies the webhook signature, then enqueues the event onto a Cloudflare
+ *       Queue for durable, idempotent processing (with retries + a dead-letter
+ *       queue). Returns 200 as soon as the event is queued.
  *
  *       **Supported Events:**
  *       - `user.created` - Creates new user and auth identity
@@ -153,211 +151,65 @@ function verifySignature(
  *                   properties:
  *                     status:
  *                       type: string
- *                       enum: [processed, already_processed]
+ *                       enum: [queued]
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  *       500:
  *         $ref: '#/components/responses/ServerError'
  */
 webhooks.post("/workos", async (c) => {
-	// Tracked across the try/catch so a failed attempt releases its idempotency
-	// lock (status -> "failed") and WorkOS's retry can re-run the event instead
-	// of getting a spurious "already processing" 200 and dropping it.
-	let idempotencyKey: string | null = null;
-	let ownsKey = false;
+	// Raw body string — this exact byte sequence is what WorkOS signed.
+	const payload = await c.req.text();
+	const signature = c.req.header("workos-signature");
 
-	try {
-		// Raw body string — this exact byte sequence is what WorkOS signed.
-		const payload = await c.req.text();
-		const signature = c.req.header("workos-signature");
+	logger.info("Webhook received", {
+		hasSignature: !!signature,
+		bodyLength: payload.length,
+	});
 
-		logger.info("Webhook received", {
-			hasSignature: !!signature,
-			bodyLength: payload.length,
-		});
+	// Reject oversized payloads before any parsing (DoS protection)
+	const MAX_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
+	if (payload.length > MAX_PAYLOAD_BYTES) {
+		logger.error("Webhook payload too large", { size: payload.length });
+		throw Errors.BadRequest("Payload too large");
+	}
 
-		// Reject oversized payloads before any parsing (DoS protection)
-		const MAX_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
-		if (payload.length > MAX_PAYLOAD_BYTES) {
-			logger.error("Webhook payload too large", { size: payload.length });
-			throw Errors.BadRequest("Payload too large");
-		}
+	if (!signature) {
+		logger.error("No signature in headers");
+		throw Errors.Unauthorized();
+	}
 
-		if (!signature) {
-			logger.error("No signature in headers");
-			throw Errors.Unauthorized();
-		}
+	// Verify signature against the raw body — this stays on the ingest path and
+	// must never move to the queue consumer (the raw bytes only exist here).
+	const secret = getWebhookSecret();
+	if (!verifySignature(payload, signature, secret)) {
+		logger.error("Invalid webhook signature");
+		throw Errors.Unauthorized();
+	}
+	logger.info("Signature verified");
 
-		// Verify signature
-		const secret = getWebhookSecret();
-		if (!verifySignature(payload, signature, secret)) {
-			logger.error("Invalid webhook signature");
-			throw Errors.Unauthorized();
-		}
-		logger.info("Signature verified");
+	// Parse and validate webhook event
+	const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
 
-		// Parse and validate webhook event
-		const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
-
-		logger.info("Processing WorkOS webhook", {
+	if (c.env.WEBHOOK_QUEUE) {
+		// Durable path: hand the verified event to Cloudflare Queues. Retries +
+		// the dead-letter queue (see src/node/queue.ts) provide the durability
+		// the synchronous handler could not.
+		await c.env.WEBHOOK_QUEUE.send(webhookEvent);
+		logger.info("Webhook queued", {
 			eventId: webhookEvent.id,
 			eventType: webhookEvent.event,
 		});
-
-		const db = await getDb();
-
-		// Atomic idempotency check using INSERT ON CONFLICT DO NOTHING
-		idempotencyKey = `workos-webhook-${webhookEvent.id}`;
-		const inserted = await db
-			.insert(idempotencyKeys)
-			.values({
-				key: idempotencyKey,
-				requestHash: webhookEvent.id,
-				status: "processing",
-				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-			})
-			.onConflictDoNothing({ target: idempotencyKeys.key })
-			.returning({ key: idempotencyKeys.key });
-
-		if (inserted.length === 0) {
-			// Key already exists -- check if completed or reclaimable
-			const [existing] = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(eq(idempotencyKeys.key, idempotencyKey))
-				.limit(1);
-
-			if (existing?.status === "completed") {
-				logger.warn("Duplicate event detected, skipping", { idempotencyKey });
-				return sendSuccess(c, { message: "Event already processed" });
-			}
-
-			// Atomically (re)claim the key via UPDATE. Reclaim when either:
-			//  - a previous attempt FAILED (so WorkOS's retry can re-run it), or
-			//  - a "processing" lock is stale (>5 min — the original invocation died).
-			// UPDATE-with-predicate (not DELETE+INSERT) keeps this race-free: only one
-			// concurrent request can flip the row, the rest get "already processing".
-			const staleThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-			const reclaimed = await db
-				.update(idempotencyKeys)
-				.set({
-					status: "processing",
-					requestHash: webhookEvent.id,
-					createdAt: new Date().toISOString(),
-					expiresAt: new Date(
-						Date.now() + 7 * 24 * 60 * 60 * 1000,
-					).toISOString(),
-					updatedAt: new Date().toISOString(),
-				})
-				.where(
-					and(
-						eq(idempotencyKeys.key, idempotencyKey),
-						or(
-							eq(idempotencyKeys.status, "failed"),
-							and(
-								eq(idempotencyKeys.status, "processing"),
-								lt(idempotencyKeys.createdAt, staleThreshold),
-							),
-						),
-					),
-				)
-				.returning({ key: idempotencyKeys.key });
-
-			if (reclaimed.length === 0) {
-				// Another request is actively processing this event
-				logger.warn("Event is already being processed", { idempotencyKey });
-				return sendSuccess(c, { message: "Event already processing" });
-			}
-
-			logger.warn("Reclaimed idempotency key for retry", { idempotencyKey });
-		}
-		// We now own the lock; a failure past this point must release it (catch).
-		ownsKey = true;
-		logger.info("Processing event", { idempotencyKey });
-
-		// Authentication-lifecycle events (login / failed login / session) are
-		// audited rather than mutating domain tables.
-		if (isWorkOSAuthEvent(webhookEvent.event)) {
-			const authData = parseWorkOSAuthData(
-				webhookEvent.data as Record<string, unknown>,
-			);
-			await recordAuthEventFromWorkOS(db, authData, webhookEvent.event);
-		}
-
-		// Delegate to service-layer functions for each event type
-		switch (webhookEvent.event) {
-			case "user.created":
-			case "user.updated": {
-				const userData = parseWorkOSUserData(
-					webhookEvent.data as Record<string, unknown>,
-				);
-				await upsertUserFromWorkOS(db, userData, webhookEvent.event);
-				break;
-			}
-
-			case "user.deleted": {
-				const userData = parseWorkOSUserData(
-					webhookEvent.data as Record<string, unknown>,
-				);
-				await deleteUserFromWorkOS(db, userData, webhookEvent.event);
-				break;
-			}
-
-			case "organization.created":
-			case "organization.updated": {
-				const orgData = parseWorkOSOrgData(
-					webhookEvent.data as Record<string, unknown>,
-				);
-				await upsertOrgFromWorkOS(db, orgData, webhookEvent.event);
-				break;
-			}
-
-			case "organization.deleted": {
-				const orgData = parseWorkOSOrgData(
-					webhookEvent.data as Record<string, unknown>,
-				);
-				await deleteOrgFromWorkOS(db, orgData, webhookEvent.event);
-				break;
-			}
-		}
-
-		// Mark idempotency key as completed
-		await db
-			.update(idempotencyKeys)
-			.set({
-				status: "completed",
-				completedAt: new Date().toISOString(),
-			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
-
-		logger.info("Webhook processed successfully", { eventId: webhookEvent.id });
-
-		return sendSuccess(c, { status: "processed" });
-	} catch (error) {
-		// NOT an error-formatting catch (app.onError owns Sentry + the wire
-		// shape) — this exists solely to release our idempotency lock so
-		// WorkOS's retry can re-run this event. Without it the key is stranded
-		// in "processing" and the retry returns a spurious "already processing"
-		// 200, silently dropping the event.
-		logger.error("Error processing webhook", {
-			error: errorMessage(error),
+	} else {
+		// Local dev / Node test server: no queue binding. Process inline inside a
+		// DB scope so behaviour is unchanged without a real queue. A failure here
+		// throws and surfaces as a 500 (WorkOS will retry the delivery).
+		logger.info("No WEBHOOK_QUEUE binding; processing inline", {
+			eventId: webhookEvent.id,
+			eventType: webhookEvent.event,
 		});
-
-		if (ownsKey && idempotencyKey) {
-			try {
-				const db = await getDb();
-				await db
-					.update(idempotencyKeys)
-					.set({ status: "failed", updatedAt: new Date().toISOString() })
-					.where(eq(idempotencyKeys.key, idempotencyKey));
-			} catch (releaseError) {
-				logger.error("Failed to release idempotency lock after error", {
-					idempotencyKey,
-					error: errorMessage(releaseError),
-				});
-			}
-		}
-
-		throw error;
+		await runWithDbScope(() => processWorkosEvent(webhookEvent));
 	}
+
+	return sendSuccess(c, { status: "queued" });
 });
