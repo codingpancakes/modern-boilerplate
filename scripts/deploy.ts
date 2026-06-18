@@ -82,6 +82,21 @@ function deploySplit(specs: string[]): void {
 	wrangler(["versions", "deploy", ...specs, "--yes"], false);
 }
 
+/**
+ * `wrangler versions deploy` rolls out CODE only — it does not sync
+ * deployment settings (Cron Triggers, routes). Apply those to the now-active
+ * version so a changed cron schedule / route actually takes effect.
+ *
+ * CAVEAT: this does NOT register Queue *consumers* — gradual deployments can't.
+ * When you ADD or CHANGE a `[[queues.consumers]]`, run `pnpm deploy:<stage>:simple`
+ * (a full `wrangler deploy`) ONCE to register it; consumers then persist across
+ * subsequent gradual deploys.
+ */
+function syncTriggers(): void {
+	console.log("🧷 Syncing triggers (crons/routes)...");
+	wrangler(["triggers", "deploy"], false);
+}
+
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
 async function healthy(): Promise<boolean> {
@@ -128,6 +143,7 @@ async function main() {
 			);
 			process.exit(1);
 		}
+		syncTriggers();
 		console.log("✅ First deploy healthy at 100%.");
 		return;
 	}
@@ -161,6 +177,7 @@ async function main() {
 		process.exit(1);
 	}
 
+	syncTriggers();
 	console.log(
 		`✅ Deployed ${newVersion} to ${stage} at 100% (rollback target was ${oldVersion}).`,
 	);

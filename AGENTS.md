@@ -167,6 +167,11 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
   a manual `workflow_dispatch`.
 - **Manual rollback:** `npx wrangler rollback --env <stage>` (the deploy script also rolls
   back automatically on a failed health gate).
+- **Queue consumers:** gradual deploys (`wrangler versions`) do NOT register Queue
+  *consumers*. After ADDING or CHANGING a `[[queues.consumers]]`, run
+  `pnpm deploy:<stage>:simple` ONCE (full `wrangler deploy`) to register it; it then
+  persists across later gradual deploys. (Cron Triggers/routes ARE synced by the deploy
+  script via `wrangler triggers deploy`.)
 - **Secrets:** `pnpm sync-secrets <stage>` pushes every name in `.dev.vars.example` from
   `.env.<stage>`. Never commit `.env*` / `.dev.vars` (gitignored).
 - **Edge security:** Cloudflare WAF/DDoS is account-level platform config, not code. The
