@@ -23,7 +23,7 @@ new project (see [docs/CLOUDFLARE_SETUP.md](./docs/CLOUDFLARE_SETUP.md)).
 ```bash
 pnpm install
 cp .dev.vars.example .dev.vars       # fill in DATABASE_URL, WORKOS_CLIENT_ID, …
-# also put DATABASE_URL in .env.local (used by migrate/drizzle-kit)
+# migrate/drizzle-kit read DATABASE_URL from .dev.vars too (dotenv) — nothing else needed
 pnpm migrate
 pnpm dev                             # wrangler dev --local → http://localhost:8787
 ```
@@ -43,8 +43,9 @@ No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.m
 | `pnpm migrate` | Run Drizzle migrations |
 | `pnpm db:generate` | Generate a migration from schema changes |
 | `pnpm sync-secrets <stage>` | Push secrets to Cloudflare (`wrangler secret put`) |
-| `pnpm deploy:staging` | `wrangler deploy --env staging` |
-| `pnpm deploy:production` | `wrangler deploy --env production` |
+| `pnpm deploy:staging` | Health-gated canary + auto-rollback to staging (`scripts/deploy.ts`) |
+| `pnpm deploy:production` | Health-gated canary + auto-rollback to production (`scripts/deploy.ts`) |
+| `pnpm deploy:staging:simple` | Plain `wrangler deploy --env staging` (no canary) |
 | `pnpm build` | TypeScript compile + generate OpenAPI docs |
 
 ## Project Structure
@@ -70,7 +71,7 @@ src/node/
 wrangler.toml            Worker config: vars, R2 bindings, cron triggers, staging/production envs
 .dev.vars.example        Registry of every secret the Worker reads (copy to .dev.vars)
 scripts/                 migrate, sync-secrets, init-project, generate-openapi
-templates/               Lambda-era handler templates (see templates/README.md)
+templates/               Hono route templates for new domains (see templates/README.md)
 tests/                   Unit (vitest) + integration (vitest + shell scripts)
 docs/                    Human docs (legacy AWS docs under docs/legacy-aws/)
 ```
@@ -93,7 +94,9 @@ Client → Cloudflare edge (WAF/DDoS/CDN) → Worker
 - **GraphQL:** GraphQL Yoga at `/v1/graphql` with DataLoaders, depth limiting,
   complexity/mutation limits (`src/node/handlers/graphql/`).
 - **Idempotency:** DB-backed hash dedup with TTL for webhooks and critical mutations.
-- **Deploys:** `wrangler deploy` (seconds, atomic versions); `wrangler rollback` to revert.
+- **Deploys:** `pnpm deploy:<stage>` runs a health-gated canary with automatic
+  rollback (`scripts/deploy.ts`); `:simple` variants are a plain `wrangler deploy`,
+  and `wrangler rollback` reverts manually.
 
 ## Auth Flow
 

@@ -1,8 +1,10 @@
-> **NOTE** — the per-criterion checklist further below still uses AWS platform names
-> (Lambda, CloudWatch, CloudTrail, Secrets Manager, WAF stacks). The Cloudflare mapping
-> for those is now consolidated in the **Observability & Evidence Trail** section
-> immediately below; app-level controls (audit trail, validation, sanitization, RBAC,
-> idempotency) are unchanged and current.
+> **NOTE** — this checklist describes the **current Cloudflare stack** (Workers, R2,
+> Queues, the `scripts/deploy.ts` canary, Sentry, Cloudflare Account Audit Logs, and
+> the application `audit_logs` table). The **Observability & Evidence Trail** section
+> immediately below maps each old AWS control to its Cloudflare replacement. App-level
+> controls (audit trail, validation, sanitization, RBAC, idempotency) carried over
+> unchanged. Note: there is **no application-level rate limiting** — per-IP/per-path
+> limits are Cloudflare zone rules (see `docs/SECURITY.md`).
 
 # 🔒 SOC 2 Compliance Readiness Checklist
 
@@ -33,7 +35,7 @@ alternative is a Tail Worker (`tail_consumers`) shipping trace events to R2.
 **Generated:** December 10, 2025  
 **Last Updated:** March 2026  
 **Current Status:** ~72% Ready (Audit logging Phase 1 complete)  
-**Node.js Version:** 24.x (Lambda Runtime: NODEJS_24_X)  
+**Runtime:** Cloudflare Workers (`nodejs_compat`, Node.js 24.x APIs)  
 **Estimated Time to Compliance:** 55-75 hours (1.5-2 weeks)
 
 ---
@@ -54,50 +56,50 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 ### Security (80% Complete)
 
 #### ✅ Access Controls
-- [x] **WorkOS JWT Authentication** - Enterprise SSO ready
-- [x] **API Gateway Authorization** - Lambda authorizer validates all requests
-- [x] **IAM Roles & Policies** - Least privilege for Lambda functions
-- [x] **Secrets Management** - AWS Secrets Manager (no hardcoded credentials)
+- [x] **WorkOS JWT Authentication** - Enterprise SSO ready; verified in `requireAuth()` middleware (RS256-pinned, JWKS-cached, `client_id` audience binding)
+- [x] **Request authorization** - Every protected domain runs `requireAuth()` in the Worker (`src/node/lib/hono/auth.ts` → `authorizers/verify-token.ts`) — no separate gateway/authorizer
+- [x] **Least-privilege account access** - Cloudflare account roles + scoped API tokens (account-level config); no AWS IAM
+- [x] **Secrets Management** - Cloudflare Workers secrets (`wrangler secret put`, stdin-only sync); no hardcoded credentials, none in `wrangler.toml` or git
 - [x] **MFA Support** - WorkOS handles MFA for user authentication
 - [x] **Session Management** - Stateless JWT tokens with expiration
 
 #### ✅ Network Security
-- [x] **HTTPS Enforcement** - All API traffic encrypted in transit
-- [x] **CORS Configuration** - Strict origin validation, no wildcards
-- [x] **Rate Limiting** - API Gateway throttling (500-2000 req/sec)
-- [x] **DDoS Protection** - CloudFront + WAFv2
+- [x] **HTTPS Enforcement** - Cloudflare TLS termination + HSTS header on every response
+- [x] **CORS Configuration** - Strict dynamic origin validation, no wildcards (`src/node/lib/cors.ts`)
+- [ ] **Rate Limiting** - **No application-level rate limiting in the Worker** (see `docs/SECURITY.md`). Per-IP/per-path limits must be configured as Cloudflare zone rate-limiting rules — account-level, not in this repo. Not currently asserted as present.
+- [x] **DDoS Protection** - Cloudflare always-on DDoS mitigation + optional WAF managed rulesets (account-level config, not code)
 
 #### ✅ Data Protection
-- [x] **Encryption at Rest** - S3 buckets encrypted (AES-256)
-- [x] **Encryption in Transit** - TLS 1.2+ for all connections
+- [x] **Encryption at Rest** - Cloudflare R2 object storage encrypted at rest
+- [x] **Encryption in Transit** - TLS 1.2+ for all connections (Cloudflare edge + Neon)
 - [x] **Database Encryption** - Neon Postgres with encryption
 - [x] **Input Validation** - Zod schemas + sanitization
 - [x] **SQL Injection Prevention** - Drizzle ORM with parameterized queries
-- [x] **XSS Prevention** - Comprehensive sanitization utilities
+- [x] **XSS Prevention** - Comprehensive sanitization utilities (`src/node/lib/sanitize.ts`)
 
 #### ✅ Monitoring & Logging
-- [x] **CloudTrail** - All AWS API calls logged (audit trail)
-- [x] **CloudWatch Logs** - Lambda execution logs
-- [x] **CloudWatch Alarms** - Error rate, latency, throttles
-- [x] **SNS Notifications** - Email alerts for critical issues
-- [x] **X-Ray Tracing** - Distributed tracing with user context
-- [x] **Cost Monitoring** - AWS Budgets with alerts
+- [x] **Application audit trail** - `audit_logs` table, immutable, 7-year retention, written on every mutation via `logAudit` (the primary SOC 2 evidence record)
+- [x] **Account / infra change log** - Cloudflare Account Audit Logs (built-in; API tokens, deploys, R2/queue/secret changes)
+- [x] **Request / platform logs** - Workers Logs (`[observability] enabled` in `wrangler.toml`)
+- [x] **Error alerting** - Sentry (`app.onError` → `captureException`) + Cloudflare notifications
+- [ ] **Distributed tracing** - Not configured; optional Tail Worker (`tail_consumers`) is the Workers-native path if needed
+- [x] **Cost / usage visibility** - Cloudflare dashboard usage + billing alerts (account-level)
 
 ### Availability (90% Complete)
 
 #### ✅ High Availability
-- [x] **Multi-AZ Deployment** - Lambda runs across multiple AZs
-- [x] **Auto-scaling** - Lambda scales automatically
-- [x] **Health Checks** - `/v1/health` and `/v1/health/detailed` endpoints
-- [x] **Dead Letter Queues** - Webhook failures captured
-- [x] **Concurrency Management** - Handlers use unreserved pool with API Gateway throttling
-- [x] **CloudWatch Dashboard** - Real-time system health visibility
+- [x] **Global edge runtime** - Workers run across Cloudflare's global network; no single region/AZ to lose
+- [x] **Auto-scaling** - Workers scale horizontally with no concurrency ceiling (no Lambda pool to exhaust)
+- [x] **Health Checks** - `/v1/health` and `/v1/health/detailed` endpoints (the latter gates every canary deploy)
+- [x] **Dead Letter Queues** - Cloudflare Queues `max_retries=5` → dead-letter queue → Sentry + `WEBHOOK_FAILED` audit
+- [x] **Deploy safety** - Health-gated canary + auto-rollback (`scripts/deploy.ts`) so a bad version self-reverts
+- [x] **Observability** - Workers Logs + Sentry for real-time health visibility
 
 #### ✅ Disaster Recovery
-- [x] **Infrastructure as Code** - CDK for reproducible deployments
-- [x] **Database Backups** - Neon automatic backups
-- [x] **S3 Versioning** - (if enabled on buckets)
-- [x] **CloudTrail Logs** - Stored in S3 with lifecycle policies
+- [x] **Config as code** - `wrangler.toml` (Worker config, bindings, cron triggers) is versioned in git; deploys are reproducible
+- [x] **Database Backups** - Neon automatic backups + point-in-time restore
+- [x] **Atomic versioned deploys** - Cloudflare keeps prior Worker versions; `wrangler rollback` reverts in seconds
+- [x] **Account audit trail** - Cloudflare Account Audit Logs (built-in, all plans)
 
 ### Processing Integrity (70% Complete)
 
@@ -166,12 +168,12 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 **Status:** Documented in `docs/DATA_RETENTION_POLICY.md`
 
 **What's Implemented:**
-- ✅ CloudWatch logs: 1 month (prod), 1 week (staging) — automated via `LogRetentionAspect`
-- ✅ CloudTrail logs: 1 year (365 days) — automated with Glacier transition
-- ✅ Webhook DLQ: 14 days retention
-- ✅ S3 lifecycle rules: delete old multipart uploads after 7 days
-- ✅ Audit logs: 7 years target (Phase 1 infra in place, automated purge TBD)
-- ✅ Data retention policy documented
+- ✅ Application `audit_logs`: 7-year retention, automated purge job (`handlers/utils/audit-retention.ts` cron trigger)
+- ✅ Workers Logs: in-dashboard, short platform retention (extend via Logpush → R2 if needed)
+- ✅ Cloudflare Account Audit Logs: platform-retained account/infra change record
+- ✅ Webhook failures: Cloudflare Queues DLQ (`max_retries=5`)
+- ✅ Janitor cron (`handlers/utils/janitor.ts`) cleans expired idempotency/transient rows
+- ✅ Data retention policy documented (`docs/DATA_RETENTION_POLICY.md`)
 
 **Optional Enhancements (only if needed for GDPR/CCPA):**
 - Soft delete for users (4 hours) — add `deletedAt` column + cleanup job
@@ -193,14 +195,15 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 # Incident Response Plan
 
 ## Detection
-- CloudWatch alarms trigger
-- SNS email notifications sent
+- Sentry alert rule fires (errors/regressions)
+- Cloudflare notification (security/availability events)
 - On-call engineer notified
 
 ## Assessment
-- Review CloudWatch logs
-- Check X-Ray traces
-- Analyze CloudTrail for unauthorized access
+- Review Workers Logs (in-dashboard)
+- Review Sentry issue + breadcrumbs
+- Review application `audit_logs` for the affected resource/user
+- Analyze Cloudflare Account Audit Logs for unauthorized account/infra changes
 - Determine severity (P0-P4)
 
 ## Containment
@@ -234,11 +237,10 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - No vendor SLA documentation
 
 **Your Vendors:**
-- AWS (SOC 2 compliant ✅)
+- Cloudflare — Workers, R2, Queues, WAF/DDoS (SOC 2 compliant ✅)
 - WorkOS (SOC 2 compliant ✅)
 - Neon (SOC 2 compliant ✅)
 - Sentry (SOC 2 compliant ✅)
-- CloudFront + WAFv2 (AWS SOC 2 compliant ✅)
 
 **What You Need:**
 - Collect SOC 2 reports from all vendors
@@ -255,17 +257,15 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 **SOC 2 Requirement:** CC8.1 - Detect and respond to security threats
 
 **What Exists:**
-- ✅ `pnpm audit --audit-level=high` runs in `buildspec.yml` (non-blocking)
-- ✅ Biome lint + TypeScript strict checking in CI
+- ✅ `pnpm check` (Biome lint + TypeScript strict + tests) gates every push in CI
 
 **What's Missing:**
+- No dependency vulnerability gate (`pnpm audit`) in CI
 - No SAST (Static Application Security Testing)
-- No IaC security scanning (e.g. cdk-nag, Checkov)
-- `pnpm audit` is non-blocking — should be made a blocking gate
 
 **What You Need:**
 ```yaml
-# Add to buildspec.yml or GitHub Actions
+# Add to the GitHub Actions workflow
 - name: Dependency Scanning
   run: |
     pnpm audit --audit-level=high
@@ -274,11 +274,9 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - name: SAST Scanning
   run: |
     # Use Semgrep, SonarQube, or CodeQL
-    
-- name: IaC Scanning
-  run: |
-    # Use Checkov, tfsec, or AWS CDK nag
 ```
+(There is no infrastructure-as-code to scan — config lives in `wrangler.toml`,
+managed by the Cloudflare platform.)
 
 **Estimated Time:** 6 hours  
 **Priority:** HIGH
@@ -379,29 +377,28 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 ---
 
 #### 12. **Encryption Key Management**
-- AWS KMS for customer-managed keys
-- Key rotation policies
-- Key access logging
+- Cloudflare manages encryption keys for Workers secrets and R2 at rest
+- Document secret-rotation procedure (rotate = `wrangler secret put`, which redeploys)
+- Key/secret access is recorded in Cloudflare Account Audit Logs
 
 **Estimated Time:** 8 hours
 
 ---
 
-#### 13. **Network Segmentation**
-- VPC for Lambda functions
-- Private subnets for databases
-- Security groups and NACLs
+#### 13. **Network controls**
+- N/A at the infra layer — the Worker runs at the edge with no VPC/subnets to segment
+- DB access is over TLS to Neon; restrict Neon access by IP allowlist / connection limits if required
 
-**Estimated Time:** 16 hours
+**Estimated Time:** 4 hours
 
 ---
 
-#### 14. **Least Privilege IAM**
-- Replace AdministratorAccess in pipeline
-- Granular IAM policies per Lambda
-- Regular access reviews
+#### 14. **Least-privilege account access**
+- Use scoped Cloudflare API tokens (not the global key) for CI/deploy
+- Assign minimal Cloudflare account roles; review access periodically
+- (No AWS IAM; nothing to de-privilege there)
 
-**Estimated Time:** 8 hours
+**Estimated Time:** 4 hours
 
 ---
 
@@ -483,11 +480,11 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 ### Phase 3: Nice to Have (1 week)
 
 10. **DLP** (12 hours)
-11. **KMS** (8 hours)
-12. **Network Segmentation** (16 hours)
-13. **Least Privilege IAM** (8 hours)
+11. **Secret/key management procedure** (8 hours)
+12. **Network controls (Neon access restriction)** (4 hours)
+13. **Least-privilege account access** (4 hours)
 
-**Total: 44 hours**
+**Total: 28 hours**
 
 ---
 
@@ -529,8 +526,8 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 - [ ] Access Control Matrix
 
 ### Evidence Collection
-- [ ] Audit logs (7 years)
-- [ ] CloudTrail logs (1 year)
+- [ ] Application audit logs (7 years)
+- [ ] Cloudflare Account Audit Logs export
 - [ ] Access reviews (quarterly)
 - [ ] Vulnerability scans (monthly)
 - [ ] Penetration test reports (annual)
@@ -590,10 +587,11 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 **You're ~72% ready for SOC 2!**
 
 Your infrastructure is **excellent** - you already have:
-- ✅ CloudWatch log retention (automated)
-- ✅ CloudTrail retention with lifecycle (automated)
-- ✅ Webhook DLQ retention (automated)
-- ✅ S3 lifecycle rules (automated)
+- ✅ Application `audit_logs` with 7-year retention + automated purge cron
+- ✅ Cloudflare Account Audit Logs (built-in account/infra change record)
+- ✅ Workers Logs + Sentry error alerting
+- ✅ Cloudflare Queues DLQ for webhook failures (automated)
+- ✅ Health-gated canary deploy with auto-rollback (`scripts/deploy.ts`)
 
 **The main gaps are:**
 

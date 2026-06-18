@@ -1,26 +1,18 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "your-project API",
+    "title": "sidedoor API",
     "version": "1.0.0",
-    "description": "Production-grade serverless REST API with TypeScript and Python Lambda support",
-    "contact": {
-      "name": "API Support",
-      "email": "support@yourdomain.com"
-    }
+    "description": "Production-grade serverless REST API on Cloudflare Workers"
   },
   "servers": [
     {
-      "url": "http://localhost:3000",
+      "url": "http://localhost:8787",
       "description": "Local development server"
     },
     {
-      "url": "https://api-staging.yourdomain.com",
+      "url": "https://<your-worker>-staging.<account>.workers.dev",
       "description": "Staging environment"
-    },
-    {
-      "url": "https://api.yourdomain.com",
-      "description": "Production environment"
     }
   ],
   "components": {
@@ -58,22 +50,38 @@
             "example": false
           },
           "error": {
+            "type": "string",
+            "description": "Human-readable error message (5xx masked to 'Internal server error' in deployed environments)",
+            "example": "Validation failed"
+          },
+          "details": {
             "type": "object",
             "properties": {
-              "message": {
-                "type": "string",
-                "example": "Error message"
-              },
               "code": {
                 "type": "string",
-                "example": "ERROR_CODE"
+                "example": "VALIDATION_ERROR"
+              },
+              "requestId": {
+                "type": "string",
+                "description": "Correlates the error with server logs"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "extra": {
+                "description": "Additional error context (omitted in deployed environments)"
               }
-            }
+            },
+            "required": [
+              "code"
+            ]
           }
         },
         "required": [
           "success",
-          "error"
+          "error",
+          "details"
         ]
       },
       "PaginatedResponse": {
@@ -126,8 +134,8 @@
             },
             "example": {
               "success": false,
-              "error": {
-                "message": "Invalid input data",
+              "error": "Invalid input data",
+              "details": {
                 "code": "BAD_REQUEST"
               }
             }
@@ -143,8 +151,8 @@
             },
             "example": {
               "success": false,
-              "error": {
-                "message": "Authentication required",
+              "error": "Authentication required",
+              "details": {
                 "code": "UNAUTHORIZED"
               }
             }
@@ -160,8 +168,8 @@
             },
             "example": {
               "success": false,
-              "error": {
-                "message": "Insufficient permissions",
+              "error": "Insufficient permissions",
+              "details": {
                 "code": "FORBIDDEN"
               }
             }
@@ -177,8 +185,8 @@
             },
             "example": {
               "success": false,
-              "error": {
-                "message": "Resource not found",
+              "error": "Resource not found",
+              "details": {
                 "code": "NOT_FOUND"
               }
             }
@@ -194,8 +202,8 @@
             },
             "example": {
               "success": false,
-              "error": {
-                "message": "Internal server error",
+              "error": "Internal server error",
+              "details": {
                 "code": "INTERNAL_ERROR"
               }
             }
@@ -233,7 +241,7 @@
           "Webhooks"
         ],
         "summary": "WorkOS webhook handler",
-        "description": "Handles WorkOS webhook events for user and organization lifecycle management.\nVerifies webhook signature and processes events idempotently.\n\n**Supported Events:**\n- `user.created` - Creates new user and auth identity\n- `user.updated` - Updates existing user data\n- `user.deleted` - Removes user and auth identity\n- `organization.created` - Creates new organization\n- `organization.updated` - Updates organization data\n- `organization.deleted` - Removes organization\n\n**Security:** Requires valid WorkOS webhook signature in headers.\n",
+        "description": "Handles WorkOS webhook events for user and organization lifecycle management.\nVerifies the webhook signature, then enqueues the event onto a Cloudflare\nQueue for durable, idempotent processing (with retries + a dead-letter\nqueue). Returns 200 as soon as the event is queued.\n\n**Supported Events:**\n- `user.created` - Creates new user and auth identity\n- `user.updated` - Updates existing user data\n- `user.deleted` - Removes user and auth identity\n- `organization.created` - Creates new organization\n- `organization.updated` - Updates organization data\n- `organization.deleted` - Removes organization\n\n**Security:** Requires valid WorkOS webhook signature in headers.\n",
         "security": [],
         "requestBody": {
           "required": true,
@@ -287,8 +295,7 @@
                         "status": {
                           "type": "string",
                           "enum": [
-                            "processed",
-                            "already_processed"
+                            "queued"
                           ]
                         }
                       }
@@ -483,6 +490,56 @@
       }
     },
     "/v1/users/me": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get current user profile",
+        "description": "Returns the authenticated user's complete profile including user and profile data",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "user": {
+                          "type": "object"
+                        },
+                        "profile": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - Invalid or missing JWT token"
+          },
+          "404": {
+            "description": "User not found"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        }
+      },
       "patch": {
         "tags": [
           "Users"
@@ -574,62 +631,12 @@
             "description": "Internal server error"
           }
         }
-      },
-      "get": {
-        "tags": [
-          "Users"
-        ],
-        "summary": "Get current user profile",
-        "description": "Returns the authenticated user's complete profile including user and profile data",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "User profile retrieved successfully",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean",
-                      "example": true
-                    },
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "user": {
-                          "type": "object"
-                        },
-                        "profile": {
-                          "type": "object"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Unauthorized - Invalid or missing JWT token"
-          },
-          "404": {
-            "description": "User not found"
-          },
-          "500": {
-            "description": "Internal server error"
-          }
-        }
       }
     },
     "/v1/test/api-key": {
       "get": {
         "summary": "Test API key authentication",
-        "description": "Tests the withApiKey middleware",
+        "description": "Tests constant-time API key header validation",
         "tags": [
           "Test"
         ],
@@ -657,7 +664,7 @@
     "/v1/media/upload-image": {
       "post": {
         "summary": "Generate presigned URL for image upload",
-        "description": "Creates a presigned S3 URL for uploading user images",
+        "description": "Creates a presigned upload URL for user images",
         "tags": [
           "Media"
         ],
@@ -724,7 +731,7 @@
                         },
                         "imageKey": {
                           "type": "string",
-                          "description": "S3 key where the image will be stored"
+                          "description": "Storage key where the image will be stored"
                         },
                         "expiresIn": {
                           "type": "number",
@@ -754,7 +761,7 @@
     },
     "/v1/media/upload-image-direct": {
       "post": {
-        "summary": "Upload an image directly to S3",
+        "summary": "Upload an image directly to storage",
         "tags": [
           "Media"
         ],
@@ -814,7 +821,7 @@
                       "properties": {
                         "key": {
                           "type": "string",
-                          "description": "S3 key of the uploaded image"
+                          "description": "Storage key of the uploaded image"
                         },
                         "url": {
                           "type": "string",

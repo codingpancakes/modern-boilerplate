@@ -49,27 +49,19 @@ if [ "$HTTP_CODE" = "200" ]; then
   echo "✅ Detailed health check passed"
   echo "$BODY" | jq '.'
   
-  # Check overall status
+  # The detailed endpoint is UNAUTHENTICATED and intentionally returns only an
+  # overall status (no per-component checks) so it can't leak component health to
+  # the public — see src/node/routes/utils.ts. Assert only what it actually returns:
+  # { success, data: { status, timestamp, version } }.
   STATUS=$(echo "$BODY" | jq -r '.data.status')
+  TIMESTAMP=$(echo "$BODY" | jq -r '.data.timestamp')
+  VERSION=$(echo "$BODY" | jq -r '.data.version')
   echo ""
   echo "📊 Overall Status: $STATUS"
-  
-  # Check individual components
-  DB_STATUS=$(echo "$BODY" | jq -r '.data.checks.database.status')
-  WORKOS_STATUS=$(echo "$BODY" | jq -r '.data.checks.workos.status')
-  S3_STATUS=$(echo "$BODY" | jq -r '.data.checks.s3.status')
-  
-  echo "   Database: $DB_STATUS"
-  echo "   WorkOS: $WORKOS_STATUS"
-  echo "   S3: $S3_STATUS"
-  
-  if [ "$DB_STATUS" = "ok" ]; then
-    DB_TIME=$(echo "$BODY" | jq -r '.data.checks.database.responseTime')
-    echo "   Database response time: ${DB_TIME}ms"
-  fi
-  
+  echo "   Timestamp: $TIMESTAMP"
+  echo "   Version: $VERSION"
   echo ""
-  
+
   if [ "$STATUS" = "healthy" ]; then
     echo "🎉 All systems healthy!"
   elif [ "$STATUS" = "degraded" ]; then

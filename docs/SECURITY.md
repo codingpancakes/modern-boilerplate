@@ -301,14 +301,16 @@ GET /v1/users/me
 
 ## Deployments
 
-`wrangler deploy` publishes a new Worker version atomically (seconds);
-`npx wrangler rollback --env <stage>` reverts to a previous version.
+`pnpm deploy:<stage>` (`scripts/deploy.ts`) runs a **health-gated canary with
+automatic rollback** — it replaces the AWS-era CodeDeploy blue-green machinery. The
+flow: record the active version, upload the new one at 0%, shift `CANARY_PERCENT`
+(default 10%) of traffic and soak, probe `/v1/health/detailed`, promote to 100% and
+re-probe; **any** health failure redeploys the recorded version at 100% and exits
+non-zero. First deploy (no prior version) skips the canary and goes straight to 100%.
 
-**Honest gap:** the AWS-era CodeDeploy blue-green canary (10%/5min with alarm-driven
-auto-rollback) did **not** carry over. Gradual percentage rollouts between Worker
-versions plus a promote/auto-revert health-check script are planned work — see Phase 4
-of [direction/MIGRATION_PLAN.md](./direction/MIGRATION_PLAN.md). Until that exists,
-deploys are all-at-once and rollback is manual.
+`pnpm deploy:<stage>:simple` is a plain `wrangler deploy` (no canary; also the one-time
+path for registering new Queue consumers). `npx wrangler rollback --env <stage>` reverts
+to a previous version manually. Each `wrangler` publish is an atomic versioned deploy.
 
 ---
 
@@ -316,9 +318,7 @@ deploys are all-at-once and rollback is manual.
 
 1. **Per-user rate limiting** — currently only per-IP/zone rules at the Cloudflare edge;
    add per-user limits in app code if abuse patterns appear
-2. **Gradual deployments + auto-rollback** — Migration Plan Phase 4 (the one place the
-   platform gives us less out of the box than CodeDeploy did)
-3. **Logpush retention sink** — for compliance evidence, pairing with the app audit trail
+2. **Logpush retention sink** — for compliance evidence, pairing with the app audit trail
 
 ---
 

@@ -176,25 +176,6 @@ test_endpoint \
   "" \
   "200"
 
-echo -e "${YELLOW}=== Python Handlers ===${NC}"
-echo ""
-
-# Test 7: Python test handler (direct)
-test_endpoint \
-  "GET /v1/test/python" \
-  "GET" \
-  "/v1/test/python" \
-  "" \
-  "200"
-
-# Test 8: Python profile handler (via TypeScript proxy with auth)
-test_endpoint \
-  "GET /v1/users/python-profile" \
-  "GET" \
-  "/v1/users/python-profile" \
-  "" \
-  "200"
-
 echo ""
 echo -e "${YELLOW}=== Test Summary ===${NC}"
 echo -e "${GREEN}Passed: $PASSED${NC}"

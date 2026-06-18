@@ -59,20 +59,35 @@ const options = {
 							example: false,
 						},
 						error: {
+							type: "string",
+							description:
+								"Human-readable error message (5xx masked to 'Internal server error' in deployed environments)",
+							example: "Validation failed",
+						},
+						details: {
 							type: "object",
 							properties: {
-								message: {
-									type: "string",
-									example: "Error message",
-								},
 								code: {
 									type: "string",
-									example: "ERROR_CODE",
+									example: "VALIDATION_ERROR",
+								},
+								requestId: {
+									type: "string",
+									description: "Correlates the error with server logs",
+								},
+								timestamp: {
+									type: "string",
+									format: "date-time",
+								},
+								extra: {
+									description:
+										"Additional error context (omitted in deployed environments)",
 								},
 							},
+							required: ["code"],
 						},
 					},
-					required: ["success", "error"],
+					required: ["success", "error", "details"],
 				},
 				PaginatedResponse: {
 					type: "object",
@@ -124,8 +139,8 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: {
-									message: "Invalid input data",
+								error: "Invalid input data",
+								details: {
 									code: "BAD_REQUEST",
 								},
 							},
@@ -141,8 +156,8 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: {
-									message: "Authentication required",
+								error: "Authentication required",
+								details: {
 									code: "UNAUTHORIZED",
 								},
 							},
@@ -158,8 +173,8 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: {
-									message: "Insufficient permissions",
+								error: "Insufficient permissions",
+								details: {
 									code: "FORBIDDEN",
 								},
 							},
@@ -175,8 +190,8 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: {
-									message: "Resource not found",
+								error: "Resource not found",
+								details: {
 									code: "NOT_FOUND",
 								},
 							},
@@ -192,8 +207,8 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: {
-									message: "Internal server error",
+								error: "Internal server error",
+								details: {
 									code: "INTERNAL_ERROR",
 								},
 							},

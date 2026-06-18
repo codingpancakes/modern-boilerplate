@@ -20,12 +20,12 @@ Workers **bindings** (R2 buckets) are not strings — they arrive on `c.env`
 |---|---|---|---|
 | `wrangler.toml` | ✅ | `wrangler dev` / `wrangler deploy` | Non-secret config (`[vars]`), R2 bindings, cron triggers, per-env blocks |
 | `.dev.vars.example` | ✅ | humans + `scripts/sync-secrets.ts` | **The registry of every secret name the Worker reads** |
-| `.dev.vars` | ❌ gitignored | `wrangler dev --local` | Local secret values (copy from `.dev.vars.example`) |
-| `.env.local` | ❌ gitignored | `pnpm migrate`, `pnpm db:generate` | `DATABASE_URL` for local DB tooling (dotenv, not wrangler) |
-| `.env.staging` / `.env.production` | ❌ gitignored | `pnpm sync-secrets <stage>`, `pnpm docs:generate` | Secret values to push per stage; `PROJECT_NAME`/`HOSTED_ZONE_NAME` for docs generation |
+| `.dev.vars` | ❌ gitignored | `wrangler dev --local`, `pnpm migrate`, `pnpm db:generate`, `pnpm db:introspect` | Local secret values (copy from `.dev.vars.example`); also the `DATABASE_URL` source for local DB tooling (read via dotenv, not wrangler) |
+| `.env.staging` / `.env.production` | ❌ gitignored | `pnpm sync-secrets <stage>` | Secret values to push per stage |
 
 > `pnpm init-project <name> <domain>` generates the `.env.*` files.
-> Keep `DATABASE_URL` identical in `.dev.vars` and `.env.local`.
+> Local DB tooling (`pnpm migrate`, `db:generate`, `db:introspect`) reads
+> `DATABASE_URL` straight from `.dev.vars` — no separate `.env.local` is used.
 
 ---
 
@@ -122,7 +122,7 @@ Values are piped to `wrangler secret put` over **stdin** — they never appear i
 | `ORIGIN_VERIFY_SECRET` | The Worker **is** the edge — there is no origin URL to protect |
 | `WORKOS_SECRET_ARN`, `DB_SECRET_ARN`, `AWS_REGION` | Secrets Manager is gone; secrets are wrangler secrets |
 | `ENABLE_WAF`, `ALERT_EMAIL`, SSM parameters | Cloudflare WAF/DDoS is account-level platform config, not deploy-time toggles |
-| `HOSTED_ZONE_ID`, `GITHUB_*` (as deploy inputs) | No CDK/CodePipeline. (`PROJECT_NAME`/`HOSTED_ZONE_NAME` survive only in `.env.staging` for `pnpm docs:generate`) |
+| `HOSTED_ZONE_ID`, `HOSTED_ZONE_NAME`, `GITHUB_*` (as deploy inputs) | No CDK/CodePipeline/Route53. (`pnpm docs:generate` takes an optional `PROJECT_NAME` and `API_BASE_URL_*` overrides via the environment — no `.env` file required) |
 
 The AWS-era version of this document is preserved in git history and the surrounding
 setup in [legacy-aws/BOILERPLATE_SETUP.md](./legacy-aws/BOILERPLATE_SETUP.md).

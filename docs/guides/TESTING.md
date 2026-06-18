@@ -144,12 +144,14 @@ The shell suites hit a running server — your local Worker by default
 ./tests/integration/test-api-auth.sh "JWT"       # auth flow
 ```
 
-Deployed targets resolve their URL from `HOSTED_ZONE_NAME` in `.env.<stage>`
-(`scripts/lib/env-helper.sh`):
+Deployed targets resolve their URL via `scripts/lib/env-helper.sh`: set
+`API_BASE_URL_<STAGE>` (full URL) — or `PROJECT_NAME` + `CF_ACCOUNT_SUBDOMAIN`, which
+build the default `https://<project>-<stage>.<subdomain>.workers.dev` — in
+`.env.<stage>`:
 
 ```bash
-./tests/integration/test-api.sh staging          # https://api-staging.<zone>
-./tests/integration/test-api.sh production       # https://api.<zone>
+./tests/integration/test-api.sh staging          # uses API_BASE_URL_STAGING / workers.dev default
+./tests/integration/test-api.sh production       # uses API_BASE_URL_PRODUCTION / workers.dev default
 ```
 
 > `test-middleware.sh` exercises `/v1/test/api-key` and `/v1/test/webhook`
@@ -229,8 +231,8 @@ doesn't match the token's audience.
 (`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`); see
 [CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md) §7c.
 
-**"Database connection failed"** — check `DATABASE_URL` in `.dev.vars` (Worker) and
-`.env.local` (migrate/drizzle-kit); for integration tests, is `postgres-test` up?
+**"Database connection failed"** — check `DATABASE_URL` in `.dev.vars` (read by both
+the Worker and migrate/drizzle-kit); for integration tests, is `postgres-test` up?
 
 **CORS errors in browser** — origin not in `CORS_*` vars (`wrangler.toml [vars]`);
 logic in `src/node/lib/cors.ts`.

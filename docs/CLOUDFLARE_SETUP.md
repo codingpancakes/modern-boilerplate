@@ -35,8 +35,10 @@ deployed environments. Required to boot meaningfully: `DATABASE_URL`,
 Non-secret config (STAGE, CORS lists, `IMAGES_BUCKET`, …) lives in `wrangler.toml`
 `[vars]` — edit the `PLACEHOLDER` values there for your project.
 
-`pnpm migrate` and drizzle-kit read `DATABASE_URL` from **`.env.local`** (dotenv),
-not `.dev.vars` — keep the same `DATABASE_URL` in both files.
+`pnpm migrate`, `pnpm db:generate`, and `pnpm db:introspect` read `DATABASE_URL`
+from **`.dev.vars`** via dotenv (`scripts/migrate.ts` and `drizzle.config.ts` both
+load `.dev.vars`; the package scripts use `dotenv -e .dev.vars`). No separate file
+is needed for local DB tooling.
 
 ## 4. Migrate the database
 
@@ -96,15 +98,29 @@ Values travel over stdin only — never argv or logs.
 ### 7b. Deploy the Worker
 
 ```bash
-pnpm deploy:staging           # wrangler deploy --env staging
-pnpm deploy:production        # wrangler deploy --env production
+pnpm deploy:staging           # health-gated canary + auto-rollback (scripts/deploy.ts)
+pnpm deploy:production        # same, against production
 npx wrangler deploy --dry-run --env staging   # build-only sanity check, no account writes
 ```
 
-Rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior versions).
-Note there is **no automated canary/auto-rollback yet** — the CodeDeploy blue-green
-machinery did not carry over; see Phase 4 of
-[direction/MIGRATION_PLAN.md](./direction/MIGRATION_PLAN.md).
+**Automated canary + auto-rollback** is wired into `pnpm deploy:<stage>`
+(`scripts/deploy.ts`), replacing the old AWS CodeDeploy blue-green machinery. Each
+deploy:
+
+1. records the currently-active Worker version (the rollback target),
+2. uploads the new version at 0% traffic (`wrangler versions upload`),
+3. routes `CANARY_PERCENT` (default 10%) of traffic to it, soaks `SOAK_SECONDS`
+   (default 20s), and probes `/v1/health/detailed`,
+4. promotes to 100% and probes health again,
+5. on **any** health failure, redeploys the recorded version at 100% and exits 1.
+
+First deploy (no prior version) skips the canary and goes straight to 100%. Tunable
+via `HEALTH_URL`, `CANARY_PERCENT`, `SOAK_SECONDS`, `HEALTH_ATTEMPTS`.
+
+Plain, non-gated deploys: `pnpm deploy:staging:simple` / `:production:simple`
+(`wrangler deploy --env <stage>`) — also the one-time path for registering new Queue
+consumers. Manual rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior
+versions).
 
 ### 7c. R2 (media storage) — setup placeholder
 
@@ -134,8 +150,10 @@ pnpm docs:generate   # swagger-jsdoc over src/node/routes/**/*.ts → docs/api/o
 pnpm docs:serve      # serves docs/api on a local Express server
 ```
 
-`docs:generate` requires `PROJECT_NAME` and `HOSTED_ZONE_NAME` in `.env.staging`
-(it stamps server URLs into the spec).
+`docs:generate` (`scripts/generate-openapi.js`) scans the Hono route JSDoc and
+stamps server URLs into the spec. Optional env overrides: `PROJECT_NAME` (spec
+title) and `API_BASE_URL_LOCAL` / `API_BASE_URL_STAGING` / `API_BASE_URL_PRODUCTION`
+(server URLs). It runs with sensible defaults if none are set.
 
 ## 9. New project from this boilerplate
 
