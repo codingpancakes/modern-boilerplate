@@ -48,11 +48,12 @@ inherit `[vars]` or R2 bindings).
 | `IMAGES_BUCKET` | R2 bucket name — must match the `[[r2_buckets]]` binding's `bucket_name` |
 | `IMAGES_CDN_URL` | Public/custom-domain URL of the R2 bucket (was CloudFront) |
 
-## Bindings — `wrangler.toml [[r2_buckets]]`
+## Bindings — `wrangler.toml`
 
-| Binding | Purpose |
-|---|---|
-| `IMAGES` | R2 images bucket, available as `c.env.IMAGES`. Simulated on disk under `.wrangler/state` in local dev |
+| Binding | Declared as | Purpose |
+|---|---|---|
+| `IMAGES` | `[[r2_buckets]]` | R2 images bucket, available as `c.env.IMAGES`. Simulated on disk under `.wrangler/state` in local dev |
+| `RATE_LIMITER` | `[[ratelimits]]` (+ per-env) | Cloudflare Workers Rate Limiting binding for the per-IP limiter (`lib/hono/rate-limit.ts`), available as `c.env.RATE_LIMITER`. **No dashboard resource** — configured entirely in `wrangler.toml` (`simple = { limit = 100, period = 60 }`). Absent under `wrangler dev` → the limiter no-ops |
 
 Add a property to `WorkerBindings` in `src/node/worker.ts` whenever you add a binding.
 
@@ -67,7 +68,7 @@ exactly what `pnpm sync-secrets <stage>` pushes. Current registry:
 | Secret | Purpose |
 |---|---|
 | `DATABASE_URL` | Neon Postgres connection string |
-| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`) |
+| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`). An empty value disables the `client_id` audience check (local-dev only); auth **fails closed** when it's empty and `STAGE` is `staging`/`production` (`lib/hono/auth.ts` refuses to verify unbound) |
 
 ### Feature-dependent
 | Secret | Purpose |
@@ -101,6 +102,21 @@ npx wrangler secret list --env staging
 
 Values are piped to `wrangler secret put` over **stdin** — they never appear in argv,
 `ps` output, or logs. Keys with no value in `.env.<stage>` are skipped (reported).
+
+---
+
+## Deploy-script environment (`scripts/deploy.ts`)
+
+These are read from the **process environment at deploy time** — not Worker `[vars]`,
+not secrets. In CI they are GitHub repo variables/secrets; locally you `export` them.
+
+| Variable | Purpose |
+|---|---|
+| `WORKERS_SUBDOMAIN` | Your `*.workers.dev` subdomain. The deploy script derives the health-check URL as `https://<worker-name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`. In CI it's a GitHub repo variable (`vars.WORKERS_SUBDOMAIN`) |
+| `HEALTH_URL` | Explicit health-check URL override (use for custom domains); takes precedence over the `WORKERS_SUBDOMAIN`-derived URL |
+| `CANARY_PERCENT` | Canary traffic share before promotion (default 10) |
+| `SOAK_SECONDS` | Canary soak duration before probing health (default 20) |
+| `HEALTH_ATTEMPTS` | Health-probe retry count |
 
 ---
 

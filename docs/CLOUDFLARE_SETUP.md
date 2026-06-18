@@ -117,6 +117,12 @@ deploy:
 First deploy (no prior version) skips the canary and goes straight to 100%. Tunable
 via `HEALTH_URL`, `CANARY_PERCENT`, `SOAK_SECONDS`, `HEALTH_ATTEMPTS`.
 
+The health-check URL is derived from the Worker `name` + `WORKERS_SUBDOMAIN` (your
+`*.workers.dev` subdomain) as `https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`,
+unless `HEALTH_URL` overrides it (use that for custom domains). Set `WORKERS_SUBDOMAIN`
+in your shell for local deploys; in CI it's a GitHub repo variable
+(`vars.WORKERS_SUBDOMAIN`). See `docs/ENVIRONMENT_VARIABLES.md`.
+
 Plain, non-gated deploys: `pnpm deploy:staging:simple` / `:production:simple`
 (`wrangler deploy --env <stage>`) — also the one-time path for registering new Queue
 consumers. Manual rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior
@@ -142,6 +148,15 @@ Not configured yet. The Worker currently talks to Neon directly via
 connection latency or pooling becomes a measured problem, add a `[[hyperdrive]]`
 binding in `wrangler.toml` and point `lib/db.ts` at it — see the North Star's
 target stack table.
+
+### 7e. Rate limiting — no setup needed
+
+The per-IP rate limiter (`lib/hono/rate-limit.ts`) uses the Cloudflare Workers Rate
+Limiting binding `RATE_LIMITER`, declared as `[[ratelimits]]` (and per-env
+`[[env.staging.ratelimits]]` / `[[env.production.ratelimits]]`) in `wrangler.toml`
+with `simple = { limit = 100, period = 60 }`. It needs **no dashboard resource** —
+it's configured entirely in `wrangler.toml`. The binding is absent under `wrangler dev`,
+so the limiter no-ops locally.
 
 ## 8. API docs (optional)
 

@@ -25,9 +25,10 @@ Gateway throttling, and CloudFront. Edge protection is no longer defined in this
 there is no infrastructure code to read; treat zone configuration as part of the
 deployment checklist.
 
-**Note:** there is currently no application-level rate limiting in the Worker. Per-IP /
-per-path limits should be configured as Cloudflare rate-limiting rules (or added in app
-code per user if needed — see Future Enhancements).
+**Note:** there is also an **application-level per-IP rate limiter** in the Worker
+(see layer 11 below). It complements — does not replace — these zone-level rules and
+the platform DDoS mitigation: it is per-colo and approximate, so zone rate-limiting
+rules remain the place for global/per-path limits.
 
 ---
 
@@ -43,6 +44,10 @@ code per user if needed — see Future Enhancements).
 - Verifies signature, expiration, issuer, and audience (`WORKOS_CLIENT_ID` binding)
 - JWKS fetched from WorkOS and cached with TTL
 - Verified claims land on `c.get("claims")` — route code never re-parses tokens
+- **Fails closed in deployed environments:** an empty `WORKOS_CLIENT_ID` disables the
+  `client_id` audience binding (intended only for local dev), which would accept any
+  WorkOS-signed token. When `STAGE` is `staging` or `production`, verification refuses
+  to run with an empty client id rather than verifying unbound
 
 **Flow:**
 ```
@@ -209,6 +214,49 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 
 ---
 
+### 11. Application Rate Limiting (per-IP)
+
+**Location:** `src/node/lib/hono/rate-limit.ts`, mounted early in `src/node/app.ts`
+(after `requestId`, before `dbScope`) so a flood is rejected before a DB pool opens or
+a token is verified
+
+**What it does:**
+- Per-IP limiter (keyed by `CF-Connecting-IP`) backed by the Cloudflare Workers Rate
+  Limiting binding (`RATE_LIMITER`) — configured entirely in `wrangler.toml`
+  (`simple = { limit = 100, period = 60 }`), no dashboard resource
+- Returns `429` once the limit is exceeded
+- Skips gracefully when the binding is absent (local dev / tests)
+
+**Scope / caveats:**
+- Per-colo and approximate (the binding's documented behavior), not a single global
+  counter — it bounds cost on the unauthenticated surfaces (webhook HMAC compute, the
+  auth/JWKS path) as a first line, and **pairs with** zone-level rate-limiting rules
+  and platform DDoS for the global view rather than replacing them
+
+---
+
+### 12. Org-Membership Consent (invite flow)
+
+**Location:** `src/node/handlers/graphql/resolvers/organizations.ts` (SDL in
+`src/node/handlers/graphql/schema/index.ts`); `assignment_status` enum in
+`src/node/db/schema/enums.ts`
+
+**What it does:**
+- `inviteMember` first verifies the **target user exists** (rejects `NOT_FOUND`) —
+  it does not mint memberships for arbitrary IDs
+- The invite is created as `PENDING`, not `ACTIVE`. Because every membership/user query
+  filters on `status = "ACTIVE"`, a PENDING invitee is **invisible** to org member
+  listings until they consent
+- The invited user becomes a real member only by calling `acceptInvitation` themselves
+  (`PENDING → ACTIVE`); `declineInvitation` sets it `INACTIVE`. Both act only on the
+  caller's own PENDING row
+
+**Protection against:**
+- IDOR / unsolicited-membership PII exposure — an admin cannot pull another user into an
+  org (and thereby surface that user in member listings) without the user's own consent
+
+---
+
 ## Attack Scenarios & Defenses
 
 ### SQL Injection Attack
@@ -284,13 +332,14 @@ GET /v1/users/me
 ## Security Checklist
 
 - **Authentication** — WorkOS JWT via `requireAuth()` (RS256 pinning, JWKS caching, audience binding)
-- **Authorization** — Role-based access control, org membership checks (`ACTIVE` filter)
+- **Authorization** — Role-based access control, org membership checks (`ACTIVE` filter); invites require invitee consent (see below)
 - **Input Validation** — Zod schemas + sanitization on all endpoints
 - **SQL Injection** — Drizzle ORM (parameterized queries)
 - **XSS** — sanitizeObject + JSON API
 - **CSRF** — Dynamic CORS validation
 - **DDoS** — Cloudflare always-on mitigation (edge)
-- **WAF / Rate limiting** — Cloudflare zone configuration (verify before launch; not in code)
+- **Rate limiting** — app-level per-IP limiter (`lib/hono/rate-limit.ts`, `RATE_LIMITER` binding, 429 past 100 req/60s); per-colo, pairs with zone rate-limiting rules + DDoS
+- **WAF** — Cloudflare zone configuration (verify before launch; not in code)
 - **Secrets** — wrangler secrets; stdin-only sync; constant-time comparisons
 - **HTTPS** — Cloudflare TLS + HSTS header
 - **Error Handling** — No information leakage (both REST and GraphQL)
@@ -316,8 +365,9 @@ to a previous version manually. Each `wrangler` publish is an atomic versioned d
 
 ## Future Enhancements
 
-1. **Per-user rate limiting** — currently only per-IP/zone rules at the Cloudflare edge;
-   add per-user limits in app code if abuse patterns appear
+1. **Per-user rate limiting** — the app limiter is per-IP (`RATE_LIMITER` binding) and
+   zone rules cover per-path; add per-user (per-subject) limits in app code if abuse
+   patterns warrant finer granularity
 2. **Logpush retention sink** — for compliance evidence, pairing with the app audit trail
 
 ---

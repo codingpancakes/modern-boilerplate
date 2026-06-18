@@ -3,8 +3,9 @@
 > the application `audit_logs` table). The **Observability & Evidence Trail** section
 > immediately below maps each old AWS control to its Cloudflare replacement. App-level
 > controls (audit trail, validation, sanitization, RBAC, idempotency) carried over
-> unchanged. Note: there is **no application-level rate limiting** — per-IP/per-path
-> limits are Cloudflare zone rules (see `docs/SECURITY.md`).
+> unchanged. Note: an **application-level per-IP rate limiter** is in place
+> (`RATE_LIMITER` binding + `lib/hono/rate-limit.ts`); it is per-colo and pairs with
+> Cloudflare zone rate-limiting rules and platform DDoS (see `docs/SECURITY.md`).
 
 # 🔒 SOC 2 Compliance Readiness Checklist
 
@@ -66,7 +67,7 @@ SOC 2 compliance is based on 5 Trust Service Criteria (TSC):
 #### ✅ Network Security
 - [x] **HTTPS Enforcement** - Cloudflare TLS termination + HSTS header on every response
 - [x] **CORS Configuration** - Strict dynamic origin validation, no wildcards (`src/node/lib/cors.ts`)
-- [ ] **Rate Limiting** - **No application-level rate limiting in the Worker** (see `docs/SECURITY.md`). Per-IP/per-path limits must be configured as Cloudflare zone rate-limiting rules — account-level, not in this repo. Not currently asserted as present.
+- [x] **Rate Limiting** - Application-level per-IP limiter in the Worker (`RATE_LIMITER` binding + `src/node/lib/hono/rate-limit.ts`, 429 past 100 req/60s; see `docs/SECURITY.md`). Per-colo/approximate, so it pairs with Cloudflare zone rate-limiting rules (per-path/global) — both layers are in use.
 - [x] **DDoS Protection** - Cloudflare always-on DDoS mitigation + optional WAF managed rulesets (account-level config, not code)
 
 #### ✅ Data Protection

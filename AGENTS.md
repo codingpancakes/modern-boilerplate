@@ -25,7 +25,7 @@ Two surfaces, one app:
 ```
 src/node/
   worker.ts          Worker entry. fetch → app.ts; scheduled → cron.ts registry.
-  app.ts             THE Hono app: request-id → dbScope → auditFlush → CORS/security → routes.
+  app.ts             THE Hono app: request-id → rateLimit (per-IP) → dbScope → auditFlush → CORS/security → routes.
                      notFound/onError own the wire format. Do not add routes here.
   routes/            One Hono sub-app per domain. Barrel (index.ts) mounts them and
                      applies requireAuth() per protected domain. test.ts is dev-only.
@@ -65,6 +65,11 @@ These are enforced across the codebase. Breaking one is a regression, even if it
    response is sent.
 5. **Drizzle ORM only.** Never raw SQL in app code (migrations are the only SQL).
 6. **`ACTIVE` filter on all membership queries:** `eq(organizationMembers.status, "ACTIVE")`.
+   This is also the **invite-consent boundary**: `inviteMember` verifies the target user
+   exists and creates a `PENDING` membership (not `ACTIVE`), so the invitee stays invisible
+   to member/user listings until they call `acceptInvitation` (→ `ACTIVE`) or
+   `declineInvitation` (→ `INACTIVE`) themselves. Never surface `PENDING` rows through the
+   ACTIVE-filtered queries — that would reintroduce the IDOR/PII-exposure hole this closes.
 7. **Response/error factories only.** REST: `sendSuccess(c, data)` / `createSuccessResponse(data)`
    / `throw Errors.NotFound("X")`. GraphQL: `throw new GraphQLError(msg, { extensions: { code } })`.
    Never hand-roll response bodies.

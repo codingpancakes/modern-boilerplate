@@ -53,7 +53,7 @@ No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.m
 ```
 src/node/
   worker.ts              Worker entry: fetch → Hono app, scheduled → cron registry
-  app.ts                 THE Hono app: request-id, db scope, audit flush, CORS, errors
+  app.ts                 THE Hono app: request-id, rate limit, db scope, audit flush, CORS, errors
   cron.ts                Cron Trigger registry (keys = wrangler.toml [triggers] expressions)
   routes/                One Hono sub-app per domain, barrel in index.ts
     users.ts media.ts graphql.ts webhooks.ts utils.ts test.ts
@@ -89,8 +89,8 @@ Client → Cloudflare edge (WAF/DDoS/CDN) → Worker
   `client_id` audience binding) and puts claims on `c.get("claims")`. No gateway,
   no separate authorizer.
 - **REST:** route modules under `src/node/routes/`; app-level middleware handles
-  request IDs, per-request DB lifecycle, audit flushing, CORS + security headers,
-  and error formatting.
+  request IDs, per-IP rate limiting (`RATE_LIMITER` binding), per-request DB lifecycle,
+  audit flushing, CORS + security headers, and error formatting.
 - **GraphQL:** GraphQL Yoga at `/v1/graphql` with DataLoaders, depth limiting,
   complexity/mutation limits (`src/node/handlers/graphql/`).
 - **Idempotency:** DB-backed hash dedup with TTL for webhooks and critical mutations.
