@@ -49,7 +49,7 @@ export type WorkerBindings = {
 	 */
 	WEBHOOK_QUEUE?: Queue<WorkOSWebhookEvent>;
 	/**
-	 * Per-IP rate limiter — `[[unsafe.bindings]] type = "ratelimit"` in
+	 * Per-IP rate limiter — `[[ratelimits]] name = "RATE_LIMITER"` in
 	 * wrangler.toml. OPTIONAL: the rate-limit middleware skips when it's absent
 	 * (local dev / tests), so nothing breaks without it.
 	 */

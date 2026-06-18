@@ -46,7 +46,7 @@ export const auditLogs = pgTable(
 		// Request context
 		ipAddress: text("ip_address"),
 		userAgent: text("user_agent"),
-		requestId: text("request_id"), // X-Ray trace ID or request ID
+		requestId: text("request_id"), // cf-ray request id or request ID
 
 		// When it happened
 		timestamp: timestamp("timestamp", {

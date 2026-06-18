@@ -23,7 +23,7 @@ function mergeResolverMaps(
 
 /**
  * Single source of truth for merged GraphQL resolvers.
- * Used by both the Lambda handler and the local dev server.
+ * Used by both the Worker GraphQL route and the local dev server.
  */
 export const resolvers = {
 	Query: mergeResolverMaps(
