@@ -120,6 +120,10 @@ function syncTriggers(): void {
 const sleep = (s: number) => new Promise((r) => setTimeout(r, s * 1000));
 
 async function healthy(): Promise<boolean> {
+	// Require two CONSECUTIVE healthy probes. An explicit unhealthy response
+	// fails fast; a transient error (timeout/network) breaks the streak and is
+	// retried within the attempt budget. Out of attempts → not healthy.
+	let consecutive = 0;
 	for (let i = 1; i <= healthAttempts; i++) {
 		try {
 			const res = await fetch(healthUrl, {
@@ -127,8 +131,11 @@ async function healthy(): Promise<boolean> {
 			});
 			const body = (await res.json()) as { data?: { status?: string } };
 			if (res.status === 200 && body.data?.status === "healthy") {
-				console.log(`   ✓ health probe ${i}/${healthAttempts} ok`);
-				if (i >= 2) return true; // two consecutive successes
+				consecutive++;
+				console.log(
+					`   ✓ health probe ${i}/${healthAttempts} ok (${consecutive}/2)`,
+				);
+				if (consecutive >= 2) return true;
 			} else {
 				console.log(
 					`   ✗ health probe ${i}: status ${res.status} / ${body.data?.status}`,
@@ -136,12 +143,12 @@ async function healthy(): Promise<boolean> {
 				return false;
 			}
 		} catch (err) {
+			consecutive = 0;
 			console.log(`   ✗ health probe ${i}: ${(err as Error).message}`);
-			if (i === healthAttempts) return false;
 		}
 		await sleep(2);
 	}
-	return true;
+	return false;
 }
 
 async function main() {

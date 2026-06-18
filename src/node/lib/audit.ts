@@ -24,36 +24,15 @@ export const AUDIT_RETENTION_YEARS = 7;
 const logger = createLogger({ serviceName: "audit" });
 
 /**
- * Emit an `AuditWriteFailure` count metric so a sustained DB outage holing the
- * compliance trail pages someone instead of only leaving log lines behind.
- *
- * The body is the CloudWatch Embedded Metric Format (EMF) JSON written to
- * stdout. On Workers there is no EMF pipeline, so this degrades to a
- * structured log line that Workers Logs / Logpush queries can count on
- * (`_aws.CloudWatchMetrics[0].Metrics[0].Name == "AuditWriteFailure"`).
- * Deliberately isolated in this one function so it can be swapped for an
- * Analytics Engine write (or similar) without touching callers.
+ * Stable marker for an audit write failure. A sustained DB outage holing the
+ * compliance trail is alerted by TWO real signals on Workers:
+ *   - this structured `logger.error` (event: "audit_write_failure") — queryable
+ *     in Workers Logs / Logpush, the field to build a count alert on; and
+ *   - `captureException` → Sentry (set a Sentry alert rule for the page).
+ * (No fake CloudWatch EMF: nothing on Cloudflare would aggregate it. To graph a
+ * real count, add an Analytics Engine binding and write a data point here.)
  */
-function emitAuditWriteFailureMetric(): void {
-	const namespace = process.env.PROJECT_NAME || "local-dev";
-	const emf = {
-		_aws: {
-			Timestamp: Date.now(),
-			CloudWatchMetrics: [
-				{
-					Namespace: namespace,
-					Dimensions: [["Service"]],
-					Metrics: [{ Name: "AuditWriteFailure", Unit: "Count" }],
-				},
-			],
-		},
-		Service: "audit",
-		AuditWriteFailure: 1,
-	};
-	// Must be a bare console.log: EMF requires the JSON object to be the whole
-	// log line, which the structured logger's envelope would break.
-	console.log(JSON.stringify(emf));
-}
+const AUDIT_WRITE_FAILURE_EVENT = "audit_write_failure";
 
 /**
  * Context with audit fields
@@ -293,8 +272,10 @@ async function persistAudit(entry: AuditLogEntry): Promise<void> {
 		if (process.env.NODE_ENV === "test") {
 			// Silently swallow — no DB in unit tests
 		} else {
-			emitAuditWriteFailureMetric();
+			// Two real signals on Workers: a stable structured log line (count/alert
+			// via Logpush) and a Sentry capture (page via a Sentry alert rule).
 			logger.error("Failed to log audit event — falling back to log line", {
+				event: AUDIT_WRITE_FAILURE_EVENT,
 				error: errorMessage(error),
 				auditEntry,
 			});

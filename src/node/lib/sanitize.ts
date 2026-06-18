@@ -212,7 +212,11 @@ function sanitizeUrlValue(value: string): string {
  * (mirrors `redactSensitive`'s depth guard in audit.ts). Beyond the cap we stop
  * descending and return the sub-tree untouched rather than recursing further.
  */
-const MAX_SANITIZE_DEPTH = 8;
+// Above the validation layer's max nesting (10) so every Zod-accepted payload
+// is fully sanitized; this is only a stack-overflow backstop, not a functional
+// limit. Past it we fail CLOSED (drop the subtree) rather than passing raw,
+// unsanitized data through to a DB write.
+const MAX_SANITIZE_DEPTH = 12;
 
 interface SanitizeOptions {
 	maxStringLength?: number;
@@ -225,7 +229,8 @@ export function sanitizeObject<T extends Record<string, unknown>>(
 	options: SanitizeOptions = {},
 	depth = 0,
 ): T {
-	if (depth >= MAX_SANITIZE_DEPTH) return obj;
+	// Fail closed: drop an over-deep subtree rather than return it unsanitized.
+	if (depth >= MAX_SANITIZE_DEPTH) return {} as T;
 
 	const skipEscape = options.rawKeys ?? RAW_STRING_KEYS;
 	const sanitized: Record<string, unknown> = {};

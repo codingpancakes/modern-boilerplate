@@ -42,63 +42,27 @@ const sampleEntry = {
 	resourceId: "user-2",
 };
 
-/** Parse every console.log line and return the EMF payloads among them. */
-function emittedMetrics(spy: { mock: { calls: unknown[][] } }) {
-	return spy.mock.calls
-		.map(([line]) => {
-			try {
-				return JSON.parse(String(line)) as Record<string, unknown>;
-			} catch {
-				return null;
-			}
-		})
-		.filter(
-			(parsed): parsed is Record<string, unknown> =>
-				parsed !== null && "_aws" in parsed,
-		);
-}
-
-describe("audit write failure metric", () => {
-	let consoleLogSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
-
+describe("audit write failure signaling", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		// The metric/logging branch is skipped under NODE_ENV=test (vitest's
+		// The failure-signal branch is skipped under NODE_ENV=test (vitest's
 		// default); exercise the real production path.
 		vi.stubEnv("NODE_ENV", "production");
-		vi.stubEnv("PROJECT_NAME", "test-project");
-		consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 	});
 
 	afterEach(() => {
 		vi.unstubAllEnvs();
-		consoleLogSpy.mockRestore();
 	});
 
-	it("emits an EMF AuditWriteFailure metric when the DB write fails, without throwing", async () => {
+	it("reports to Sentry when the DB write fails, without throwing", async () => {
 		getDbMock.mockRejectedValue(new Error("connection refused"));
 
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
-		const metrics = emittedMetrics(consoleLogSpy);
-		expect(metrics).toHaveLength(1);
-
-		const metric = metrics[0];
-		expect(metric.AuditWriteFailure).toBe(1);
-		expect(metric.Service).toBe("audit");
-		expect(metric._aws).toMatchObject({
-			CloudWatchMetrics: [
-				{
-					Namespace: "test-project",
-					Dimensions: [["Service"]],
-					Metrics: [{ Name: "AuditWriteFailure", Unit: "Count" }],
-				},
-			],
-		});
 		expect(captureExceptionMock).toHaveBeenCalledOnce();
 	});
 
-	it("emits the metric when the insert itself rejects", async () => {
+	it("reports to Sentry when the insert itself rejects", async () => {
 		getDbMock.mockResolvedValue({
 			insert: () => ({
 				values: () => Promise.reject(new Error("relation does not exist")),
@@ -107,10 +71,10 @@ describe("audit write failure metric", () => {
 
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
-		expect(emittedMetrics(consoleLogSpy)).toHaveLength(1);
+		expect(captureExceptionMock).toHaveBeenCalledOnce();
 	});
 
-	it("does not emit the metric when the write succeeds", async () => {
+	it("does not report when the write succeeds", async () => {
 		getDbMock.mockResolvedValue({
 			insert: () => ({
 				values: () => Promise.resolve(),
@@ -119,17 +83,15 @@ describe("audit write failure metric", () => {
 
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
-		expect(emittedMetrics(consoleLogSpy)).toHaveLength(0);
 		expect(captureExceptionMock).not.toHaveBeenCalled();
 	});
 
-	it("stays silent (no metric, no Sentry) under NODE_ENV=test", async () => {
+	it("stays silent (no Sentry) under NODE_ENV=test", async () => {
 		vi.stubEnv("NODE_ENV", "test");
 		getDbMock.mockRejectedValue(new Error("connection refused"));
 
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
-		expect(emittedMetrics(consoleLogSpy)).toHaveLength(0);
 		expect(captureExceptionMock).not.toHaveBeenCalled();
 	});
 });
