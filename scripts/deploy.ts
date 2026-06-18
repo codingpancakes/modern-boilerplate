@@ -24,6 +24,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync as readFile } from "node:fs";
 
 const stage = process.argv[2];
 if (stage !== "staging" && stage !== "production") {
@@ -31,13 +32,32 @@ if (stage !== "staging" && stage !== "production") {
 	process.exit(1);
 }
 
-// Default public health URLs per stage. Override with HEALTH_URL for custom
-// domains. Keep in sync with the worker names/subdomain in wrangler.toml.
-const DEFAULT_HEALTH_URL: Record<string, string> = {
-	staging: "https://sidedoor-backend-staging.jon-e59.workers.dev",
-	production: "https://sidedoor-backend-production.jon-e59.workers.dev",
-};
-const healthUrl = `${(process.env.HEALTH_URL || DEFAULT_HEALTH_URL[stage]).replace(/\/$/, "")}/v1/health/detailed`;
+/**
+ * Health-check base URL, project-agnostic so the boilerplate needs no edits:
+ *   1. HEALTH_URL env (explicit; use for custom domains), else
+ *   2. derived from the Worker `name` in wrangler.toml + WORKERS_SUBDOMAIN env
+ *      → https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev
+ * Fails fast if neither is available.
+ */
+function resolveHealthBase(): string {
+	if (process.env.HEALTH_URL) return process.env.HEALTH_URL;
+	const subdomain = process.env.WORKERS_SUBDOMAIN;
+	if (!subdomain) {
+		console.error(
+			"Set HEALTH_URL, or WORKERS_SUBDOMAIN (your *.workers.dev subdomain) so the health URL can be derived.",
+		);
+		process.exit(1);
+	}
+	const toml = readFile("wrangler.toml", "utf-8");
+	const name = toml.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
+	if (!name) {
+		console.error("Could not read Worker `name` from wrangler.toml.");
+		process.exit(1);
+	}
+	return `https://${name}-${stage}.${subdomain}.workers.dev`;
+}
+
+const healthUrl = `${resolveHealthBase().replace(/\/$/, "")}/v1/health/detailed`;
 const canaryPercent = Number(process.env.CANARY_PERCENT || 10);
 const soakSeconds = Number(process.env.SOAK_SECONDS || 20);
 const healthAttempts = Number(process.env.HEALTH_ATTEMPTS || 5);

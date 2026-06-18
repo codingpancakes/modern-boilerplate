@@ -86,8 +86,11 @@ export function isAllowedOrigin(origin?: string): boolean {
 export function getCorsHeaders(
 	origin: string | undefined,
 ): Record<string, string> {
+	// NOTE: no "Content-Type" here. These are applied to every response by the
+	// app middleware; forcing application/json would clobber non-JSON responses
+	// (GraphiQL HTML, future binary). JSON handlers set it themselves via
+	// c.json()/sendSuccess; Content-Type is a content header, not a CORS header.
 	const headers: Record<string, string> = {
-		"Content-Type": "application/json",
 		Vary: "Origin", // Always include for CDN cache safety
 	};
 

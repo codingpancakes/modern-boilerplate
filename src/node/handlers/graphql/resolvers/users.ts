@@ -43,6 +43,25 @@ export const userResolvers = {
 				);
 			}
 
+			// Verify the CALLER is an active member of the org they're scoping to —
+			// don't trust the JWT org_id alone (it could be stale). Defense in depth,
+			// consistent with requireMembership in the org resolvers.
+			const callerMembership =
+				await context.db.query.organizationMembers.findFirst({
+					where: and(
+						eq(organizationMembers.userId, context.userId),
+						eq(organizationMembers.organizationId, context.organizationId),
+						eq(organizationMembers.status, "ACTIVE"),
+					),
+				});
+
+			if (!callerMembership) {
+				throw new GraphQLError(
+					"Organization not found or you are not a member",
+					{ extensions: { code: "FORBIDDEN" } },
+				);
+			}
+
 			const membership = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, id),
