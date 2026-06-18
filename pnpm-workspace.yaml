@@ -1,0 +1,22 @@
+# pnpm 10+ reads these settings here (the package.json `pnpm` field is ignored).
+
+# Transitive-dependency security pins.
+overrides:
+  "fast-xml-parser@>=5.0.0 <5.3.5": ">=5.3.5"
+  "shell-quote@<1.8.4": ">=1.8.4"
+
+# Don't auto-install/verify deps before every `pnpm run`. pnpm 11's default
+# runs an internal install before scripts, which aborts in non-TTY contexts
+# (husky hooks, CI) and broke pre-commit `pnpm lint`/`typecheck`. Scripts run
+# against the installed node_modules; `pnpm install` still manages deps.
+verifyDepsBeforeRun: false
+
+# Explicitly DECLINE these packages' postinstall build scripts: they all ship
+# prebuilt platform binaries, so a source build is neither needed nor wanted
+# (sharp's, in particular, fails from source). Deciding them here also stops
+# pnpm re-writing an "allowBuilds" approval stub on every install.
+allowBuilds:
+  esbuild: false
+  workerd: false
+  sharp: false
+  es5-ext: false

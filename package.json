@@ -70,10 +70,5 @@
 		"swagger-jsdoc": "^6.3.0",
 		"zod": "^3.25.76"
 	},
-	"pnpm": {
-		"overrides": {
-			"fast-xml-parser@>=5.0.0 <5.3.5": ">=5.3.5",
-			"shell-quote@<1.8.4": ">=1.8.4"
-		}
-	}
+	"packageManager": "pnpm@11.7.0"
 }
