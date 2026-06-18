@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX IF NOT EXISTS "ux_org_member_user_org" ON "organization_members" ("user_id","organization_id");

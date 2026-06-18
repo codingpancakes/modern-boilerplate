@@ -1,1 +1,0 @@
-ALTER TABLE "audit_logs" ALTER COLUMN "resource_id" SET DATA TYPE text;
