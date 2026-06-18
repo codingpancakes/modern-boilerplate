@@ -91,6 +91,12 @@ const yoga = createYoga<GraphQLServerContext, GraphQLContext>({
 	landingPage: false,
 	// The Apollo endpoint never accepted multipart (file-upload) requests.
 	multipart: false,
+	// Responses are fully BUFFERED: incremental delivery (@defer/@stream) is an
+	// opt-in plugin (@graphql-yoga/plugin-defer-stream) that is deliberately NOT
+	// installed, and there are no subscriptions. This matters because the
+	// request's DB pool is drained when the response Promise resolves (dbScope
+	// middleware) — a streamed body would have resolvers touching a closed pool.
+	// If you ever add defer/stream, move the pool drain to ctx.waitUntil first.
 	logging: false,
 	// GraphiQL on GET only outside production/staging (the old /graphql/docs
 	// behavior); stage is checked per request, not at module init.

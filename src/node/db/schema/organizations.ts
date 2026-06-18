@@ -153,5 +153,18 @@ export const organizationMembers = pgTable(
 			table.userId,
 			table.organizationId,
 		),
+		// Composite indexes matching the keyset-pagination sort orders so the
+		// `myOrganizations` / `organizationMembers` queries are index-served
+		// (WHERE user_id|org_id ... ORDER BY created_at, id).
+		index("ix_org_members_user_created").on(
+			table.userId,
+			table.createdAt,
+			table.id,
+		),
+		index("ix_org_members_org_created").on(
+			table.organizationId,
+			table.createdAt,
+			table.id,
+		),
 	],
 );

@@ -53,6 +53,15 @@ async function verifyBearerToken(
 	// Read per request, not at module init: on Workers, env vars/secrets are
 	// populated per invocation by nodejs_compat.
 	const clientId = process.env.WORKOS_CLIENT_ID || "";
+	// Fail CLOSED in deployed environments: an empty client id disables the
+	// `client_id` audience binding (intended only for local dev), which would
+	// accept any WorkOS-signed token. Never run unbound in staging/production.
+	const stage = process.env.STAGE;
+	if (!clientId && (stage === "production" || stage === "staging")) {
+		throw new Error(
+			"WORKOS_CLIENT_ID is required in deployed environments (audience binding must not be disabled)",
+		);
+	}
 	if (!jwksCache || jwksCache.clientId !== clientId) {
 		jwksCache = { clientId, jwks: createWorkosJwks(clientId) };
 	}
