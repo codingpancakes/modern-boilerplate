@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { lt } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
@@ -185,19 +186,35 @@ function redactMetadata(
  * request finishes. The hot path still never awaits an individual write; we
  * just drain whatever is outstanding at the very end.
  *
- * On Workers, CONCURRENT requests share this module-level set, so a flush may
- * also drain another request's writes — harmless (allSettled, never rejects),
- * it only means a request occasionally waits on a neighbor's audit insert.
+ * The buffer is PER-REQUEST, held in AsyncLocalStorage (mirroring the DB pool
+ * scope in db.ts). On Cloudflare Workers a module-level set would be shared by
+ * every concurrent request in the isolate, so one request's `flushAudits()`
+ * would await — and head-of-line-block on — another request's audit writes.
+ * Scoping the set per request means each request drains only its own writes.
+ *
+ * Outside a scope (cron jobs, scripts) there is no buffer: `logAudit` simply
+ * awaits its write inline, and `flushAudits` is a no-op.
  */
-const pendingAudits = new Set<Promise<void>>();
+const auditScopeStorage = new AsyncLocalStorage<Set<Promise<void>>>();
 
 /**
- * Await all audit writes started during this invocation. Best-effort: failures
- * are already swallowed inside {@link logAudit}, so this never rejects.
+ * Run `fn` with a per-request audit buffer. The `auditFlush()` middleware wraps
+ * every HTTP request in this; `logAudit` writes started inside are collected and
+ * drained by {@link flushAudits} at the end of the request.
+ */
+export function runWithAuditScope<T>(fn: () => Promise<T>): Promise<T> {
+	return auditScopeStorage.run(new Set<Promise<void>>(), fn);
+}
+
+/**
+ * Await all audit writes started during the current request scope. Best-effort:
+ * failures are already swallowed inside {@link logAudit}, so this never rejects.
+ * A no-op outside a scope (writes there are awaited inline by `logAudit`).
  */
 export async function flushAudits(): Promise<void> {
-	if (pendingAudits.size === 0) return;
-	await Promise.allSettled([...pendingAudits]);
+	const pending = auditScopeStorage.getStore();
+	if (!pending || pending.size === 0) return;
+	await Promise.allSettled([...pending]);
 }
 
 /**
@@ -219,11 +236,18 @@ export async function flushAudits(): Promise<void> {
  */
 export async function logAudit(entry: AuditLogEntry): Promise<void> {
 	const write = persistAudit(entry);
-	pendingAudits.add(write);
+	const pending = auditScopeStorage.getStore();
+	// Outside a request scope (cron/scripts): no buffer to drain later, so
+	// await inline to guarantee the write completes.
+	if (!pending) {
+		await write;
+		return;
+	}
+	pending.add(write);
 	try {
 		await write;
 	} finally {
-		pendingAudits.delete(write);
+		pending.delete(write);
 	}
 }
 

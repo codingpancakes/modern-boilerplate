@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
-import { flushAudits } from "../audit";
+import { flushAudits, runWithAuditScope } from "../audit";
 import { getCorsHeaders, handleOptionsRequest, securityHeaders } from "../cors";
 import { runWithDbScope } from "../db";
 import type { AppEnv } from "./types";
@@ -43,13 +43,14 @@ export const dbScope = (): MiddlewareHandler<AppEnv> => (_c, next) =>
  * `dbScope()` (mounted after it) so the drained writes can still use the
  * request's pool.
  */
-export const auditFlush = (): MiddlewareHandler<AppEnv> => async (_c, next) => {
-	try {
-		await next();
-	} finally {
-		await flushAudits();
-	}
-};
+export const auditFlush = (): MiddlewareHandler<AppEnv> => (_c, next) =>
+	runWithAuditScope(async () => {
+		try {
+			await next();
+		} finally {
+			await flushAudits();
+		}
+	});
 
 /**
  * Dynamic CORS + standard security headers.
