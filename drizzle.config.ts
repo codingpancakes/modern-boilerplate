@@ -6,9 +6,9 @@ dotenv.config({ path: ".dev.vars" });
 export default {
 	schema: "./src/node/db/schema/index.ts",
 	out: "./src/node/db/migrations",
-	driver: "pg",
+	dialect: "postgresql",
 	dbCredentials: {
-		connectionString: process.env.DATABASE_URL || "",
+		url: process.env.DATABASE_URL || "",
 	},
 	verbose: true,
 	strict: true,

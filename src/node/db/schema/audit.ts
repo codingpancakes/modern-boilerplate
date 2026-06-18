@@ -63,46 +63,31 @@ export const auditLogs = pgTable(
 		status: text("status"), // SUCCESS, FAILURE, PARTIAL
 		errorMessage: text("error_message"), // If action failed
 	},
-	(table) => {
-		return {
-			// Index for querying by user
-			ixAuditLogsUserId: index("ix_audit_logs_user_id").on(table.userId),
+	(table) => [
+		// Index for querying by user
+		index("ix_audit_logs_user_id").on(table.userId),
 
-			// Index for querying by organization
-			ixAuditLogsOrgId: index("ix_audit_logs_org_id").on(table.organizationId),
+		// Index for querying by organization
+		index("ix_audit_logs_org_id").on(table.organizationId),
 
-			// Index for querying by org unit
-			ixAuditLogsOrgUnitId: index("ix_audit_logs_org_unit_id").on(
-				table.orgUnitId,
-			),
+		// Index for querying by org unit
+		index("ix_audit_logs_org_unit_id").on(table.orgUnitId),
 
-			// Index for querying by resource
-			ixAuditLogsResource: index("ix_audit_logs_resource").on(
-				table.resourceType,
-				table.resourceId,
-			),
+		// Index for querying by resource
+		index("ix_audit_logs_resource").on(table.resourceType, table.resourceId),
 
-			// Index for querying by action
-			ixAuditLogsAction: index("ix_audit_logs_action").on(table.action),
+		// Index for querying by action
+		index("ix_audit_logs_action").on(table.action),
 
-			// Index for time-based queries (most common)
-			ixAuditLogsTimestamp: index("ix_audit_logs_timestamp").on(
-				table.timestamp,
-			),
+		// Index for time-based queries (most common)
+		index("ix_audit_logs_timestamp").on(table.timestamp),
 
-			// Composite index for user activity over time
-			ixAuditLogsUserTime: index("ix_audit_logs_user_time").on(
-				table.userId,
-				table.timestamp,
-			),
+		// Composite index for user activity over time
+		index("ix_audit_logs_user_time").on(table.userId, table.timestamp),
 
-			// Composite index for org audit queries over time
-			ixAuditLogsOrgTime: index("ix_audit_logs_org_time").on(
-				table.organizationId,
-				table.timestamp,
-			),
-		};
-	},
+		// Composite index for org audit queries over time
+		index("ix_audit_logs_org_time").on(table.organizationId, table.timestamp),
+	],
 );
 
 /**

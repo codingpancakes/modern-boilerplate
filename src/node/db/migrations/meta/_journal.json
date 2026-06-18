@@ -1,19 +1,19 @@
 {
-  "version": "5",
-  "dialect": "pg",
+  "version": "7",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1781778673735,
-      "tag": "0000_gifted_diamondback",
+      "version": "7",
+      "when": 1781785054413,
+      "tag": "0000_first_boom_boom",
       "breakpoints": true
     },
     {
       "idx": 1,
-      "version": "5",
-      "when": 1781778710327,
-      "tag": "0001_concerned_havok",
+      "version": "7",
+      "when": 1781785072413,
+      "tag": "0001_narrow_shotgun",
       "breakpoints": true
     }
   ]

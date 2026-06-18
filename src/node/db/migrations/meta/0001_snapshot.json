@@ -1,10 +1,10 @@
 {
-  "id": "81e14113-712f-4aad-bc8e-cb38da2aa4a2",
-  "prevId": "988d8a6a-dbed-4ac5-a283-8ea119006fb0",
-  "version": "5",
-  "dialect": "pg",
+  "id": "bc439d47-446f-474b-b32e-3300ba385e20",
+  "prevId": "e1101b96-5d9d-4484-851b-1dffda800a1a",
+  "version": "7",
+  "dialect": "postgresql",
   "tables": {
-    "audit_logs": {
+    "public.audit_logs": {
       "name": "audit_logs",
       "schema": "",
       "columns": {
@@ -105,61 +105,140 @@
         "ix_audit_logs_user_id": {
           "name": "ix_audit_logs_user_id",
           "columns": [
-            "user_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_org_id": {
           "name": "ix_audit_logs_org_id",
           "columns": [
-            "organization_id"
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_org_unit_id": {
           "name": "ix_audit_logs_org_unit_id",
           "columns": [
-            "org_unit_id"
+            {
+              "expression": "org_unit_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_resource": {
           "name": "ix_audit_logs_resource",
           "columns": [
-            "resource_type",
-            "resource_id"
+            {
+              "expression": "resource_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "resource_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_action": {
           "name": "ix_audit_logs_action",
           "columns": [
-            "action"
+            {
+              "expression": "action",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_timestamp": {
           "name": "ix_audit_logs_timestamp",
           "columns": [
-            "timestamp"
+            {
+              "expression": "timestamp",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_user_time": {
           "name": "ix_audit_logs_user_time",
           "columns": [
-            "user_id",
-            "timestamp"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timestamp",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_audit_logs_org_time": {
           "name": "ix_audit_logs_org_time",
           "columns": [
-            "organization_id",
-            "timestamp"
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "timestamp",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -204,9 +283,12 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "idempotency_keys": {
+    "public.idempotency_keys": {
       "name": "idempotency_keys",
       "schema": "",
       "columns": {
@@ -265,24 +347,48 @@
         "idempotency_keys_key_request_hash_unique": {
           "name": "idempotency_keys_key_request_hash_unique",
           "columns": [
-            "key",
-            "request_hash"
+            {
+              "expression": "key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "request_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_idempotency_keys_expires": {
           "name": "ix_idempotency_keys_expires",
           "columns": [
-            "expires_at"
+            {
+              "expression": "expires_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "org_units": {
+    "public.org_units": {
       "name": "org_units",
       "schema": "",
       "columns": {
@@ -349,25 +455,59 @@
         "ix_ou_org": {
           "name": "ix_ou_org",
           "columns": [
-            "organization_id"
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_ou_org_code": {
           "name": "ix_ou_org_code",
           "columns": [
-            "code",
-            "organization_id"
+            {
+              "expression": "code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_ou_is_root": {
           "name": "ix_ou_is_root",
           "columns": [
-            "is_root",
-            "organization_id"
+            {
+              "expression": "is_root",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -399,9 +539,12 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "organization_members": {
+    "public.organization_members": {
       "name": "organization_members",
       "schema": "",
       "columns": {
@@ -433,6 +576,7 @@
         "role": {
           "name": "role",
           "type": "org_role",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": false,
           "default": "'MEMBER'"
@@ -440,6 +584,7 @@
         "status": {
           "name": "status",
           "type": "assignment_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": false,
           "default": "'ACTIVE'"
@@ -469,24 +614,53 @@
         "ix_org_members_org": {
           "name": "ix_org_members_org",
           "columns": [
-            "organization_id"
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_org_members_user": {
           "name": "ix_org_members_user",
           "columns": [
-            "user_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ux_org_member_user_org": {
           "name": "ux_org_member_user_org",
           "columns": [
-            "user_id",
-            "organization_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -531,9 +705,12 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "organizations": {
+    "public.organizations": {
       "name": "organizations",
       "schema": "",
       "columns": {
@@ -623,37 +800,72 @@
         "ux_org_slug": {
           "name": "ux_org_slug",
           "columns": [
-            "slug"
+            {
+              "expression": "slug",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ux_workos_org_id": {
           "name": "ux_workos_org_id",
           "columns": [
-            "workos_org_id"
+            {
+              "expression": "workos_org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_org_type": {
           "name": "ix_org_type",
           "columns": [
-            "org_type"
+            {
+              "expression": "org_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_org_visible": {
           "name": "ix_org_visible",
           "columns": [
-            "visibility"
+            {
+              "expression": "visibility",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "auth_identities": {
+    "public.auth_identities": {
       "name": "auth_identities",
       "schema": "",
       "columns": {
@@ -713,25 +925,59 @@
         "ix_auth_user": {
           "name": "ix_auth_user",
           "columns": [
-            "user_id"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ux_auth_user_provider": {
           "name": "ux_auth_user_provider",
           "columns": [
-            "user_id",
-            "provider_type"
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ux_auth_provider_subject": {
           "name": "ux_auth_provider_subject",
           "columns": [
-            "provider_type",
-            "provider_subject"
+            {
+              "expression": "provider_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "provider_subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -750,9 +996,12 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "profiles": {
+    "public.profiles": {
       "name": "profiles",
       "schema": "",
       "columns": {
@@ -879,16 +1128,32 @@
         "ix_profiles_external_id": {
           "name": "ix_profiles_external_id",
           "columns": [
-            "external_id"
+            {
+              "expression": "external_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_profiles_country": {
           "name": "ix_profiles_country",
           "columns": [
-            "country_code"
+            {
+              "expression": "country_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {
@@ -907,9 +1172,12 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     },
-    "users": {
+    "public.users": {
       "name": "users",
       "schema": "",
       "columns": {
@@ -947,6 +1215,7 @@
         "type": {
           "name": "type",
           "type": "user_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -987,51 +1256,77 @@
         "ux_users_email": {
           "name": "ux_users_email",
           "columns": [
-            "email"
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": true
+          "isUnique": true,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         },
         "ix_users_phone": {
           "name": "ix_users_phone",
           "columns": [
-            "phone"
+            {
+              "expression": "phone",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
           ],
-          "isUnique": false
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
         }
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {}
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
     }
   },
   "enums": {
-    "assignment_status": {
+    "public.assignment_status": {
       "name": "assignment_status",
-      "values": {
-        "ACTIVE": "ACTIVE",
-        "INACTIVE": "INACTIVE",
-        "ENDED": "ENDED"
-      }
+      "schema": "public",
+      "values": [
+        "ACTIVE",
+        "INACTIVE",
+        "ENDED"
+      ]
     },
-    "org_role": {
+    "public.org_role": {
       "name": "org_role",
-      "values": {
-        "OWNER": "OWNER",
-        "ADMIN": "ADMIN",
-        "MANAGER": "MANAGER",
-        "MEMBER": "MEMBER",
-        "VIEWER": "VIEWER"
-      }
+      "schema": "public",
+      "values": [
+        "OWNER",
+        "ADMIN",
+        "MANAGER",
+        "MEMBER",
+        "VIEWER"
+      ]
     },
-    "user_type": {
+    "public.user_type": {
       "name": "user_type",
-      "values": {
-        "OPERATOR": "OPERATOR",
-        "MEMBER": "MEMBER"
-      }
+      "schema": "public",
+      "values": [
+        "OPERATOR",
+        "MEMBER"
+      ]
     }
   },
   "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
   "_meta": {
     "columns": {},
     "schemas": {},

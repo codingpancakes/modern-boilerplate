@@ -39,12 +39,10 @@ export const users = pgTable(
 			mode: "string",
 		}),
 	},
-	(table) => {
-		return {
-			uxUsersEmail: uniqueIndex("ux_users_email").on(table.email),
-			ixUsersPhone: index("ix_users_phone").on(table.phone),
-		};
-	},
+	(table) => [
+		uniqueIndex("ux_users_email").on(table.email),
+		index("ix_users_phone").on(table.phone),
+	],
 );
 
 /**
@@ -82,14 +80,10 @@ export const profiles = pgTable(
 		persona: jsonb("persona"),
 		snapshot: jsonb("snapshot"),
 	},
-	(table) => {
-		return {
-			ixProfilesExternalId: index("ix_profiles_external_id").on(
-				table.externalId,
-			),
-			ixProfilesCountry: index("ix_profiles_country").on(table.countryCode),
-		};
-	},
+	(table) => [
+		index("ix_profiles_external_id").on(table.externalId),
+		index("ix_profiles_country").on(table.countryCode),
+	],
 );
 
 /**
@@ -113,17 +107,12 @@ export const authIdentities = pgTable(
 			mode: "string",
 		}).defaultNow(),
 	},
-	(table) => {
-		return {
-			ixAuthUser: index("ix_auth_user").on(table.userId),
-			uxAuthUserProvider: uniqueIndex("ux_auth_user_provider").on(
-				table.userId,
-				table.providerType,
-			),
-			uxAuthProviderSubject: uniqueIndex("ux_auth_provider_subject").on(
-				table.providerType,
-				table.providerSubject,
-			),
-		};
-	},
+	(table) => [
+		index("ix_auth_user").on(table.userId),
+		uniqueIndex("ux_auth_user_provider").on(table.userId, table.providerType),
+		uniqueIndex("ux_auth_provider_subject").on(
+			table.providerType,
+			table.providerSubject,
+		),
+	],
 );

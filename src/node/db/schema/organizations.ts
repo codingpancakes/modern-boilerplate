@@ -38,14 +38,12 @@ export const organizations = pgTable(
 			mode: "string",
 		}).defaultNow(),
 	},
-	(table) => {
-		return {
-			uxOrgSlug: uniqueIndex("ux_org_slug").on(table.slug),
-			uxWorkosOrgId: uniqueIndex("ux_workos_org_id").on(table.workosOrgId),
-			ixOrgType: index("ix_org_type").on(table.orgType),
-			ixOrgVisible: index("ix_org_visible").on(table.visibility),
-		};
-	},
+	(table) => [
+		uniqueIndex("ux_org_slug").on(table.slug),
+		uniqueIndex("ux_workos_org_id").on(table.workosOrgId),
+		index("ix_org_type").on(table.orgType),
+		index("ix_org_visible").on(table.visibility),
+	],
 );
 
 /**
@@ -74,18 +72,16 @@ export const orgUnits = pgTable(
 			mode: "string",
 		}).defaultNow(),
 	},
-	(table) => {
-		return {
-			ixOuOrg: index("ix_ou_org").on(table.organizationId),
-			ixOuOrgCode: index("ix_ou_org_code").on(table.code, table.organizationId),
-			ixOuIsRoot: index("ix_ou_is_root").on(table.isRoot, table.organizationId),
-			orgUnitsParentIdFkey: foreignKey({
-				columns: [table.parentId],
-				foreignColumns: [table.id],
-				name: "org_units_parent_id_fkey",
-			}).onDelete("set null"),
-		};
-	},
+	(table) => [
+		index("ix_ou_org").on(table.organizationId),
+		index("ix_ou_org_code").on(table.code, table.organizationId),
+		index("ix_ou_is_root").on(table.isRoot, table.organizationId),
+		foreignKey({
+			columns: [table.parentId],
+			foreignColumns: [table.id],
+			name: "org_units_parent_id_fkey",
+		}).onDelete("set null"),
+	],
 );
 
 /**
@@ -113,16 +109,13 @@ export const idempotencyKeys = pgTable(
 			.defaultNow()
 			.notNull(),
 	},
-	(table) => {
-		return {
-			keyRequestHashUnique: uniqueIndex(
-				"idempotency_keys_key_request_hash_unique",
-			).on(table.key, table.requestHash),
-			ixIdempotencyKeysExpires: index("ix_idempotency_keys_expires").on(
-				table.expiresAt,
-			),
-		};
-	},
+	(table) => [
+		uniqueIndex("idempotency_keys_key_request_hash_unique").on(
+			table.key,
+			table.requestHash,
+		),
+		index("ix_idempotency_keys_expires").on(table.expiresAt),
+	],
 );
 
 /**
@@ -153,14 +146,12 @@ export const organizationMembers = pgTable(
 			mode: "string",
 		}).defaultNow(),
 	},
-	(table) => {
-		return {
-			ixOrgMembersOrg: index("ix_org_members_org").on(table.organizationId),
-			ixOrgMembersUser: index("ix_org_members_user").on(table.userId),
-			uxOrgMemberUserOrg: uniqueIndex("ux_org_member_user_org").on(
-				table.userId,
-				table.organizationId,
-			),
-		};
-	},
+	(table) => [
+		index("ix_org_members_org").on(table.organizationId),
+		index("ix_org_members_user").on(table.userId),
+		uniqueIndex("ux_org_member_user_org").on(
+			table.userId,
+			table.organizationId,
+		),
+	],
 );
