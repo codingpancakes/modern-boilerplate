@@ -187,6 +187,10 @@ const organizationsSdl = /* GraphQL */ `
 		): OrganizationMembership!
 		removeMember(organizationId: ID!, memberId: ID!): Boolean!
 		leaveOrganization(organizationId: ID!): Boolean!
+		# Invitee consent: a PENDING invite only becomes a real membership when
+		# the invited user accepts it themselves.
+		acceptInvitation(organizationId: ID!): OrganizationMembership!
+		declineInvitation(organizationId: ID!): Boolean!
 	}
 
 	# Input types

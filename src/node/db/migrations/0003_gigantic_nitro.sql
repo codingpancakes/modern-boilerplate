@@ -1,0 +1,1 @@
+ALTER TYPE "public"."assignment_status" ADD VALUE 'PENDING' BEFORE 'ACTIVE';

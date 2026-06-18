@@ -1,6 +1,10 @@
-import { and, asc, eq, gt, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import { organizationMembers, organizations } from "../../../db/schema/index";
+import {
+	organizationMembers,
+	organizations,
+	users,
+} from "../../../db/schema/index";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -350,28 +354,44 @@ export const organizationResolvers = {
 				});
 			}
 
+			// The target user must exist — don't mint memberships for arbitrary IDs.
+			const targetUser = await context.db.query.users.findFirst({
+				where: eq(users.id, validated.userId),
+			});
+			if (!targetUser) {
+				throw new GraphQLError("User not found", {
+					extensions: { code: "NOT_FOUND" },
+				});
+			}
+
+			// Reject if there's already an active member or an outstanding invite.
 			const existing = await context.db.query.organizationMembers.findFirst({
 				where: and(
 					eq(organizationMembers.userId, validated.userId),
 					eq(organizationMembers.organizationId, organizationId),
-					eq(organizationMembers.status, "ACTIVE"),
+					inArray(organizationMembers.status, ["ACTIVE", "PENDING"]),
 				),
 			});
 
 			if (existing) {
 				throw new GraphQLError(
-					"User is already a member of this organization",
+					existing.status === "PENDING"
+						? "User already has a pending invitation to this organization"
+						: "User is already a member of this organization",
 					{ extensions: { code: "BAD_USER_INPUT" } },
 				);
 			}
 
+			// Create as PENDING, not ACTIVE: the invitee is invisible to the
+			// ACTIVE-filtered member/user queries until they accept, so an invite
+			// cannot expose the invitee's data without their consent.
 			const [membership] = await context.db
 				.insert(organizationMembers)
 				.values({
 					organizationId,
 					userId: validated.userId,
 					role: validated.role,
-					status: "ACTIVE",
+					status: "PENDING",
 				})
 				.returning();
 
@@ -616,6 +636,91 @@ export const organizationResolvers = {
 				resourceId: membership.id,
 				status: AUDIT_STATUS.SUCCESS,
 				metadata: { source: "graphql", action: "leave_organization" },
+			});
+
+			return true;
+		},
+
+		// The invited user accepts their own PENDING invite → it becomes ACTIVE.
+		acceptInvitation: async (
+			_parent: unknown,
+			{ organizationId }: { organizationId: string },
+			context: GraphQLContext,
+		) => {
+			const [accepted] = await context.db.transaction(async (tx) => {
+				const [invite] = await tx
+					.select()
+					.from(organizationMembers)
+					.where(
+						and(
+							eq(organizationMembers.userId, context.userId),
+							eq(organizationMembers.organizationId, organizationId),
+							eq(organizationMembers.status, "PENDING"),
+						),
+					)
+					.limit(1)
+					.for("update");
+
+				if (!invite) {
+					throw new GraphQLError("No pending invitation found", {
+						extensions: { code: "NOT_FOUND" },
+					});
+				}
+
+				return tx
+					.update(organizationMembers)
+					.set({ status: "ACTIVE", updatedAt: new Date().toISOString() })
+					.where(eq(organizationMembers.id, invite.id))
+					.returning();
+			});
+
+			void logAudit({
+				userId: context.userId,
+				organizationId,
+				...auditRequestContext(context),
+				action: AUDIT_ACTIONS.UPDATE,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
+				resourceId: accepted.id,
+				status: AUDIT_STATUS.SUCCESS,
+				metadata: { source: "graphql", action: "accept_invitation" },
+			});
+
+			return accepted;
+		},
+
+		// The invited user declines their own PENDING invite.
+		declineInvitation: async (
+			_parent: unknown,
+			{ organizationId }: { organizationId: string },
+			context: GraphQLContext,
+		) => {
+			const result = await context.db
+				.update(organizationMembers)
+				.set({ status: "INACTIVE", updatedAt: new Date().toISOString() })
+				.where(
+					and(
+						eq(organizationMembers.userId, context.userId),
+						eq(organizationMembers.organizationId, organizationId),
+						eq(organizationMembers.status, "PENDING"),
+					),
+				)
+				.returning();
+
+			if (result.length === 0) {
+				throw new GraphQLError("No pending invitation found", {
+					extensions: { code: "NOT_FOUND" },
+				});
+			}
+
+			void logAudit({
+				userId: context.userId,
+				organizationId,
+				...auditRequestContext(context),
+				action: AUDIT_ACTIONS.DELETE,
+				resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION_MEMBER,
+				resourceId: result[0].id,
+				status: AUDIT_STATUS.SUCCESS,
+				metadata: { source: "graphql", action: "decline_invitation" },
 			});
 
 			return true;
