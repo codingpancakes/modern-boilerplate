@@ -148,7 +148,7 @@ CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
 CORS_EXACT_ORIGINS = ""                         # PLACEHOLDER: e.g. https://yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
 IMAGES_BUCKET = "sidedoor-images-production"  # PLACEHOLDER: must match the R2 bucket below
-IMAGES_CDN_URL = ""                             # PLACEHOLDER: production R2 public URL
+IMAGES_CDN_URL = "https://pub-d4d2f34704a04b05a07e014da0252522.r2.dev"
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"
