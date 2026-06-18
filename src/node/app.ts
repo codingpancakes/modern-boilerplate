@@ -8,6 +8,7 @@ import {
 	dbScope,
 	requestId,
 } from "./lib/hono/middleware";
+import { rateLimit } from "./lib/hono/rate-limit";
 import type { AppEnv } from "./lib/hono/types";
 import * as Sentry from "./lib/sentry";
 import { routes } from "./routes";
@@ -31,6 +32,9 @@ import { routes } from "./routes";
 export const app = new Hono<AppEnv>();
 
 app.use(requestId());
+// Per-IP rate limit early — reject before opening a DB pool or verifying a
+// token. No-op when the RATE_LIMITER binding is absent (local dev / tests).
+app.use(rateLimit());
 app.use(dbScope());
 app.use(auditFlush());
 app.use(corsAndSecurityHeaders());

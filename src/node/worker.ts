@@ -3,6 +3,7 @@ import type {
 	MessageBatch,
 	Queue,
 	R2Bucket,
+	RateLimit,
 	ScheduledController,
 } from "@cloudflare/workers-types";
 import { app } from "./app";
@@ -47,6 +48,12 @@ export type WorkerBindings = {
 	 * processing when it is absent (see routes/webhooks.ts).
 	 */
 	WEBHOOK_QUEUE?: Queue<WorkOSWebhookEvent>;
+	/**
+	 * Per-IP rate limiter — `[[unsafe.bindings]] type = "ratelimit"` in
+	 * wrangler.toml. OPTIONAL: the rate-limit middleware skips when it's absent
+	 * (local dev / tests), so nothing breaks without it.
+	 */
+	RATE_LIMITER?: RateLimit;
 };
 
 /**
@@ -54,7 +61,12 @@ export type WorkerBindings = {
  * string vars/secrets (also mirrored onto `process.env` by nodejs_compat).
  */
 export type WorkerEnv = WorkerBindings & {
-	[key: string]: R2Bucket | Queue<WorkOSWebhookEvent> | string | undefined;
+	[key: string]:
+		| R2Bucket
+		| Queue<WorkOSWebhookEvent>
+		| RateLimit
+		| string
+		| undefined;
 };
 
 /**
