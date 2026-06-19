@@ -267,7 +267,9 @@ function sanitizeArray(
 	options: SanitizeOptions,
 	depth: number,
 ): unknown[] {
-	if (depth >= MAX_SANITIZE_DEPTH) return arr;
+	// Fail closed past the depth cap (consistent with sanitizeObject) — drop the
+	// over-deep array rather than returning it unsanitized.
+	if (depth >= MAX_SANITIZE_DEPTH) return [];
 
 	return arr.map((item) => {
 		if (typeof item === "string") {
