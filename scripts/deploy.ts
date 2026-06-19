@@ -18,6 +18,7 @@
  *
  * Env overrides:
  *   HEALTH_URL        full health-check URL (default: derived per stage below)
+ *   SMOKE_CORS_ORIGIN allowed origin to verify CORS preflight (optional)
  *   CANARY_PERCENT    canary traffic share, 1-99 (default 10)
  *   SOAK_SECONDS      seconds to hold the canary before promoting (default 20)
  *   HEALTH_ATTEMPTS   health probes per gate (default 5)
@@ -57,10 +58,13 @@ function resolveHealthBase(): string {
 	return `https://${name}-${stage}.${subdomain}.workers.dev`;
 }
 
-const healthUrl = `${resolveHealthBase().replace(/\/$/, "")}/v1/health/detailed`;
+const deployBaseUrl = resolveHealthBase().replace(/\/$/, "");
+const healthUrl = `${deployBaseUrl}/v1/health/detailed`;
 const canaryPercent = Number(process.env.CANARY_PERCENT || 10);
 const soakSeconds = Number(process.env.SOAK_SECONDS || 20);
 const healthAttempts = Number(process.env.HEALTH_ATTEMPTS || 5);
+const smokeCorsOrigin =
+	process.env.SMOKE_CORS_ORIGIN || process.env.CORS_TEST_ORIGIN || "";
 
 function wrangler(args: string[], capture = true): string {
 	return execFileSync("npx", ["wrangler", ...args, "--env", stage], {
@@ -151,6 +155,79 @@ async function healthy(): Promise<boolean> {
 	return false;
 }
 
+async function expectStatus(
+	label: string,
+	path: string,
+	init: RequestInit,
+	expectedStatus: number,
+): Promise<Response> {
+	const res = await fetch(`${deployBaseUrl}${path}`, {
+		...init,
+		signal: AbortSignal.timeout(10_000),
+	});
+	if (res.status !== expectedStatus) {
+		const body = await res.text();
+		throw new Error(
+			`${label}: expected ${expectedStatus}, got ${res.status}; body=${body.slice(0, 300)}`,
+		);
+	}
+	console.log(`   ✓ ${label}`);
+	return res;
+}
+
+async function smokeChecks(): Promise<void> {
+	console.log("🔎 Running post-deploy smoke checks...");
+
+	await expectStatus("auth rejects missing bearer", "/v1/users/me", {}, 401);
+
+	await expectStatus(
+		"GraphQL rejects missing bearer",
+		"/v1/graphql",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ query: "{ __typename }" }),
+		},
+		401,
+	);
+
+	await expectStatus(
+		"webhook rejects missing signature",
+		"/v1/webhooks/workos",
+		{
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				id: "evt_smoke",
+				event: "user.created",
+				data: {},
+			}),
+		},
+		401,
+	);
+
+	if (!smokeCorsOrigin) {
+		console.log("   - CORS preflight skipped (set SMOKE_CORS_ORIGIN)");
+		return;
+	}
+
+	const cors = await expectStatus(
+		"CORS preflight accepts configured origin",
+		"/v1/health",
+		{
+			method: "OPTIONS",
+			headers: {
+				Origin: smokeCorsOrigin,
+				"Access-Control-Request-Method": "GET",
+			},
+		},
+		204,
+	);
+	if (cors.headers.get("access-control-allow-origin") !== smokeCorsOrigin) {
+		throw new Error("CORS preflight did not echo SMOKE_CORS_ORIGIN");
+	}
+}
+
 async function main() {
 	console.log(`🚀 Deploying to ${stage} (health: ${healthUrl})`);
 
@@ -168,6 +245,15 @@ async function main() {
 			console.error(
 				"❌ First deploy is unhealthy. No prior version to roll back to — investigate manually.",
 			);
+			process.exit(1);
+		}
+		try {
+			await smokeChecks();
+		} catch (err) {
+			console.error(
+				`❌ First deploy smoke checks failed: ${(err as Error).message}`,
+			);
+			console.error("No prior version to roll back to — investigate manually.");
 			process.exit(1);
 		}
 		syncTriggers();
@@ -199,6 +285,15 @@ async function main() {
 
 	if (!(await healthy())) {
 		console.error("❌ Unhealthy at 100% — rolling back.");
+		deploySplit([`${oldVersion}@100`]);
+		console.error(`↩️  Rolled back to ${oldVersion}.`);
+		process.exit(1);
+	}
+
+	try {
+		await smokeChecks();
+	} catch (err) {
+		console.error(`❌ Smoke checks failed — rolling back: ${(err as Error).message}`);
 		deploySplit([`${oldVersion}@100`]);
 		console.error(`↩️  Rolled back to ${oldVersion}.`);
 		process.exit(1);

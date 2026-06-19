@@ -8,6 +8,7 @@
 ## Setup & Operations
 - [Cloudflare Setup](./CLOUDFLARE_SETUP.md) — **start here.** Zero-to-running: local dev (`wrangler dev --local`), migrations, tests, secrets, deploys, R2/Hyperdrive
 - [Environment Variables](./ENVIRONMENT_VARIABLES.md) — wrangler `[vars]`, secrets, `.dev.vars`, `.env.*` files
+- [Webhook/DLQ Runbook](./runbooks/WEBHOOK_DLQ.md) — Queue failure alerts, triage, replay, and acknowledgement policy
 
 ## Security & Compliance
 - [Security Model](./SECURITY.md) — Auth, CORS, edge protection, error masking

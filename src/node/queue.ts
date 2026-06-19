@@ -19,7 +19,7 @@ import type { WorkerEnv } from "./worker";
  *
  * Two queues land in this one handler, distinguished by `batch.queue`:
  *
- *   - Main webhook queue (`sidedoor-webhooks-*`): each message body is a
+ *   - Main webhook queue (`<project>-webhooks-*`): each message body is a
  *     verified, Zod-validated WorkOS event. Process it inside a DB scope; ack on
  *     success. On failure, `message.retry()` (do NOT ack) so Queues redelivers,
  *     and after `max_retries` the platform routes it to the dead-letter queue.

@@ -52,6 +52,8 @@ jobs:
         run: pnpm audit --audit-level=high || true
       - run: pnpm lint
       - run: pnpm typecheck
+      - name: OpenAPI docs are current
+        run: pnpm docs:check
       - run: pnpm test:run
       - name: Integration tests (real Postgres)
         run: pnpm test:integration

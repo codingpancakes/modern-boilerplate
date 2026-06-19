@@ -18,6 +18,7 @@
 		"db:introspect": "dotenv -e .dev.vars -- drizzle-kit introspect",
 		"dev": "wrangler dev --local",
 		"docs:generate": "node scripts/generate-openapi.js",
+		"docs:check": "pnpm docs:generate && git diff --exit-code docs/api/openapi.json",
 		"docs:serve": "node docs/api/serve-docs.js",
 		"docs:build": "pnpm docs:generate && pnpm docs:serve",
 		"docs:dev": "pnpm docs:generate && pnpm docs:serve",

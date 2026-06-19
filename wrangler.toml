@@ -110,8 +110,9 @@ IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
 binding = "IMAGES"
 bucket_name = "sidedoor-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
 
-# Queues (staging) — these queues ALREADY EXIST:
-#   sidedoor-webhooks-staging, sidedoor-webhooks-dlq-staging.
+# Queues (staging) — create before the first staging deploy:
+#   wrangler queues create <project>-webhooks-staging
+#   wrangler queues create <project>-webhooks-dlq-staging
 # Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
 # DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
 [[env.staging.queues.producers]]
@@ -154,10 +155,9 @@ IMAGES_CDN_URL = "https://pub-d4d2f34704a04b05a07e014da0252522.r2.dev"
 binding = "IMAGES"
 bucket_name = "sidedoor-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`
 
-# Queues (production) — these queues DO NOT EXIST YET. Create them before the
-# first production deploy:
-#   wrangler queues create sidedoor-webhooks-production
-#   wrangler queues create sidedoor-webhooks-dlq-production
+# Queues (production) — create before the first production deploy:
+#   wrangler queues create <project>-webhooks-production
+#   wrangler queues create <project>-webhooks-dlq-production
 # Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
 # DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
 [[env.production.queues.producers]]

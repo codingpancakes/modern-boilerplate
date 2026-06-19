@@ -112,10 +112,13 @@ deploy:
 3. routes `CANARY_PERCENT` (default 10%) of traffic to it, soaks `SOAK_SECONDS`
    (default 20s), and probes `/v1/health/detailed`,
 4. promotes to 100% and probes health again,
-5. on **any** health failure, redeploys the recorded version at 100% and exits 1.
+5. runs post-deploy smoke checks: missing-bearer auth rejection, GraphQL auth
+   rejection, missing-signature webhook rejection, and optional CORS preflight,
+6. on **any** health or smoke failure, redeploys the recorded version at 100% and exits 1.
 
 First deploy (no prior version) skips the canary and goes straight to 100%. Tunable
-via `HEALTH_URL`, `CANARY_PERCENT`, `SOAK_SECONDS`, `HEALTH_ATTEMPTS`.
+via `HEALTH_URL`, `SMOKE_CORS_ORIGIN`, `CANARY_PERCENT`, `SOAK_SECONDS`,
+`HEALTH_ATTEMPTS`.
 
 The health-check URL is derived from the Worker `name` + `WORKERS_SUBDOMAIN` (your
 `*.workers.dev` subdomain) as `https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`,
@@ -174,12 +177,14 @@ so cloned boilerplates do not keep the source project's name.
 ## 9. New project from this boilerplate
 
 ```bash
-pnpm init-project <project-name> <domain> [--github-owner <owner>]
+pnpm init-project <project-name> <domain> [--force]
 ```
 
-Generates the `.env.*` files and sets the package name. Then update `wrangler.toml`
-yourself: worker `name`, `[vars]` placeholders (CORS, `IMAGES_CDN_URL`), and the R2
-bucket names.
+Generates the `.env.*` files, sets the package name, and rewrites `wrangler.toml`
+resource names: Worker name, `PROJECT_NAME`, CORS exact origins, R2 bucket names,
+image CDN placeholders, and webhook queue/DLQ names. Then create the named R2
+buckets/queues and replace `IMAGES_CDN_URL` with the real R2 public or custom-domain
+URL for each environment.
 
 ---
 
