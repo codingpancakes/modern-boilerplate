@@ -9,10 +9,6 @@
     {
       "url": "http://localhost:8787",
       "description": "Local development server"
-    },
-    {
-      "url": "https://<your-worker>-staging.<account>.workers.dev",
-      "description": "Staging environment"
     }
   ],
   "components": {
@@ -747,13 +743,13 @@
           "400": {
             "description": "Invalid request parameters",
             "schema": {
-              "$ref": "#/definitions/StandardErrorResponse"
+              "$ref": "#/components/schemas/ErrorResponse"
             }
           },
           "401": {
             "description": "Unauthorized",
             "schema": {
-              "$ref": "#/definitions/StandardErrorResponse"
+              "$ref": "#/components/schemas/ErrorResponse"
             }
           }
         }

@@ -141,10 +141,10 @@ function requestAuditContext(c: Context<AppEnv>) {
  *                       description: URL expiry time in seconds
  *       400:
  *         description: Invalid request parameters
- *         schema: { $ref: '#/definitions/StandardErrorResponse' }
+ *         schema: { $ref: '#/components/schemas/ErrorResponse' }
  *       401:
  *         description: Unauthorized
- *         schema: { $ref: '#/definitions/StandardErrorResponse' }
+ *         schema: { $ref: '#/components/schemas/ErrorResponse' }
  */
 media.post("/upload-image", async (c) => {
 	// Get internal user ID from verified claims (lookup + JIT provisioning)

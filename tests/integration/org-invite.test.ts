@@ -19,6 +19,7 @@ vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 import { organizationMembers, organizations, users } from "@/db/schema/index";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 import { organizationResolvers } from "@/handlers/graphql/resolvers/organizations";
+import { userResolvers } from "@/handlers/graphql/resolvers/users";
 import {
 	createTestDb,
 	type TestDb,
@@ -80,13 +81,19 @@ describe("organization invitation consent flow", () => {
 		});
 	});
 	afterEach(async () => {
+		// The mutations fire `void logAudit(...)` writes that settle after the
+		// resolver returns. Let them drain before truncating, otherwise an
+		// in-flight audit INSERT can deadlock against the TRUNCATE ... CASCADE.
+		await new Promise((resolve) => setTimeout(resolve, 50));
 		await truncateOrganizations(pool);
 		await truncateUserGraph(pool);
 	});
 
 	const invite = organizationResolvers.Mutation.inviteMember;
 	const accept = organizationResolvers.Mutation.acceptInvitation;
+	const decline = organizationResolvers.Mutation.declineInvitation;
 	const listMembers = organizationResolvers.Query.organizationMembers;
+	const resolveMembershipUser = userResolvers.OrganizationMembership.user;
 
 	it("invite creates a PENDING membership that is NOT exposed to active member queries", async () => {
 		const membership = await invite(
@@ -147,5 +154,84 @@ describe("organization invitation consent flow", () => {
 				ctx(ownerId, orgId),
 			),
 		).rejects.toThrow();
+	});
+
+	it("re-invites a user who previously declined (INACTIVE row reactivates to PENDING)", async () => {
+		// First invite → invitee declines → the row persists as INACTIVE.
+		await invite(
+			null,
+			{ organizationId: orgId, input: { userId: inviteeId, role: "MEMBER" } },
+			ctx(ownerId, orgId),
+		);
+		await decline(null, { organizationId: orgId }, ctx(inviteeId, orgId));
+
+		const [declined] = await db
+			.select()
+			.from(organizationMembers)
+			.where(
+				and(
+					eq(organizationMembers.userId, inviteeId),
+					eq(organizationMembers.organizationId, orgId),
+				),
+			);
+		expect(declined.status).toBe("INACTIVE");
+
+		// Re-inviting must reactivate the same row to PENDING rather than hitting
+		// the (userId, organizationId) unique index with a blind insert.
+		const reinvited = await invite(
+			null,
+			{ organizationId: orgId, input: { userId: inviteeId, role: "MANAGER" } },
+			ctx(ownerId, orgId),
+		);
+		expect(reinvited.status).toBe("PENDING");
+		expect(reinvited.role).toBe("MANAGER");
+
+		// Exactly one membership row exists for this (user, org) pair.
+		const rows = await db
+			.select()
+			.from(organizationMembers)
+			.where(
+				and(
+					eq(organizationMembers.userId, inviteeId),
+					eq(organizationMembers.organizationId, orgId),
+				),
+			);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].status).toBe("PENDING");
+	});
+
+	it("hides a PENDING invitee's profile from the inviter, but resolves ACTIVE members", async () => {
+		const pending = await invite(
+			null,
+			{ organizationId: orgId, input: { userId: inviteeId, role: "MEMBER" } },
+			ctx(ownerId, orgId),
+		);
+		expect(pending.status).toBe("PENDING");
+
+		// The FORBIDDEN gate fires before the userById loader is touched, so a
+		// bare context (no loaders) is enough to prove the inviter is denied.
+		expect(() =>
+			resolveMembershipUser(
+				{ userId: inviteeId, status: "PENDING" },
+				undefined,
+				ctx(ownerId, orgId),
+			),
+		).toThrow(/pending invitee/i);
+
+		// An ACTIVE membership resolves normally; stub the loader the resolver uses.
+		const loaded = { id: inviteeId, type: "MEMBER" };
+		const activeCtx = {
+			...ctx(ownerId, orgId),
+			loaders: {
+				userById: { load: async (id: string) => ({ ...loaded, id }) },
+			},
+		} as unknown as GraphQLContext;
+		await expect(
+			resolveMembershipUser(
+				{ userId: inviteeId, status: "ACTIVE" },
+				undefined,
+				activeCtx,
+			),
+		).resolves.toMatchObject({ id: inviteeId });
 	});
 });

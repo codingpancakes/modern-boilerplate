@@ -6,9 +6,7 @@ const path = require("path");
 // PROJECT_NAME / API_BASE_URL_* may be set in the environment to customize output.
 const projectName = process.env.PROJECT_NAME || "sidedoor";
 const localUrl = process.env.API_BASE_URL_LOCAL || "http://localhost:8787";
-const stagingUrl =
-	process.env.API_BASE_URL_STAGING ||
-	"https://sidedoor-backend-staging.jon-e59.workers.dev";
+const stagingUrl = process.env.API_BASE_URL_STAGING || "";
 const productionUrl = process.env.API_BASE_URL_PRODUCTION || "";
 
 // OpenAPI configuration
@@ -22,7 +20,9 @@ const options = {
 		},
 		servers: [
 			{ url: localUrl, description: "Local development server" },
-			{ url: stagingUrl, description: "Staging environment" },
+			...(stagingUrl
+				? [{ url: stagingUrl, description: "Staging environment" }]
+				: []),
 			...(productionUrl
 				? [{ url: productionUrl, description: "Production environment" }]
 				: []),

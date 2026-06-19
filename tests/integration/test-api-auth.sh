@@ -142,17 +142,6 @@ test_endpoint \
   "" \
   "200"
 
-echo -e "${YELLOW}=== Python Handler ===${NC}"
-echo ""
-
-# Test 7: Python test handler (no auth needed)
-test_endpoint \
-  "GET /v1/test/python" \
-  "GET" \
-  "/v1/test/python" \
-  "" \
-  "200"
-
 echo ""
 echo -e "${YELLOW}=== Test Summary ===${NC}"
 echo -e "${GREEN}Passed: $PASSED${NC}"

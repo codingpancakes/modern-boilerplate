@@ -385,6 +385,12 @@ export const organizationResolvers = {
 			// Create as PENDING, not ACTIVE: the invitee is invisible to the
 			// ACTIVE-filtered member/user queries until they accept, so an invite
 			// cannot expose the invitee's data without their consent.
+			// Upsert rather than blind-insert: decline/remove/leave set the row to
+			// INACTIVE (the row persists, and (userId, organizationId) is unique),
+			// so re-inviting a previously-declined/removed user would otherwise hit
+			// the unique index. The ACTIVE/PENDING pre-check above already rejected
+			// live memberships, so the only possible conflict here is an INACTIVE
+			// row, which correctly flips back to PENDING.
 			const [membership] = await context.db
 				.insert(organizationMembers)
 				.values({
@@ -392,6 +398,17 @@ export const organizationResolvers = {
 					userId: validated.userId,
 					role: validated.role,
 					status: "PENDING",
+				})
+				.onConflictDoUpdate({
+					target: [
+						organizationMembers.userId,
+						organizationMembers.organizationId,
+					],
+					set: {
+						role: validated.role,
+						status: "PENDING",
+						updatedAt: new Date().toISOString(),
+					},
 				})
 				.returning();
 

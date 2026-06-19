@@ -343,10 +343,24 @@ export const userResolvers = {
 
 	OrganizationMembership: {
 		user: (
-			membership: { userId: string },
+			membership: { userId: string; status?: string },
 			_args: unknown,
 			context: GraphQLContext,
-		) => context.loaders.userById.load(membership.userId),
+		) => {
+			// A PENDING invite must not expose the invitee's profile to anyone
+			// but the invitee themselves — reading it before they consent would
+			// leak their PII (see inviteMember consent boundary).
+			if (
+				membership.status === "PENDING" &&
+				membership.userId !== context.userId
+			) {
+				throw new GraphQLError(
+					"Cannot view a pending invitee's profile before they accept",
+					{ extensions: { code: "FORBIDDEN" } },
+				);
+			}
+			return context.loaders.userById.load(membership.userId);
+		},
 
 		organization: (
 			membership: { organizationId: string },
