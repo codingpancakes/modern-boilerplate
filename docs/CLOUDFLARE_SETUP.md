@@ -168,7 +168,8 @@ pnpm docs:serve      # serves docs/api on a local Express server
 `docs:generate` (`scripts/generate-openapi.js`) scans the Hono route JSDoc and
 stamps server URLs into the spec. Optional env overrides: `PROJECT_NAME` (spec
 title) and `API_BASE_URL_LOCAL` / `API_BASE_URL_STAGING` / `API_BASE_URL_PRODUCTION`
-(server URLs). It runs with sensible defaults if none are set.
+(server URLs). Without `PROJECT_NAME`, the spec title falls back to `package.json`
+so cloned boilerplates do not keep the source project's name.
 
 ## 9. New project from this boilerplate
 

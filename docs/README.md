@@ -17,7 +17,7 @@
 
 ## Development
 - [Testing Guide](./guides/TESTING.md) — Unit + integration testing
-- [Handler Templates](../templates/README.md) — Adding endpoints (templates themselves are Lambda-era; copy a sibling route instead)
+- [Handler Templates](../templates/README.md) — Current Hono route templates and endpoint patterns
 
 ## Legacy (pre-atomic AWS stack)
 Superseded by [CLOUDFLARE_SETUP.md](./CLOUDFLARE_SETUP.md); kept for reference and for decommissioning the old AWS account:

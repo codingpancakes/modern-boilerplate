@@ -23,15 +23,15 @@ curl -s $API_URL/v1/health | jq .
 echo ""
 
 # Test 2: CORS Preflight
-# Use HOSTED_ZONE_NAME from environment, loaded by env-helper
-HOSTED_ZONE=${HOSTED_ZONE_NAME}
-if [ -z "$HOSTED_ZONE" ]; then
-  echo "⚠️  HOSTED_ZONE_NAME not set, skipping CORS test"
+# Set CORS_TEST_ORIGIN to an origin allowed by the target Worker.
+CORS_ORIGIN=${CORS_TEST_ORIGIN:-}
+if [ -z "$CORS_ORIGIN" ]; then
+  echo "⚠️  CORS_TEST_ORIGIN not set, skipping CORS test"
 else
-  echo "2️⃣  CORS Preflight (from app.${HOSTED_ZONE})"
-echo "OPTIONS $API_URL/v1/health"
+  echo "2️⃣  CORS Preflight (from ${CORS_ORIGIN})"
+  echo "OPTIONS $API_URL/v1/health"
   curl -s -X OPTIONS $API_URL/v1/health \
-    -H "Origin: https://app.${HOSTED_ZONE}" \
+    -H "Origin: ${CORS_ORIGIN}" \
     -H "Access-Control-Request-Method: GET" \
     -v 2>&1 | grep -E "(< HTTP|< access-control)"
   echo ""

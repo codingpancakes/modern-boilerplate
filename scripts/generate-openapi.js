@@ -2,9 +2,23 @@ const swaggerJsdoc = require("swagger-jsdoc");
 const fs = require("fs");
 const path = require("path");
 
-// Config is read from wrangler.toml (single source of truth), with env overrides.
+function packageNameFallback() {
+	try {
+		const pkg = JSON.parse(
+			fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+		);
+		return typeof pkg.name === "string" && pkg.name.trim()
+			? pkg.name.replace(/^@[^/]+\//, "")
+			: "serverless-backend";
+	} catch {
+		return "serverless-backend";
+	}
+}
+
 // PROJECT_NAME / API_BASE_URL_* may be set in the environment to customize output.
-const projectName = process.env.PROJECT_NAME || "sidedoor";
+// Without PROJECT_NAME, use package.json so cloned boilerplates do not emit a
+// previous project's name in generated docs.
+const projectName = process.env.PROJECT_NAME || packageNameFallback();
 const localUrl = process.env.API_BASE_URL_LOCAL || "http://localhost:8787";
 const stagingUrl = process.env.API_BASE_URL_STAGING || "";
 const productionUrl = process.env.API_BASE_URL_PRODUCTION || "";

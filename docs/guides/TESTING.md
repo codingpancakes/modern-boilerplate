@@ -154,6 +154,13 @@ build the default `https://<project>-<stage>.<subdomain>.workers.dev` — in
 ./tests/integration/test-api.sh production       # uses API_BASE_URL_PRODUCTION / workers.dev default
 ```
 
+Set `CORS_TEST_ORIGIN` to an origin allowed by the target Worker when you want
+`test-api.sh` to exercise the CORS preflight path:
+
+```bash
+CORS_TEST_ORIGIN=https://app.example.com ./tests/integration/test-api.sh staging
+```
+
 > `test-middleware.sh` exercises `/v1/test/api-key` and `/v1/test/webhook`
 > (`src/node/routes/test.ts`) — they require `TEST_API_KEY` / `WEBHOOK_SECRET` in
 > `.dev.vars` and intentionally 404 when `STAGE=production`.
