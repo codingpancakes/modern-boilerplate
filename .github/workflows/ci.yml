@@ -41,7 +41,14 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Dependency audit (advisory — does not block)
+      - name: Dependency audit — runtime deps (BLOCKING)
+        # Fails the build on any high+ vuln in deps that actually ship to the
+        # Worker. This is the meaningful security gate.
+        run: pnpm audit --prod --audit-level=high
+      - name: Dependency audit — full incl. dev tooling (advisory)
+        # vitest/wrangler transitive vulns (vite/ws/undici) don't reach runtime;
+        # surfaced but non-blocking (some can't be overridden without breaking
+        # the dev toolchain). Patched where possible via pnpm-workspace overrides.
         run: pnpm audit --audit-level=high || true
       - run: pnpm lint
       - run: pnpm typecheck
