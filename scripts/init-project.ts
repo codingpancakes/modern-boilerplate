@@ -24,47 +24,53 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-const args = process.argv.slice(2);
-const positional = args.filter((a) => !a.startsWith("--"));
-const hasFlag = (name: string) => args.includes(`--${name}`);
+type Stage = "local" | "staging" | "production";
+type Logger = Pick<Console, "log">;
 
-const [projectName, domain] = positional;
-
-if (!projectName || !domain) {
-	console.error("Usage: pnpm init-project <project-name> <domain> [options]");
-	console.error("Example: pnpm init-project acme-api acme.dev");
-	process.exit(1);
+export interface InitProjectOptions {
+	projectName: string;
+	domain: string;
+	force?: boolean;
+	root?: string;
+	logger?: Logger;
 }
 
-// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
-// charset that is safe for both.
-if (!/^[a-z][a-z0-9-]{2,29}$/.test(projectName)) {
-	console.error(
-		"❌ Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.",
-	);
-	process.exit(1);
-}
-if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
-	console.error("❌ Domain doesn't look valid (expected e.g. acme.dev)");
-	process.exit(1);
+function defaultRoot(): string {
+	return path.join(__dirname, "..");
 }
 
-const force = hasFlag("force");
+function parseArgs(args: string[]) {
+	const positional = args.filter((a) => !a.startsWith("--"));
+	const hasFlag = (name: string) => args.includes(`--${name}`);
+	const [projectName, domain] = positional;
+	return { projectName, domain, force: hasFlag("force") };
+}
 
-const root = path.join(__dirname, "..");
+function validateInputs(projectName: string, domain: string): void {
+	// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
+	// charset that is safe for both.
+	if (!/^[a-z][a-z0-9-]{2,29}$/.test(projectName)) {
+		throw new Error(
+			"❌ Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.",
+		);
+	}
+	if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
+		throw new Error("❌ Domain doesn't look valid (expected e.g. acme.dev)");
+	}
+}
 
-function stageForSection(section: string): "local" | "staging" | "production" {
+function stageForSection(section: string): Stage {
 	if (section.includes("env.staging")) return "staging";
 	if (section.includes("env.production")) return "production";
 	return "local";
 }
 
-function imageCdnUrl(stage: "local" | "staging" | "production"): string {
+function imageCdnUrl(stage: Stage, domain: string): string {
 	if (stage === "production") return `https://images.${domain}`;
 	return `https://images-${stage}.${domain}`;
 }
 
-function corsExactOrigin(stage: "local" | "staging" | "production"): string {
+function corsExactOrigin(stage: Stage, domain: string): string {
 	if (stage === "local") return "http://localhost:3000";
 	if (stage === "staging") return `https://staging.${domain}`;
 	return `https://${domain}`;
@@ -76,7 +82,10 @@ function setTomlString(line: string, value: string): string {
 	return `${match[1]}"${value}"${match[2] ?? ""}`;
 }
 
-function rewriteWranglerToml(input: string): string {
+export function rewriteWranglerToml(
+	input: string,
+	{ projectName, domain }: Pick<InitProjectOptions, "projectName" | "domain">,
+): string {
 	let section = "";
 	const workerName = `${projectName}-backend`;
 
@@ -97,7 +106,7 @@ function rewriteWranglerToml(input: string): string {
 				return setTomlString(line, projectName);
 			}
 			if (/^\s*CORS_EXACT_ORIGINS\s*=/.test(line)) {
-				return setTomlString(line, corsExactOrigin(stage));
+				return setTomlString(line, corsExactOrigin(stage, domain));
 			}
 			if (/^\s*CORS_PARENT_DOMAINS\s*=/.test(line)) {
 				return setTomlString(line, "");
@@ -106,7 +115,7 @@ function rewriteWranglerToml(input: string): string {
 				return setTomlString(line, `${projectName}-images-${stage}`);
 			}
 			if (/^\s*IMAGES_CDN_URL\s*=/.test(line)) {
-				return setTomlString(line, imageCdnUrl(stage));
+				return setTomlString(line, imageCdnUrl(stage, domain));
 			}
 			if (/^\s*bucket_name\s*=/.test(line) && section.includes("r2_buckets")) {
 				return setTomlString(line, `${projectName}-images-${stage}`);
@@ -149,42 +158,54 @@ R2_SECRET_ACCESS_KEY=
 `;
 }
 
-const files: Array<[string, string]> = [
-	[".env.staging", deployedEnv("staging")],
-	[".env.production", deployedEnv("production")],
-];
+export function initProject(options: InitProjectOptions): void {
+	const {
+		projectName,
+		domain,
+		force = false,
+		root = defaultRoot(),
+		logger = console,
+	} = options;
 
-for (const [name, content] of files) {
-	const target = path.join(root, name);
-	if (fs.existsSync(target) && !force) {
-		console.log(
-			`⏭️  ${name} already exists — skipping (use --force to overwrite)`,
-		);
-		continue;
+	validateInputs(projectName, domain);
+
+	const files: Array<[string, string]> = [
+		[".env.staging", deployedEnv("staging")],
+		[".env.production", deployedEnv("production")],
+	];
+
+	for (const [name, content] of files) {
+		const target = path.join(root, name);
+		if (fs.existsSync(target) && !force) {
+			logger.log(
+				`⏭️  ${name} already exists — skipping (use --force to overwrite)`,
+			);
+			continue;
+		}
+		fs.writeFileSync(target, content);
+		logger.log(`✅ Wrote ${name}`);
 	}
-	fs.writeFileSync(target, content);
-	console.log(`✅ Wrote ${name}`);
-}
 
-// Set package.json name so the repo identifies as the new project.
-const pkgPath = path.join(root, "package.json");
-const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-if (pkg.name !== projectName) {
-	pkg.name = projectName;
-	fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-	console.log(`✅ package.json name → "${projectName}"`);
-}
+	// Set package.json name so the repo identifies as the new project.
+	const pkgPath = path.join(root, "package.json");
+	const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+	if (pkg.name !== projectName) {
+		pkg.name = projectName;
+		fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+		logger.log(`✅ package.json name → "${projectName}"`);
+	}
 
-// Rewrite Cloudflare resource names so a fresh project has no source-project
-// residue in wrangler.toml.
-const wranglerPath = path.join(root, "wrangler.toml");
-const rewrittenWrangler = rewriteWranglerToml(
-	fs.readFileSync(wranglerPath, "utf-8"),
-);
-fs.writeFileSync(wranglerPath, rewrittenWrangler);
-console.log("✅ wrangler.toml resource names updated");
+	// Rewrite Cloudflare resource names so a fresh project has no source-project
+	// residue in wrangler.toml.
+	const wranglerPath = path.join(root, "wrangler.toml");
+	const rewrittenWrangler = rewriteWranglerToml(
+		fs.readFileSync(wranglerPath, "utf-8"),
+		{ projectName, domain },
+	);
+	fs.writeFileSync(wranglerPath, rewrittenWrangler);
+	logger.log("✅ wrangler.toml resource names updated");
 
-console.log(`
+	logger.log(`
 🎉 Project "${projectName}" initialized for ${domain}.
 
 Next steps:
@@ -197,3 +218,24 @@ Next steps:
   5. pnpm dev                         # wrangler dev --local
   6. pnpm sync-secrets staging && pnpm deploy:staging
 `);
+}
+
+export function main(args = process.argv.slice(2), root = defaultRoot()): void {
+	const { projectName, domain, force } = parseArgs(args);
+	if (!projectName || !domain) {
+		console.error("Usage: pnpm init-project <project-name> <domain> [options]");
+		console.error("Example: pnpm init-project acme-api acme.dev");
+		process.exit(1);
+	}
+
+	try {
+		initProject({ projectName, domain, force, root });
+	} catch (error) {
+		console.error((error as Error).message);
+		process.exit(1);
+	}
+}
+
+if (path.basename(process.argv[1] ?? "") === "init-project.ts") {
+	main();
+}
