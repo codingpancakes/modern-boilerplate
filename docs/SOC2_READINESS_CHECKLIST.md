@@ -69,6 +69,8 @@ Before a production launch:
 - `pnpm docs:check`
 - `pnpm audit --prod --audit-level=high`
 - `pnpm audit --audit-level=high`
+- `pnpm migrations:check` against the target database
+- `pnpm load:smoke staging`
 - staging deploy from `staging` branch succeeds
 - production deploy from `main` waits for approval, then succeeds after approval
 - `/v1/health/detailed` reports healthy

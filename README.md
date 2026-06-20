@@ -46,6 +46,8 @@ No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.m
 | `pnpm deploy:staging` | Health-gated canary + auto-rollback to staging (`scripts/deploy.ts`) |
 | `pnpm deploy:production` | Health-gated canary + auto-rollback to production (`scripts/deploy.ts`) |
 | `pnpm deploy:staging:simple` | Plain `wrangler deploy --env staging` (no canary) |
+| `pnpm migrations:check` | Fail if the target DB has pending checked-in migrations |
+| `pnpm load:smoke <stage>` | Light deployed load smoke for health/auth/webhook gates |
 | `pnpm build` | TypeScript compile + generate OpenAPI docs |
 
 ## Project Structure
