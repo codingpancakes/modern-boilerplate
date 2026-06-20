@@ -60,6 +60,27 @@ export function validate<T>(schema: z.ZodSchema<T>, data: unknown): T {
 }
 
 /**
+ * Parse a raw JSON request body without applying domain validation.
+ *
+ * Route handlers use this when the transport concern is "is this JSON?",
+ * while a shared service owns the actual domain schema.
+ */
+export function parseJsonBody(body: string | null | undefined): unknown {
+	if (!body) {
+		throw Errors.BadRequest("Request body is required");
+	}
+
+	try {
+		return JSON.parse(body) as unknown;
+	} catch (error) {
+		if (error instanceof SyntaxError) {
+			throw Errors.BadRequest("Invalid JSON in request body");
+		}
+		throw error;
+	}
+}
+
+/**
  * Parse and validate a raw request body string
  * Handles JSON parsing errors and validation errors
  *
@@ -76,19 +97,7 @@ export function parseBody<T>(
 	body: string | null | undefined,
 	schema: z.ZodSchema<T>,
 ): T {
-	if (!body) {
-		throw Errors.BadRequest("Request body is required");
-	}
-
-	try {
-		const parsed: unknown = JSON.parse(body);
-		return validate(schema, parsed);
-	} catch (error) {
-		if (error instanceof SyntaxError) {
-			throw Errors.BadRequest("Invalid JSON in request body");
-		}
-		throw error;
-	}
+	return validate(schema, parseJsonBody(body));
 }
 
 /**

@@ -15,19 +15,19 @@ import { createLogger } from "../lib/logger";
 import {
 	buildImageKey,
 	buildImageUrl,
-	generatePresignedUploadUrl,
 	getMediaConfig,
 	listUserImages,
 	putImageObject,
 	validateContentTypeExtension,
 	validateImageMagicBytes,
 } from "../lib/media";
+import { createPresignedImageUpload } from "../lib/services/media-upload";
 import {
 	mediaSchemas,
 	uploadImageDirectRequest,
-	uploadImageRequest,
 	validate,
 } from "../lib/validation";
+import { parseJsonBody as parseRawJsonBody } from "../lib/validation/helpers";
 
 /**
  * /v1/media/* — media routes (protected; `requireAuth()` is applied by the
@@ -56,7 +56,7 @@ const listImagesLogger = createLogger({ serviceName: "media-list-images" });
  * legacy messages, and schema failures throw `Errors.ValidationError` via the
  * shared `validate()`.
  */
-async function parseJsonBody<T>(
+async function parseValidatedJsonBody<T>(
 	c: Context<AppEnv>,
 	schema: z.ZodSchema<T>,
 ): Promise<T> {
@@ -150,27 +150,18 @@ media.post("/upload-image", async (c) => {
 	// Get internal user ID from verified claims (lookup + JIT provisioning)
 	const userId = await getUserIdFromClaims(c.get("claims"));
 
-	const input = await parseJsonBody(c, uploadImageRequest);
-
-	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
-	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
-		throw Errors.BadRequest(
-			`Content type ${input.contentType} does not match file extension .${fileExtension}`,
-		);
-	}
+	const input = parseRawJsonBody(await c.req.text());
 
 	uploadImageLogger.info("Generating presigned URL for image upload", {
 		userId,
-		contentType: input.contentType,
 	});
 
-	const result = await generatePresignedUploadUrl(
+	const result = await createPresignedImageUpload({
 		userId,
-		input.filename,
-		input.contentType,
-		input.fileSize,
-		input.category,
-	);
+		input,
+		source: "rest",
+		auditContext: requestAuditContext(c),
+	});
 
 	uploadImageLogger.info("Presigned URL generated successfully", {
 		userId,
@@ -253,7 +244,7 @@ media.post("/upload-image-direct", async (c) => {
 
 	const config = getMediaConfig();
 
-	const input = await parseJsonBody(c, uploadImageDirectRequest);
+	const input = await parseValidatedJsonBody(c, uploadImageDirectRequest);
 
 	const fileExtension = input.filename.split(".").pop()?.toLowerCase() || "";
 	if (!validateContentTypeExtension(input.contentType, fileExtension)) {
