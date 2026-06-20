@@ -4,14 +4,13 @@ import { organizationMembers, profiles, users } from "../../../db/schema/index";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
-	AUDIT_STATUS,
-	auditRequestContext,
 	auditResolver,
-	logAudit,
 } from "../../../lib/audit";
 import { sanitizeObject } from "../../../lib/sanitize";
+import { updateMyAccount as updateAccount } from "../../../lib/services/user-account";
 import { userSchemas } from "../../../lib/validation";
 import type { GraphQLContext } from "../context";
+import { toGraphQLError } from "../errors";
 
 export const userResolvers = {
 	Query: {
@@ -187,120 +186,17 @@ export const userResolvers = {
 			},
 			context: GraphQLContext,
 		) => {
-			if (!args.user && !args.profile) {
-				throw new GraphQLError(
-					"At least one of user or profile input must be provided",
-					{ extensions: { code: "BAD_USER_INPUT" } },
-				);
-			}
-
-			const {
-				beforeUser,
-				beforeProfile,
-				updatedUser,
-				updatedProfile,
-				validatedUserKeys,
-				validatedProfileKeys,
-			} = await context.db.transaction(async (tx) => {
-				const [bu, bp] = await Promise.all([
-					tx
-						.select()
-						.from(users)
-						.where(eq(users.id, context.userId))
-						.limit(1)
-						.then((r) => r[0]),
-					tx
-						.select()
-						.from(profiles)
-						.where(eq(profiles.userId, context.userId))
-						.limit(1)
-						.then((r) => r[0]),
-				]);
-
-				let uu = null;
-				const userKeys: string[] = [];
-				if (args.user && Object.keys(args.user).length > 0) {
-					const validated = userSchemas.update.parse(args.user);
-					userKeys.push(...Object.keys(validated));
-					const sanitized = sanitizeObject(validated);
-					[uu] = await tx
-						.update(users)
-						.set({
-							...sanitized,
-							updatedAt: new Date().toISOString(),
-						})
-						.where(eq(users.id, context.userId))
-						.returning();
-				}
-
-				let up = null;
-				const profileKeys: string[] = [];
-				if (args.profile && Object.keys(args.profile).length > 0) {
-					const validatedProfile = userSchemas.updateProfileInput.parse(
-						args.profile,
-					);
-					profileKeys.push(...Object.keys(validatedProfile));
-					const sanitized = sanitizeObject(validatedProfile);
-					[up] = await tx
-						.update(profiles)
-						.set({
-							...sanitized,
-							updatedAt: new Date().toISOString(),
-						})
-						.where(eq(profiles.userId, context.userId))
-						.returning();
-				}
-
-				return {
-					beforeUser: bu,
-					beforeProfile: bp,
-					updatedUser: uu ?? bu,
-					updatedProfile: up ?? bp,
-					validatedUserKeys: userKeys,
-					validatedProfileKeys: profileKeys,
-				};
-			});
-
-			if (!updatedUser) {
-				throw new GraphQLError("User not found", {
-					extensions: { code: "NOT_FOUND" },
-				});
-			}
-
-			const updatedUserFields = validatedUserKeys;
-			const updatedProfileFields = validatedProfileKeys;
-			const resourceType =
-				updatedUserFields.length > 0 && updatedProfileFields.length > 0
-					? AUDIT_RESOURCE_TYPES.USER
-					: updatedProfileFields.length > 0
-						? AUDIT_RESOURCE_TYPES.PROFILE
-						: AUDIT_RESOURCE_TYPES.USER;
-
-			void logAudit({
-				userId: context.userId,
-				organizationId: context.organizationId,
-				...auditRequestContext(context),
-				action: AUDIT_ACTIONS.UPDATE,
-				resourceType,
-				resourceId: context.userId,
-				changes: {
-					before: { user: beforeUser, profile: beforeProfile },
-					after: { user: updatedUser, profile: updatedProfile },
-				},
-				status: AUDIT_STATUS.SUCCESS,
-				metadata: {
+			try {
+				return await updateAccount({
+					db: context.db,
+					userId: context.userId,
+					input: args,
 					source: "graphql",
-					updatedFields: {
-						user: updatedUserFields,
-						profile: updatedProfileFields,
-					},
-				},
-			});
-
-			return {
-				user: updatedUser,
-				profile: updatedProfile,
-			};
+					auditContext: context,
+				});
+			} catch (error) {
+				throw toGraphQLError(error);
+			}
 		},
 	},
 

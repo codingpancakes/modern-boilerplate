@@ -20,6 +20,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { GRAPHQL_CLIENT_ERROR_CODES } from "./graphql-error-codes";
 import { createLogger } from "./logger";
 
 const logger = createLogger({ serviceName: "sentry" });
@@ -29,14 +30,6 @@ const SENTRY_CLIENT = "sidedoor-fetch-shim/1.0.0";
 interface ErrorWithStatusCode extends Error {
 	statusCode?: number;
 }
-
-const GRAPHQL_CLIENT_CODES = new Set([
-	"BAD_USER_INPUT",
-	"GRAPHQL_VALIDATION_FAILED",
-	"GRAPHQL_PARSE_FAILED",
-	"NOT_FOUND",
-	"CONFLICT",
-]);
 
 interface SentryEndpoint {
 	envelopeUrl: string;
@@ -75,7 +68,7 @@ function environment(): string {
 
 /**
  * Port of the SDK `beforeSend` filter: drop routine client errors so Sentry
- * only alerts on real failures (keep 403 + 429 and auth-shaped GraphQL codes).
+ * only alerts on real failures (keep REST 403 + 429).
  */
 function isRoutineClientError(error: Error): boolean {
 	const statusCode = (error as ErrorWithStatusCode).statusCode;
@@ -91,7 +84,7 @@ function isRoutineClientError(error: Error): boolean {
 	}
 	if ("extensions" in error) {
 		const code = (error as { extensions?: { code?: string } }).extensions?.code;
-		if (code && GRAPHQL_CLIENT_CODES.has(code)) {
+		if (code && GRAPHQL_CLIENT_ERROR_CODES.has(code)) {
 			return true;
 		}
 	}

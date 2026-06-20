@@ -196,16 +196,17 @@ describe("User Resolvers", () => {
 
 			const context = createMockContext();
 
-			// Mock before-state selects (audit trail)
+			// Transaction reads before-state for user + profile, then updates both.
 			const selectChain = {
-				from: vi.fn().mockReturnThis(),
-				where: vi.fn().mockReturnThis(),
-				limit: vi.fn().mockReturnThis(),
-				then: vi.fn(),
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi
+							.fn()
+							.mockResolvedValueOnce([existingUser])
+							.mockResolvedValueOnce([existingProfile]),
+					}),
+				}),
 			};
-			selectChain.then
-				.mockResolvedValueOnce(existingUser) // beforeUser
-				.mockResolvedValueOnce(existingProfile); // beforeProfile
 			(context.db.select as any).mockReturnValue(selectChain);
 
 			// Mock user update
