@@ -2,14 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [atomic, main]
+    branches: [staging, main]
   pull_request:
+    branches: [staging, main]
   workflow_dispatch:
     inputs:
-      deploy_production:
-        description: "Deploy to production after the gate passes"
-        type: boolean
-        default: false
+      target:
+        description: "Environment to deploy after the gate passes"
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -63,8 +67,9 @@ jobs:
   deploy-staging:
     name: Deploy staging (gradual + auto-rollback)
     needs: gate
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/atomic' || github.ref == 'refs/heads/main')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/staging') || (github.event_name == 'workflow_dispatch' && inputs.target == 'staging')
     runs-on: ubuntu-latest
+    environment: staging
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -91,12 +96,14 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WORKERS_SUBDOMAIN: ${{ vars.WORKERS_SUBDOMAIN }}
+          SMOKE_CORS_ORIGIN: ${{ vars.SMOKE_CORS_ORIGIN }}
 
   deploy-production:
-    name: Deploy production (manual)
+    name: Deploy production (gradual + auto-rollback)
     needs: gate
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_production
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.target == 'production')
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -120,3 +127,4 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WORKERS_SUBDOMAIN: ${{ vars.WORKERS_SUBDOMAIN }}
+          SMOKE_CORS_ORIGIN: ${{ vars.SMOKE_CORS_ORIGIN }}

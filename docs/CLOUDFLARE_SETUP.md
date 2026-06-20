@@ -82,6 +82,20 @@ port 8787): see `tests/integration/*.sh` and [guides/TESTING.md](./guides/TESTIN
 npx wrangler login            # once per machine
 ```
 
+### Branch model
+
+GitHub Actions maps branches to environments:
+
+| Branch / trigger | Action |
+|---|---|
+| Pull request into `staging` or `main` | CI gate only |
+| Push/merge to `staging` | CI gate, then `pnpm deploy:staging` |
+| Push/merge to `main` | CI gate, then `pnpm deploy:production` |
+| Manual workflow dispatch | Choose `staging` or `production` |
+
+Configure GitHub Environments named `staging` and `production`. Production should
+require manual approval in GitHub settings before deployment proceeds.
+
 ### 7a. Push secrets
 
 Create `.env.staging` / `.env.production` (gitignored) with values for the secret
