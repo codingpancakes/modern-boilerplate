@@ -19,6 +19,8 @@
  * Env overrides:
  *   HEALTH_URL        full health-check URL (default: derived per stage below)
  *   SMOKE_CORS_ORIGIN allowed origin to verify CORS preflight (optional)
+ *   SMOKE_CORS_ORIGIN_STAGING / _PRODUCTION stage-specific CORS smoke origins
+ *   CHECK_PENDING_MIGRATIONS run a blocking DB migration drift preflight
  *   CANARY_PERCENT    canary traffic share, 1-99 (default 10)
  *   SOAK_SECONDS      seconds to hold the canary before promoting (default 20)
  *   HEALTH_ATTEMPTS   health probes per gate (default 5)
@@ -64,6 +66,7 @@ const canaryPercent = Number(process.env.CANARY_PERCENT || 10);
 const soakSeconds = Number(process.env.SOAK_SECONDS || 20);
 const healthAttempts = Number(process.env.HEALTH_ATTEMPTS || 5);
 const smokeCorsOrigin =
+	process.env[`SMOKE_CORS_ORIGIN_${stage.toUpperCase()}`] ||
 	process.env.SMOKE_CORS_ORIGIN || process.env.CORS_TEST_ORIGIN || "";
 
 function wrangler(args: string[], capture = true): string {
@@ -104,6 +107,19 @@ function uploadNewVersion(): string {
 
 function deploySplit(specs: string[]): void {
 	wrangler(["versions", "deploy", ...specs, "--yes"], false);
+}
+
+function checkPendingMigrations(): void {
+	if (process.env.CHECK_PENDING_MIGRATIONS !== "true") {
+		console.log("   migration preflight skipped (set CHECK_PENDING_MIGRATIONS=true)");
+		return;
+	}
+
+	console.log("🧱 Checking database migration state...");
+	execFileSync("pnpm", ["migrations:check"], {
+		encoding: "utf-8",
+		stdio: "inherit",
+	});
 }
 
 /**
@@ -230,6 +246,7 @@ async function smokeChecks(): Promise<void> {
 
 async function main() {
 	console.log(`🚀 Deploying to ${stage} (health: ${healthUrl})`);
+	checkPendingMigrations();
 
 	const oldVersion = activeVersionId();
 	console.log(`   current version: ${oldVersion ?? "(none — first deploy)"}`);

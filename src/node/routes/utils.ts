@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { getDb } from "../lib/db";
 import { errorMessage } from "../lib/error-utils";
@@ -11,7 +12,7 @@ import { createLogger } from "../lib/logger";
  * `routes/index.ts` — this module owns the health endpoints only.
  *
  *   GET /health           — liveness + version/stage info
- *   GET /health/detailed  — DB health + external-service config checks
+ *   GET /health/detailed  — DB health + configured external-service checks
  *
  * OPTIONS preflight is answered globally by the CORS middleware in
  * `lib/hono/middleware.ts` (documented below as /v1/utils/options for
@@ -75,7 +76,8 @@ async function checkWorkOSConfig(): Promise<HealthCheck> {
 	};
 }
 
-async function checkMediaStorageConfig(): Promise<HealthCheck> {
+async function checkMediaStorage(c: Context<AppEnv>): Promise<HealthCheck> {
+	const start = Date.now();
 	const bucket = process.env.IMAGES_BUCKET;
 	const cdnUrl = process.env.IMAGES_CDN_URL;
 
@@ -87,13 +89,34 @@ async function checkMediaStorageConfig(): Promise<HealthCheck> {
 		};
 	}
 
-	// R2 is configured - we don't make actual API calls in health check
-	// to avoid costs, just verify configuration exists
-	return {
-		status: "ok",
-		configured: true,
-		message: "Media storage configuration present",
-	};
+	if (!c.env?.IMAGES) {
+		return {
+			status: "error",
+			responseTime: Date.now() - start,
+			configured: true,
+			message: "R2 binding unavailable",
+		};
+	}
+
+	try {
+		await c.env.IMAGES.list({ limit: 1 });
+		return {
+			status: "ok",
+			responseTime: Date.now() - start,
+			configured: true,
+			message: "Media storage reachable",
+		};
+	} catch (error) {
+		logger.error("Media storage health check failed", {
+			error: errorMessage(error),
+		});
+		return {
+			status: "error",
+			responseTime: Date.now() - start,
+			configured: true,
+			message: "Media storage check failed",
+		};
+	}
 }
 
 /**
@@ -225,7 +248,7 @@ utils.get("/health/detailed", async (c) => {
 	const [database, workos, storage] = await Promise.all([
 		checkDatabase(),
 		checkWorkOSConfig(),
-		checkMediaStorageConfig(),
+		checkMediaStorage(c),
 	]);
 
 	// Determine overall status

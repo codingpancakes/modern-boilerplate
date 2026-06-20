@@ -50,24 +50,41 @@ function getWebhookSecret(): string {
 }
 
 // Reject webhook payloads older than 5 minutes to prevent replay attacks
-const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
+export const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
-function verifySignature(
+function parseWorkosSignatureHeader(
+	signatureHeader: string,
+): { timestamp: string; signature: string } | null {
+	let timestamp = "";
+	let signature = "";
+
+	for (const part of signatureHeader.split(",")) {
+		const [rawKey, ...rawValue] = part.trim().split("=");
+		const key = rawKey?.trim();
+		const value = rawValue.join("=").trim();
+		if (!key || !value) continue;
+		if (key === "t") timestamp = value;
+		if (key === "v1") signature = value;
+	}
+
+	if (!timestamp || !signature) return null;
+	if (!/^[a-f0-9]{64}$/i.test(signature)) return null;
+	return { timestamp, signature };
+}
+
+export function verifyWorkosSignature(
 	payload: string,
 	signatureHeader: string,
 	secret: string,
 ): boolean {
 	// WorkOS signature format: "t=1766861788175, v1=7ade2a063dc936d978bcbc8732ddc7d34f670339953d90c5fce0357841aa763e"
-	const parts = signatureHeader.split(", ");
-	const timestamp = parts[0]?.split("=")[1];
-	const signature = parts[1]?.split("=")[1];
-
-	if (!timestamp || !signature) {
+	const parsed = parseWorkosSignatureHeader(signatureHeader);
+	if (!parsed) {
 		logger.error("Invalid signature format", { signatureHeader });
 		return false;
 	}
 
-	const timestampMs = Number(timestamp);
+	const timestampMs = Number(parsed.timestamp);
 	const now = Date.now();
 	if (
 		Number.isNaN(timestampMs) ||
@@ -83,13 +100,13 @@ function verifySignature(
 	}
 
 	// WorkOS signs: timestamp.payload
-	const signedPayload = `${timestamp}.${payload}`;
+	const signedPayload = `${parsed.timestamp}.${payload}`;
 	const expectedSignature = createHmac("sha256", secret)
 		.update(signedPayload)
 		.digest("hex");
 
 	return constantTimeEqual(
-		Buffer.from(signature, "hex"),
+		Buffer.from(parsed.signature, "hex"),
 		Buffer.from(expectedSignature, "hex"),
 	);
 }
@@ -182,7 +199,7 @@ webhooks.post("/workos", async (c) => {
 	// Verify signature against the raw body — this stays on the ingest path and
 	// must never move to the queue consumer (the raw bytes only exist here).
 	const secret = getWebhookSecret();
-	if (!verifySignature(payload, signature, secret)) {
+	if (!verifyWorkosSignature(payload, signature, secret)) {
 		logger.error("Invalid webhook signature");
 		throw Errors.Unauthorized();
 	}
