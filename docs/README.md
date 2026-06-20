@@ -2,7 +2,7 @@
 
 ## Direction
 - [North Star](./direction/NORTH_STAR.md) — **where this backend is going:** Cloudflare Workers + Hono + Neon, one-person maintainable, optimized for price and performance
-- [Migration Plan](./direction/MIGRATION_PLAN.md) — the AWS → Cloudflare migration: what's done, what changed from the plan, what remains (operational shell, AWS decommission)
+- [Migration Plan](./direction/MIGRATION_PLAN.md) — the AWS to Cloudflare migration record and remaining account-level cleanup
 - [Audit (June 2026)](./direction/AUDIT_2026-06.md) — verified audit of the pre-migration AWS stack: 8.5/10, findings, and false positives dismissed (historical)
 
 ## Setup & Operations
@@ -20,10 +20,10 @@
 - [Testing Guide](./guides/TESTING.md) — Unit + integration testing
 - [Handler Templates](../templates/README.md) — Current Hono route templates and endpoint patterns
 
-## Legacy (pre-atomic AWS stack)
+## Legacy AWS Stack
 Superseded by [CLOUDFLARE_SETUP.md](./CLOUDFLARE_SETUP.md); kept for reference and for decommissioning the old AWS account:
 - [Boilerplate Setup](./legacy-aws/BOILERPLATE_SETUP.md) — AWS/CDK first-deploy guide
-- [CDK Teardown](./legacy-aws/CDK_TEARDOWN.md) — how to destroy the AWS stacks (run from a pre-atomic checkout)
+- [CDK Teardown](./legacy-aws/CDK_TEARDOWN.md) — how to destroy the AWS stacks from legacy history
 - [Lambda & DLQ](./legacy-aws/LAMBDA_CONCURRENCY_DLQ.md) — Lambda concurrency settings, dead letter queues
 
 ## For AI Agents
