@@ -95,9 +95,13 @@ const ctx = {
 // off process.env are set in beforeAll, not here.
 const env = {} as Parameters<typeof app.fetch>[1];
 
-function fetchApp(path: string, init?: RequestInit): Promise<Response> {
+function fetchApp(
+	path: string,
+	init?: RequestInit,
+	bindings: Parameters<typeof app.fetch>[1] = env,
+): Promise<Response> {
 	return Promise.resolve(
-		app.fetch(new Request(`http://localhost${path}`, init), env, ctx),
+		app.fetch(new Request(`http://localhost${path}`, init), bindings, ctx),
 	);
 }
 
@@ -149,6 +153,9 @@ afterEach(() => {
 		iss: "https://api.workos.com/",
 		email: "ada@example.com",
 	});
+	for (const key of ["IMAGES_BUCKET", "IMAGES_CDN_URL"]) {
+		delete process.env[key];
+	}
 });
 
 /** Seed a user + auth identity so authed routes resolve SEEDED_SUBJECT. */
@@ -202,6 +209,27 @@ describe("HTTP routes — public / unauthenticated", () => {
 			"timestamp",
 			"version",
 		]);
+	});
+
+	it("GET /v1/health/detailed degrades when configured R2 is unreachable", async () => {
+		process.env.IMAGES_BUCKET = "images-test";
+		process.env.IMAGES_CDN_URL = "https://cdn.example.test";
+
+		const res = await fetchApp(
+			"/v1/health/detailed",
+			undefined,
+			{
+				IMAGES: {
+					list: vi.fn().mockRejectedValue(new Error("r2 unavailable")),
+				},
+			} as unknown as Parameters<typeof app.fetch>[1],
+		);
+		expect(res.status).toBe(200);
+
+		const body = await res.json();
+		expect(body.success).toBe(true);
+		expect(body.data.status).toBe("degraded");
+		expect(body.data).not.toHaveProperty("checks");
 	});
 
 	it("unknown path → 404 with the formatError wire shape", async () => {

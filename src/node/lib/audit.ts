@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { lt } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -442,16 +442,14 @@ export function auditResolver<
 /**
  * Delete audit logs older than the retention window. Intended to be invoked by
  * a scheduled job. Returns the number of rows pruned. The DB-level guard trigger
- * is the real enforcement boundary; this computes an equivalent cutoff in JS.
+ * is the real enforcement boundary; keep the cutoff server-side so it matches
+ * the trigger's `now() - interval '7 years'` boundary.
  */
 export async function cleanupExpiredAuditLogs(): Promise<number> {
-	const cutoff = new Date();
-	cutoff.setUTCFullYear(cutoff.getUTCFullYear() - AUDIT_RETENTION_YEARS);
-
 	const db = await getDb();
 	const result = await db
 		.delete(auditLogs)
-		.where(lt(auditLogs.timestamp, cutoff.toISOString()));
+		.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`);
 
 	return result.rowCount ?? 0;
 }

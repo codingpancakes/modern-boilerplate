@@ -161,6 +161,19 @@ Set `CORS_TEST_ORIGIN` to an origin allowed by the target Worker when you want
 CORS_TEST_ORIGIN=https://app.example.com ./tests/integration/test-api.sh staging
 ```
 
+For a low-cost deployed load smoke, use the built-in rate-limited TypeScript
+runner:
+
+```bash
+pnpm load:smoke staging
+LOAD_RPS=25 LOAD_DURATION_SECONDS=60 pnpm load:smoke production
+```
+
+It exercises `/v1/health`, `/v1/health/detailed`, missing-bearer REST auth,
+missing-bearer GraphQL, and missing-signature WorkOS webhook rejection. It fails
+when the error rate exceeds `LOAD_MAX_ERROR_RATE` (default 1%) or p95 exceeds
+`LOAD_MAX_P95_MS` (default 3000ms).
+
 > `test-middleware.sh` exercises `/v1/test/api-key` and `/v1/test/webhook`
 > (`src/node/routes/test.ts`) — they require `TEST_API_KEY` / `WEBHOOK_SECRET` in
 > `.dev.vars` and intentionally 404 when `STAGE=production`.
