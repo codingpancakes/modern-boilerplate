@@ -5,9 +5,9 @@ overrides:
   "fast-xml-parser@>=5.0.0 <5.3.5": ">=5.3.5"
   "shell-quote@<1.8.4": ">=1.8.4"
   # Dev/transitive (vitest, wrangler→miniflare) — not shipped to the Worker.
-  # Pin what resolves cleanly; CI blocks on the runtime audit and keeps the full
-  # dev-tool audit advisory.
+  # Pin patched versions so both runtime and full dev-tool audits stay clean.
   "vite@>=7.0.0 <7.3.5": ">=7.3.5"
+  "esbuild@<0.28.1": "0.28.1"
   "ws@>=8.0.0 <8.21.0": ">=8.21.0"
   "undici@>=7.23.0 <7.28.0": ">=7.28.0"
 
