@@ -166,10 +166,13 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
   all-at-once `wrangler deploy` escape hatch. Run `pnpm migrate` against the stage's database
   as a separate step — invariant 12 (expand/contract) exists because code and schema are
   never updated atomically.
-- **CI:** `.github/workflows/ci.yml` runs the gate (lint, typecheck, unit, integration vs a
-  Postgres service) on every push/PR, and on push to `atomic`/`main` runs `deploy:staging`
-  (needs repo secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`). Production deploy is
-  a manual `workflow_dispatch`.
+- **CI/CD:** `.github/workflows/ci.yml` runs the gate (runtime dependency audit, lint,
+  typecheck, OpenAPI drift check, unit tests, integration tests vs a Postgres service) on
+  pull requests into `staging` or `main`. A merge/push to `staging` deploys staging.
+  A merge/push to `main` starts production deployment and waits on the GitHub
+  `production` environment approval. Manual `workflow_dispatch` can target either
+  environment. Repo secrets/vars needed by deploy jobs: `CLOUDFLARE_API_TOKEN`,
+  `CLOUDFLARE_ACCOUNT_ID`, `WORKERS_SUBDOMAIN`, and optional `SMOKE_CORS_ORIGIN`.
 - **Manual rollback:** `npx wrangler rollback --env <stage>` (the deploy script also rolls
   back automatically on a failed health gate).
 - **Queue consumers:** gradual deploys (`wrangler versions`) do NOT register Queue
