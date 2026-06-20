@@ -31,4 +31,6 @@ routes.route("/v1/webhooks", webhooks);
 // Dev-only diagnostics (the sub-app 404s every request when STAGE=production)
 routes.route("/v1/test", test);
 
+// Keep utils last: it owns root-level /v1 health paths, while domain prefixes
+// above must win when a request path starts with /v1/users, /v1/media, etc.
 routes.route("/v1", utils);
