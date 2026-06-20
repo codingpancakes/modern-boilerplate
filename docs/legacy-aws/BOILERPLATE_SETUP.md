@@ -1,4 +1,4 @@
-> **LEGACY** — described the pre-atomic AWS stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
+> **LEGACY** — described the retired AWS/CDK stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
 
 # Deploying a New Project from This Boilerplate
 
