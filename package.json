@@ -6,6 +6,7 @@
 		"build": "tsc && pnpm run docs:generate",
 		"watch": "npx tsc -w",
 		"migrate": "tsx scripts/migrate.ts",
+		"migrations:check": "tsx scripts/check-migrations.ts",
 		"sync-secrets": "tsx scripts/sync-secrets.ts",
 		"init-project": "tsx scripts/init-project.ts",
 		"db:drop": "tsx scripts/_nuke-schema.ts",
@@ -14,6 +15,9 @@
 		"deploy:production": "tsx scripts/deploy.ts production",
 		"deploy:staging:simple": "wrangler deploy --env staging",
 		"deploy:production:simple": "wrangler deploy --env production",
+		"load:smoke": "tsx scripts/load-smoke.ts",
+		"load:smoke:staging": "tsx scripts/load-smoke.ts staging",
+		"load:smoke:production": "tsx scripts/load-smoke.ts production",
 		"db:generate": "dotenv -e .dev.vars -- drizzle-kit generate",
 		"db:introspect": "dotenv -e .dev.vars -- drizzle-kit introspect",
 		"dev": "wrangler dev --local",
@@ -55,7 +59,7 @@
 		"typescript": "~5.3.3",
 		"vite": "7.3.5",
 		"vitest": "^4.1.8",
-		"wrangler": "^4.100.0"
+		"wrangler": "^4.103.0"
 	},
 	"dependencies": {
 		"@neondatabase/serverless": "^0.10.4",

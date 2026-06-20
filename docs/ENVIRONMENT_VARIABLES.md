@@ -114,7 +114,9 @@ not secrets. In CI they are GitHub repo variables/secrets; locally you `export` 
 |---|---|
 | `WORKERS_SUBDOMAIN` | Your `*.workers.dev` subdomain. The deploy script derives the health-check URL as `https://<worker-name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`. In CI it's a GitHub repo variable (`vars.WORKERS_SUBDOMAIN`) |
 | `HEALTH_URL` | Explicit health-check URL override (use for custom domains); takes precedence over the `WORKERS_SUBDOMAIN`-derived URL |
-| `SMOKE_CORS_ORIGIN` | Optional origin to verify during the deploy smoke-test CORS preflight. If unset, the CORS smoke check is skipped |
+| `SMOKE_CORS_ORIGIN_STAGING` / `SMOKE_CORS_ORIGIN_PRODUCTION` | Stage-specific origins to verify during the deploy smoke-test CORS preflight. Use an origin present in that stage's `CORS_EXACT_ORIGINS` / parent-domain / pattern config |
+| `SMOKE_CORS_ORIGIN` | Generic CORS smoke origin fallback when the stage-specific variable is unset |
+| `CHECK_PENDING_MIGRATIONS` | Set to `true` to run `pnpm migrations:check` as a blocking deploy preflight. Requires `DATABASE_URL` in the deploy environment |
 | `CANARY_PERCENT` | Canary traffic share before promotion (default 10) |
 | `SOAK_SECONDS` | Canary soak duration before probing health (default 20) |
 | `HEALTH_ATTEMPTS` | Health-probe retry count |

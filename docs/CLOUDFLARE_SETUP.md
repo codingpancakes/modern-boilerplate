@@ -71,6 +71,7 @@ pnpm dev            # wrangler dev --local → http://localhost:8787
 pnpm check                    # lint + typecheck + unit tests (no DB needed)
 pnpm test                     # unit tests, watch mode
 pnpm test:integration:local   # starts docker postgres-test, runs real-DB transaction tests
+pnpm load:smoke staging       # light deployed-environment load smoke
 ```
 
 Shell-based API tests run against a live server (local `pnpm dev` by default,
@@ -131,8 +132,15 @@ deploy:
 6. on **any** health or smoke failure, redeploys the recorded version at 100% and exits 1.
 
 First deploy (no prior version) skips the canary and goes straight to 100%. Tunable
-via `HEALTH_URL`, `SMOKE_CORS_ORIGIN`, `CANARY_PERCENT`, `SOAK_SECONDS`,
-`HEALTH_ATTEMPTS`.
+via `HEALTH_URL`, `SMOKE_CORS_ORIGIN_STAGING` / `SMOKE_CORS_ORIGIN_PRODUCTION`
+(`SMOKE_CORS_ORIGIN` fallback), `CHECK_PENDING_MIGRATIONS`, `CANARY_PERCENT`,
+`SOAK_SECONDS`, `HEALTH_ATTEMPTS`.
+
+`CHECK_PENDING_MIGRATIONS=true` runs `pnpm migrations:check` before any Worker
+version is uploaded. It intentionally fails deploys when the target DB has pending
+migrations instead of auto-running migrations inside deploy; schema changes remain a
+manual expand/contract step so Worker rollback stays meaningful. This preflight needs
+`DATABASE_URL` available in the GitHub environment or local shell.
 
 The health-check URL is derived from the Worker `name` + `WORKERS_SUBDOMAIN` (your
 `*.workers.dev` subdomain) as `https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`,
