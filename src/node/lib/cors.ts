@@ -2,35 +2,41 @@
  * Dynamic CORS handler for multi-tenant architecture
  */
 
-// Environment-based configuration
-const EXACT_ORIGINS = new Set(
-	(process.env.CORS_EXACT_ORIGINS || "")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean)
-		.filter((s) => s.length > 0),
-);
-
-const PARENT_DOMAINS = new Set(
-	[
-		process.env.CORS_PARENT_DOMAINS || "",
-		// CORS_DOMAIN_PATTERNS uses wildcard format (*.example.com) -- strip leading *. for subdomain matching
-		...(process.env.CORS_DOMAIN_PATTERNS || "")
+function exactOrigins(): Set<string> {
+	return new Set(
+		(process.env.CORS_EXACT_ORIGINS || "")
 			.split(",")
-			.map((s) => s.trim().replace(/^\*\./, "")),
-	]
-		.join(",")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean)
-		.filter((s) => s.length > 0)
-		// Reject bare TLDs (e.g. "com", "io") — must contain at least one dot
-		.filter((s) => s.includes(".")),
-);
+			.map((s) => s.trim().toLowerCase())
+			.filter(Boolean)
+			.filter((s) => s.length > 0),
+	);
+}
 
-// Only allow dev origins when explicitly running in development (not staging)
-const DEV =
-	process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging";
+function parentDomains(): Set<string> {
+	return new Set(
+		[
+			process.env.CORS_PARENT_DOMAINS || "",
+			// CORS_DOMAIN_PATTERNS uses wildcard format (*.example.com) -- strip leading *. for subdomain matching
+			...(process.env.CORS_DOMAIN_PATTERNS || "")
+				.split(",")
+				.map((s) => s.trim().replace(/^\*\./, "")),
+		]
+			.join(",")
+			.split(",")
+			.map((s) => s.trim().toLowerCase())
+			.filter(Boolean)
+			.filter((s) => s.length > 0)
+			// Reject bare TLDs (e.g. "com", "io") — must contain at least one dot
+			.filter((s) => s.includes(".")),
+	);
+}
+
+function isDevLikeStage(): boolean {
+	return (
+		process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging"
+	);
+}
+
 const DEV_ORIGINS = new Set([
 	"http://localhost:3000",
 	"http://127.0.0.1:3000",
@@ -62,19 +68,20 @@ export function isAllowedOrigin(origin?: string): boolean {
 
 	// Normalize to lowercase
 	const normalized = `${url.protocol}//${url.host}`.toLowerCase();
+	const dev = isDevLikeStage();
 
 	// Scheme policy: require HTTPS in prod; allow HTTP only for known dev origins
 	if (url.protocol !== "https:") {
-		if (!DEV || !DEV_ORIGINS.has(normalized)) return false;
+		if (!dev || !DEV_ORIGINS.has(normalized)) return false;
 	}
 
 	// Check exact origins
-	if (EXACT_ORIGINS.has(normalized)) return true;
-	if (DEV && DEV_ORIGINS.has(normalized)) return true;
+	if (exactOrigins().has(normalized)) return true;
+	if (dev && DEV_ORIGINS.has(normalized)) return true;
 
 	// Check parent domains (allow subdomains)
 	const hostname = url.hostname.toLowerCase();
-	for (const parentDomain of PARENT_DOMAINS) {
+	for (const parentDomain of parentDomains()) {
 		if (hostname === parentDomain || hostname.endsWith(`.${parentDomain}`)) {
 			return true;
 		}
@@ -130,7 +137,7 @@ export function getExternalCorsHeaders(
 	]);
 
 	const isAllowedExternalOrigin =
-		(DEV && /^http:\/\/localhost:\d+$/.test(origin)) ||
+		(isDevLikeStage() && /^http:\/\/localhost:\d+$/.test(origin)) ||
 		ALLOWED_EXTERNAL_ORIGINS.has(origin);
 
 	if (isAllowedExternalOrigin) {
