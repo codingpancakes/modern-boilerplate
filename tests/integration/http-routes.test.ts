@@ -78,8 +78,8 @@ let pool: Pool;
 const SEEDED_SUBJECT = "user_workos_http_routes";
 
 // A built-in dev origin from cors.ts DEV_ORIGINS. Allowed whenever NODE_ENV is
-// not production/staging (vitest runs as "test"), so the CORS assertions don't
-// depend on env vars that cors.ts froze at module-load time.
+// not production/staging (vitest runs as "test"), so the CORS assertions stay
+// independent from project-specific CORS env vars.
 const ALLOWED_ORIGIN = "http://localhost:3000";
 
 // A no-op ExecutionContext — the app's middleware never touches waitUntil in
@@ -250,8 +250,7 @@ describe("HTTP routes — public / unauthenticated", () => {
 			method: "OPTIONS",
 			headers: {
 				// A built-in dev origin (cors.ts DEV_ORIGINS) — allowed whenever
-				// NODE_ENV is not production/staging, with no env timing concerns
-				// (the EXACT_ORIGINS env list is frozen at module load).
+				// NODE_ENV is not production/staging.
 				Origin: ALLOWED_ORIGIN,
 				"Access-Control-Request-Method": "GET",
 			},
