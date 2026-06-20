@@ -11,7 +11,7 @@ import { createLogger } from "../lib/logger";
  * `routes/index.ts` — this module owns the health endpoints only.
  *
  *   GET /health           — liveness + version/stage info
- *   GET /health/detailed  — DB / WorkOS / media-storage checks
+ *   GET /health/detailed  — DB health + external-service config checks
  *
  * OPTIONS preflight is answered globally by the CORS middleware in
  * `lib/hono/middleware.ts` (documented below as /v1/utils/options for
@@ -55,7 +55,7 @@ async function checkDatabase(): Promise<HealthCheck> {
 	}
 }
 
-async function checkWorkOS(): Promise<HealthCheck> {
+async function checkWorkOSConfig(): Promise<HealthCheck> {
 	const clientId = process.env.WORKOS_CLIENT_ID;
 
 	if (!clientId) {
@@ -71,11 +71,11 @@ async function checkWorkOS(): Promise<HealthCheck> {
 	return {
 		status: "ok",
 		configured: true,
-		message: "WorkOS configured",
+		message: "WorkOS configuration present",
 	};
 }
 
-async function checkMediaStorage(): Promise<HealthCheck> {
+async function checkMediaStorageConfig(): Promise<HealthCheck> {
 	const bucket = process.env.IMAGES_BUCKET;
 	const cdnUrl = process.env.IMAGES_CDN_URL;
 
@@ -92,7 +92,7 @@ async function checkMediaStorage(): Promise<HealthCheck> {
 	return {
 		status: "ok",
 		configured: true,
-		message: "Media storage configured",
+		message: "Media storage configuration present",
 	};
 }
 
@@ -224,8 +224,8 @@ utils.get("/health/detailed", async (c) => {
 	// Run all health checks in parallel
 	const [database, workos, storage] = await Promise.all([
 		checkDatabase(),
-		checkWorkOS(),
-		checkMediaStorage(),
+		checkWorkOSConfig(),
+		checkMediaStorageConfig(),
 	]);
 
 	// Determine overall status

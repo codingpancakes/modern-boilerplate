@@ -13,6 +13,10 @@ import {
 } from "graphql";
 import depthLimit from "graphql-depth-limit";
 import { isAsyncIterable, type Plugin } from "graphql-yoga";
+import {
+	GRAPHQL_CLIENT_ERROR_CODES,
+	GRAPHQL_SAFE_ERROR_CODES,
+} from "../../lib/graphql-error-codes";
 import { createLogger } from "../../lib/logger";
 import { captureException, flush as flushSentry } from "../../lib/sentry";
 import type { GraphQLContext } from "./context";
@@ -55,18 +59,6 @@ export function isDevelopmentStage(): boolean {
 	const stage = process.env.STAGE ?? "";
 	return stage !== "production" && stage !== "staging";
 }
-
-// In production, only pass through messages for known client-facing error
-// codes (same set the Apollo handler's formatError used).
-const SAFE_CODES = new Set([
-	"BAD_USER_INPUT",
-	"GRAPHQL_VALIDATION_FAILED",
-	"GRAPHQL_PARSE_FAILED",
-	"FORBIDDEN",
-	"UNAUTHENTICATED",
-	"NOT_FOUND",
-	"CONFLICT",
-]);
 
 // --- Query complexity (inline — no extra dep) ---
 const DEFAULT_LIST_MULTIPLIER = 10;
@@ -157,15 +149,6 @@ export function calculateComplexity(
 	}
 	return countSelections(opSelectionSet, fragments, new Set(), variables);
 }
-
-const CLIENT_ERROR_CODES = new Set([
-	"GRAPHQL_VALIDATION_FAILED",
-	"BAD_USER_INPUT",
-	"GRAPHQL_PARSE_FAILED",
-	"PERSISTED_QUERY_NOT_FOUND",
-	"FORBIDDEN",
-	"UNAUTHENTICATED",
-]);
 
 /** Extract a numeric HTTP status from an error's `extensions.http`, if set. */
 function httpStatus(error: GraphQLError): number | undefined {
@@ -293,7 +276,7 @@ export const sentryPlugin: Plugin<GraphQLContext> = {
 						typeof error.extensions?.code === "string"
 							? error.extensions.code
 							: "";
-					if (CLIENT_ERROR_CODES.has(code)) {
+					if (GRAPHQL_CLIENT_ERROR_CODES.has(code)) {
 						continue;
 					}
 					hasErrors = true;
@@ -328,7 +311,7 @@ function formatResultError(
 			: "INTERNAL_SERVER_ERROR";
 
 	const message =
-		isDevelopmentStage() || SAFE_CODES.has(code)
+		isDevelopmentStage() || GRAPHQL_SAFE_ERROR_CODES.has(code)
 			? error.message
 			: "Internal server error";
 

@@ -1,24 +1,15 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { profiles, users as usersTable } from "../db/schema/index";
-import {
-	AUDIT_ACTIONS,
-	AUDIT_RESOURCE_TYPES,
-	AUDIT_STATUS,
-	logAudit,
-} from "../lib/audit";
 import { getUserIdFromClaims } from "../lib/auth";
 import { getDb } from "../lib/db";
 import { Errors } from "../lib/errors";
+import { withIdempotentJson } from "../lib/hono/idempotent-response";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
-import { type StoredResponse, withIdempotency } from "../lib/idempotency";
 import { createLogger } from "../lib/logger";
-import { createSuccessResponse } from "../lib/response";
-import { sanitizeObject } from "../lib/sanitize";
-import { buildNestedUpdates } from "../lib/update-helper";
-import { parseBody } from "../lib/validation/helpers";
-import * as schemas from "../lib/validation/users";
+import { updateMyAccount } from "../lib/services/user-account";
+import { parseJsonBody } from "../lib/validation/helpers";
 
 /**
  * /v1/users/* — user profile routes (protected; `requireAuth()` is applied
@@ -31,25 +22,6 @@ export const users = new Hono<AppEnv>();
 
 const meLogger = createLogger({ serviceName: "users-me" });
 const updateLogger = createLogger({ serviceName: "users-update" });
-
-/**
- * Convert a stored/replayed idempotency result into the Response Hono
- * expects. `withIdempotency` both produces (via `createSuccessResponse`) and
- * replays (from the idempotency_keys table) `{ statusCode, headers, body }`
- * objects — the stored shape is part of its replay contract, so it is
- * preserved and adapted here instead of changing what gets persisted.
- * CORS + security headers are applied by the app-level middleware.
- */
-function toResponse(result: StoredResponse): Response {
-	const headers = new Headers();
-	for (const [key, value] of Object.entries(result.headers ?? {})) {
-		headers.set(key, value);
-	}
-	return new Response(result.body ?? null, {
-		status: result.statusCode,
-		headers,
-	});
-}
 
 /**
  * @swagger
@@ -165,7 +137,7 @@ users.patch("/me", async (c) => {
 	const rawBody = await c.req.text();
 	const queryParams = c.req.query();
 
-	const result = await withIdempotency(
+	return withIdempotentJson(
 		{
 			key: c.req.header("idempotency-key"),
 			sub: claims.sub,
@@ -180,113 +152,45 @@ users.patch("/me", async (c) => {
 			// Get internal user ID from verified claims (lookup + JIT provisioning)
 			const userId = await getUserIdFromClaims(claims);
 
-			// Validate request body with Zod
-			const updateRequest = parseBody(rawBody, schemas.updateUserProfile);
+			const updateRequest = parseJsonBody(rawBody);
 
 			updateLogger.info("Updating user profile", {
 				userId,
 				fieldsProvided: {
-					user: updateRequest.user ? Object.keys(updateRequest.user) : [],
-					profile: updateRequest.profile
-						? Object.keys(updateRequest.profile)
-						: [],
+					user:
+						typeof updateRequest === "object" &&
+						updateRequest !== null &&
+						"user" in updateRequest &&
+						typeof updateRequest.user === "object" &&
+						updateRequest.user !== null
+							? Object.keys(updateRequest.user)
+							: [],
+					profile:
+						typeof updateRequest === "object" &&
+						updateRequest !== null &&
+						"profile" in updateRequest &&
+						typeof updateRequest.profile === "object" &&
+						updateRequest.profile !== null
+							? Object.keys(updateRequest.profile)
+							: [],
 				},
 			});
 
 			const db = await getDb();
 
-			// Sanitize all string fields (XSS prevention) then build update objects
-			const updates = buildNestedUpdates({
-				user: updateRequest.user
-					? sanitizeObject(updateRequest.user as Record<string, unknown>)
-					: undefined,
-				profile: updateRequest.profile
-					? sanitizeObject(updateRequest.profile as Record<string, unknown>)
-					: undefined,
-			});
-
-			const { currentUser, currentProfile, updatedUser, updatedProfile } =
-				await db.transaction(async (tx) => {
-					const [curUserRows, curProfileRows] = await Promise.all([
-						tx
-							.select()
-							.from(usersTable)
-							.where(eq(usersTable.id, userId))
-							.limit(1),
-						tx
-							.select()
-							.from(profiles)
-							.where(eq(profiles.userId, userId))
-							.limit(1),
-					]);
-					const curUser = curUserRows[0];
-					const curProfile = curProfileRows[0];
-
-					const newUser = updates.user
-						? await tx
-								.update(usersTable)
-								.set(updates.user)
-								.where(eq(usersTable.id, userId))
-								.returning()
-								.then((rows) => rows[0])
-						: curUser;
-
-					const newProfile = updates.profile
-						? await tx
-								.update(profiles)
-								.set(updates.profile)
-								.where(eq(profiles.userId, userId))
-								.returning()
-								.then((rows) => rows[0])
-						: curProfile;
-
-					return {
-						currentUser: curUser,
-						currentProfile: curProfile,
-						updatedUser: newUser,
-						updatedProfile: newProfile,
-					};
-				});
-
-			if (!updatedUser) {
-				throw Errors.NotFound("User");
-			}
-
-			const updatedUserFields = updates.user ? Object.keys(updates.user) : [];
-			const updatedProfileFields = updates.profile
-				? Object.keys(updates.profile)
-				: [];
-
-			void logAudit({
+			const result = await updateMyAccount({
+				db,
 				userId,
-				action: AUDIT_ACTIONS.UPDATE,
-				resourceType:
-					updatedUserFields.length > 0
-						? AUDIT_RESOURCE_TYPES.USER
-						: AUDIT_RESOURCE_TYPES.PROFILE,
-				resourceId: userId,
-				changes: {
-					before: { user: currentUser, profile: currentProfile },
-					after: { user: updatedUser, profile: updatedProfile },
-				},
-				ipAddress: c.req.header("cf-connecting-ip"),
-				userAgent: c.req.header("user-agent"),
-				requestId: c.get("requestId"),
-				status: AUDIT_STATUS.SUCCESS,
-				metadata: {
-					updatedFields: {
-						user: updatedUserFields,
-						profile: updatedProfileFields,
-					},
+				input: updateRequest,
+				source: "rest",
+				auditContext: {
+					ipAddress: c.req.header("cf-connecting-ip"),
+					userAgent: c.req.header("user-agent"),
+					requestId: c.get("requestId"),
 				},
 			});
 
-			return createSuccessResponse({
-				user: updatedUser,
-				profile: updatedProfile,
-			});
+			return result;
 		},
 	);
-
-	return toResponse(result);
 });
