@@ -1,6 +1,7 @@
-> **LEGACY** — described the pre-atomic AWS stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
+> **LEGACY** — described the retired AWS/CDK stack; superseded by [docs/CLOUDFLARE_SETUP.md](../CLOUDFLARE_SETUP.md).
 > Still useful exactly once: when decommissioning the old AWS account. The CDK code it
-> references was deleted from this branch — run it from a pre-atomic checkout (e.g. `main`).
+> references was deleted from this branch — run it from legacy git history or the
+> archived `legacy-cdk` remote.
 
 # CDK Complete Teardown Guide
 
