@@ -19,6 +19,7 @@ const { getDbMock } = vi.hoisted(() => ({ getDbMock: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 
 import {
+	auditLogs,
 	authIdentities,
 	idempotencyKeys,
 	organizations,
@@ -129,6 +130,14 @@ describe("processWorkosEvent (real Postgres)", () => {
 			.where(eq(idempotencyKeys.key, "workos-webhook-evt_user_1"));
 		expect(lock?.status).toBe("completed");
 		expect(lock?.completedAt).toBeTruthy();
+
+		const userAuditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, provisionedUserId));
+		expect(userAuditRows).toHaveLength(1);
+		expect(userAuditRows[0]?.action).toBe("CREATE");
+		expect(userAuditRows[0]?.resourceType).toBe("USER");
 	});
 
 	it("is a no-op when the SAME event id is reprocessed (no duplicate user, no error)", async () => {
@@ -163,5 +172,13 @@ describe("processWorkosEvent (real Postgres)", () => {
 			.from(idempotencyKeys)
 			.where(eq(idempotencyKeys.key, "workos-webhook-evt_org_1"));
 		expect(lock?.status).toBe("completed");
+
+		const orgAuditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, orgs[0]?.id));
+		expect(orgAuditRows).toHaveLength(1);
+		expect(orgAuditRows[0]?.action).toBe("CREATE");
+		expect(orgAuditRows[0]?.resourceType).toBe("ORGANIZATION");
 	});
 });

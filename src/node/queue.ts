@@ -3,7 +3,9 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
-	logAudit,
+	flushAudits,
+	logAuditStrict,
+	runWithAuditScope,
 } from "./lib/audit";
 import { runWithDbScope } from "./lib/db";
 import { errorMessage } from "./lib/error-utils";
@@ -46,7 +48,15 @@ export async function handleQueueBatch(
 			if (isDeadLetter) {
 				await handleDeadLetter(message.body);
 			} else {
-				await runWithDbScope(() => processWorkosEvent(message.body));
+				await runWithDbScope(() =>
+					runWithAuditScope(async () => {
+						try {
+							await processWorkosEvent(message.body);
+						} finally {
+							await flushAudits();
+						}
+					}),
+				);
 			}
 			message.ack();
 		} catch (error) {
@@ -84,10 +94,10 @@ async function handleDeadLetter(event: WorkOSWebhookEvent): Promise<void> {
 		eventType: event?.event,
 	});
 
-	// Outside a request scope, logAudit awaits its write inline — so this is
-	// durable without an audit-flush middleware around the queue consumer.
+	// Use the strict audit path: if the DLQ record cannot be persisted, throw
+	// so this message is retried instead of acked away.
 	await runWithDbScope(() =>
-		logAudit({
+		logAuditStrict({
 			action: AUDIT_ACTIONS.WEBHOOK_FAILED,
 			resourceType: AUDIT_RESOURCE_TYPES.WEBHOOK,
 			resourceId: event?.id,

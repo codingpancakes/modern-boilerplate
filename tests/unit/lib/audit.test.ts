@@ -31,6 +31,7 @@ import {
 	AUDIT_RESOURCE_TYPES,
 	flushAudits,
 	logAudit,
+	logAuditStrict,
 	runWithAuditScope,
 } from "@/lib/audit";
 
@@ -84,6 +85,18 @@ describe("audit write failure signaling", () => {
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
 		expect(captureExceptionMock).not.toHaveBeenCalled();
+	});
+
+	it("strict audit writes propagate persistence failures", async () => {
+		getDbMock.mockResolvedValue({
+			insert: () => ({
+				values: () => Promise.reject(new Error("relation does not exist")),
+			}),
+		});
+
+		await expect(logAuditStrict(sampleEntry)).rejects.toThrow(
+			"relation does not exist",
+		);
 	});
 
 	it("stays silent (no Sentry) under NODE_ENV=test", async () => {

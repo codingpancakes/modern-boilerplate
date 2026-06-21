@@ -67,6 +67,14 @@ export interface AuditLogEntry {
 	errorMessage?: string;
 }
 
+type AuditInsertValues = typeof auditLogs.$inferInsert;
+
+interface AuditWriteTarget {
+	insert(table: typeof auditLogs): {
+		values(values: AuditInsertValues): Promise<unknown>;
+	};
+}
+
 /**
  * Keys whose values must never be persisted to the audit trail. Matched
  * case-insensitively as a substring of the field name, so `passwordHash`,
@@ -214,7 +222,7 @@ export async function flushAudits(): Promise<void> {
  * ```
  */
 export async function logAudit(entry: AuditLogEntry): Promise<void> {
-	const write = persistAudit(entry);
+	const write = persistAuditBestEffort(entry);
 	const pending = auditScopeStorage.getStore();
 	// Outside a request scope (cron/scripts): no buffer to drain later, so
 	// await inline to guarantee the write completes.
@@ -230,24 +238,45 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 	}
 }
 
-async function persistAudit(entry: AuditLogEntry): Promise<void> {
+function auditInsertValues(entry: AuditLogEntry): AuditInsertValues {
+	return {
+		userId: entry.userId,
+		organizationId: entry.organizationId,
+		orgUnitId: entry.orgUnitId,
+		action: entry.action,
+		resourceType: entry.resourceType,
+		resourceId: entry.resourceId,
+		changes: redactChanges(entry.changes),
+		ipAddress: entry.ipAddress,
+		userAgent: entry.userAgent,
+		requestId: entry.requestId,
+		metadata: redactMetadata(entry.metadata),
+		status: entry.status || AUDIT_STATUS.SUCCESS,
+		errorMessage: entry.errorMessage,
+	};
+}
+
+/**
+ * Strict audit write for durable background paths. Unlike logAudit(), this
+ * propagates persistence failures so queue consumers can retry instead of acking
+ * a message whose compliance record was not written.
+ */
+export async function writeAuditLog(
+	target: AuditWriteTarget,
+	entry: AuditLogEntry,
+): Promise<void> {
+	await target.insert(auditLogs).values(auditInsertValues(entry));
+}
+
+export async function logAuditStrict(entry: AuditLogEntry): Promise<void> {
+	const db = await getDb();
+	await writeAuditLog(db, entry);
+}
+
+async function persistAuditBestEffort(entry: AuditLogEntry): Promise<void> {
 	try {
 		const db = await getDb();
-		await db.insert(auditLogs).values({
-			userId: entry.userId,
-			organizationId: entry.organizationId,
-			orgUnitId: entry.orgUnitId,
-			action: entry.action,
-			resourceType: entry.resourceType,
-			resourceId: entry.resourceId,
-			changes: redactChanges(entry.changes),
-			ipAddress: entry.ipAddress,
-			userAgent: entry.userAgent,
-			requestId: entry.requestId,
-			metadata: redactMetadata(entry.metadata),
-			status: entry.status || AUDIT_STATUS.SUCCESS,
-			errorMessage: entry.errorMessage,
-		});
+		await writeAuditLog(db, entry);
 	} catch (error) {
 		// Don't throw — audit logging should never break the main flow.
 		// Log the full entry as fallback so it can be backfilled from logs.

@@ -14,9 +14,7 @@ import {
 import { validate } from "../validation/helpers";
 import { uploadImageRequest } from "../validation/media";
 
-export type ImageUploadInput = ReturnType<typeof validateImageUploadInput>;
-
-export function validateImageUploadInput(input: unknown) {
+function validateImageUploadInput(input: unknown) {
 	const validated = validate(uploadImageRequest, input);
 	const fileExtension =
 		validated.filename.split(".").pop()?.toLowerCase() || "";

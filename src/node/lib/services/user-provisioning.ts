@@ -10,7 +10,7 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
-	logAudit,
+	writeAuditLog,
 } from "../audit";
 import type { DbInstance } from "../db";
 import { createLogger } from "../logger";
@@ -90,6 +90,8 @@ export async function upsertUserFromWorkOS(
 			)
 			.limit(1);
 
+		let result: { action: "created" | "updated"; userId: string };
+
 		if (existingAuth?.userId) {
 			await tx
 				.update(users)
@@ -101,42 +103,46 @@ export async function upsertUserFromWorkOS(
 				})
 				.where(eq(users.id, existingAuth.userId));
 
-			return { action: "updated" as const, userId: existingAuth.userId };
+			result = { action: "updated", userId: existingAuth.userId };
+		} else {
+			const [newUser] = await tx
+				.insert(users)
+				.values({
+					email: userData.email,
+					firstName: userData.first_name || null,
+					lastName: userData.last_name || null,
+					type: "MEMBER",
+				})
+				.returning({ id: users.id });
+
+			await tx.insert(profiles).values({ userId: newUser.id });
+			await tx.insert(authIdentities).values({
+				userId: newUser.id,
+				providerType: "workos",
+				providerSubject: userData.id,
+				emailAtProvider: userData.email,
+			});
+
+			result = { action: "created", userId: newUser.id };
 		}
 
-		const [newUser] = await tx
-			.insert(users)
-			.values({
-				email: userData.email,
-				firstName: userData.first_name || null,
-				lastName: userData.last_name || null,
-				type: "MEMBER",
-			})
-			.returning({ id: users.id });
-
-		await tx.insert(profiles).values({ userId: newUser.id });
-		await tx.insert(authIdentities).values({
-			userId: newUser.id,
-			providerType: "workos",
-			providerSubject: userData.id,
-			emailAtProvider: userData.email,
+		await writeAuditLog(tx, {
+			userId: result.userId,
+			action:
+				result.action === "created"
+					? AUDIT_ACTIONS.CREATE
+					: AUDIT_ACTIONS.UPDATE,
+			resourceType: AUDIT_RESOURCE_TYPES.USER,
+			resourceId: result.userId,
+			status: AUDIT_STATUS.SUCCESS,
+			metadata: {
+				source: "workos_webhook",
+				eventType,
+				providerSubject: userData.id,
+			},
 		});
 
-		return { action: "created" as const, userId: newUser.id };
-	});
-
-	void logAudit({
-		userId: result.userId,
-		action:
-			result.action === "created" ? AUDIT_ACTIONS.CREATE : AUDIT_ACTIONS.UPDATE,
-		resourceType: AUDIT_RESOURCE_TYPES.USER,
-		resourceId: result.userId,
-		status: AUDIT_STATUS.SUCCESS,
-		metadata: {
-			source: "workos_webhook",
-			eventType,
-			providerSubject: userData.id,
-		},
+		return result;
 	});
 
 	if (result.action === "created") {
@@ -154,7 +160,7 @@ export async function deleteUserFromWorkOS(
 	userData: WorkOSUserData,
 	eventType: string,
 ): Promise<void> {
-	const userId = await db.transaction(async (tx) => {
+	await db.transaction(async (tx) => {
 		const [authIdentity] = await tx
 			.select({ userId: authIdentities.userId })
 			.from(authIdentities)
@@ -183,22 +189,20 @@ export async function deleteUserFromWorkOS(
 
 		await tx.delete(authIdentities).where(eq(authIdentities.userId, uid));
 
+		await writeAuditLog(tx, {
+			userId: uid,
+			action: AUDIT_ACTIONS.DELETE,
+			resourceType: AUDIT_RESOURCE_TYPES.USER,
+			resourceId: uid,
+			status: AUDIT_STATUS.SUCCESS,
+			metadata: {
+				source: "workos_webhook",
+				eventType,
+				providerSubject: userData.id,
+			},
+		});
+
 		return uid;
-	});
-
-	if (!userId) return;
-
-	void logAudit({
-		userId,
-		action: AUDIT_ACTIONS.DELETE,
-		resourceType: AUDIT_RESOURCE_TYPES.USER,
-		resourceId: userId,
-		status: AUDIT_STATUS.SUCCESS,
-		metadata: {
-			source: "workos_webhook",
-			eventType,
-			providerSubject: userData.id,
-		},
 	});
 }
 
@@ -207,35 +211,37 @@ export async function upsertOrgFromWorkOS(
 	orgData: WorkOSOrgData,
 	eventType: string,
 ): Promise<void> {
-	const [org] = await db
-		.insert(organizations)
-		.values({
-			workosOrgId: orgData.id,
-			name: orgData.name,
-		})
-		.onConflictDoUpdate({
-			target: organizations.workosOrgId,
-			set: {
+	await db.transaction(async (tx) => {
+		const [org] = await tx
+			.insert(organizations)
+			.values({
+				workosOrgId: orgData.id,
 				name: orgData.name,
-				updatedAt: new Date().toISOString(),
-			},
-		})
-		.returning({ id: organizations.id });
+			})
+			.onConflictDoUpdate({
+				target: organizations.workosOrgId,
+				set: {
+					name: orgData.name,
+					updatedAt: new Date().toISOString(),
+				},
+			})
+			.returning({ id: organizations.id });
 
-	void logAudit({
-		organizationId: org?.id,
-		action:
-			eventType === "organization.created"
-				? AUDIT_ACTIONS.CREATE
-				: AUDIT_ACTIONS.UPDATE,
-		resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
-		resourceId: org?.id,
-		status: AUDIT_STATUS.SUCCESS,
-		metadata: {
-			source: "workos_webhook",
-			eventType,
-			workosOrgId: orgData.id,
-		},
+		await writeAuditLog(tx, {
+			organizationId: org?.id,
+			action:
+				eventType === "organization.created"
+					? AUDIT_ACTIONS.CREATE
+					: AUDIT_ACTIONS.UPDATE,
+			resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+			resourceId: org?.id,
+			status: AUDIT_STATUS.SUCCESS,
+			metadata: {
+				source: "workos_webhook",
+				eventType,
+				workosOrgId: orgData.id,
+			},
+		});
 	});
 }
 
@@ -244,7 +250,7 @@ export async function deleteOrgFromWorkOS(
 	orgData: WorkOSOrgData,
 	eventType: string,
 ): Promise<void> {
-	const deleted = await db.transaction(async (tx) => {
+	await db.transaction(async (tx) => {
 		const [del] = await tx
 			.update(organizations)
 			.set({ status: "DELETED", updatedAt: new Date().toISOString() })
@@ -261,22 +267,20 @@ export async function deleteOrgFromWorkOS(
 			})
 			.where(eq(organizationMembers.organizationId, del.id));
 
+		await writeAuditLog(tx, {
+			organizationId: del.id,
+			action: AUDIT_ACTIONS.DELETE,
+			resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
+			resourceId: del.id,
+			status: AUDIT_STATUS.SUCCESS,
+			metadata: {
+				source: "workos_webhook",
+				eventType,
+				workosOrgId: orgData.id,
+			},
+		});
+
 		return del;
-	});
-
-	if (!deleted) return;
-
-	void logAudit({
-		organizationId: deleted.id,
-		action: AUDIT_ACTIONS.DELETE,
-		resourceType: AUDIT_RESOURCE_TYPES.ORGANIZATION,
-		resourceId: deleted.id,
-		status: AUDIT_STATUS.SUCCESS,
-		metadata: {
-			source: "workos_webhook",
-			eventType,
-			workosOrgId: orgData.id,
-		},
 	});
 }
 
@@ -308,7 +312,7 @@ export async function recordAuthEventFromWorkOS(
 		userId = identity?.userId ?? undefined;
 	}
 
-	void logAudit({
+	await writeAuditLog(db, {
 		userId,
 		action: failed ? AUDIT_ACTIONS.LOGIN_FAILED : AUDIT_ACTIONS.LOGIN,
 		resourceType: AUDIT_RESOURCE_TYPES.USER,

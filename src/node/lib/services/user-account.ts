@@ -13,8 +13,6 @@ import { sanitizeObject } from "../sanitize";
 import { validate } from "../validation/helpers";
 import { userSchemas } from "../validation/users";
 
-export type AccountUpdateInput = ReturnType<typeof validateAccountUpdateInput>;
-
 export interface AccountUpdateResult {
 	user: typeof users.$inferSelect;
 	profile: typeof profiles.$inferSelect;
@@ -25,7 +23,7 @@ interface UpdateFields {
 	values?: Record<string, unknown>;
 }
 
-export function validateAccountUpdateInput(input: unknown) {
+function validateAccountUpdateInput(input: unknown) {
 	return validate(userSchemas.updateProfile, input);
 }
 
