@@ -75,14 +75,16 @@ export async function updateMyAccount(options: {
 
 	const { currentUser, currentProfile, updatedUser, updatedProfile } =
 		await options.db.transaction(async (tx) => {
-			const [curUserRows, curProfileRows] = await Promise.all([
-				tx.select().from(users).where(eq(users.id, options.userId)).limit(1),
-				tx
-					.select()
-					.from(profiles)
-					.where(eq(profiles.userId, options.userId))
-					.limit(1),
-			]);
+			const curUserRows = await tx
+				.select()
+				.from(users)
+				.where(eq(users.id, options.userId))
+				.limit(1);
+			const curProfileRows = await tx
+				.select()
+				.from(profiles)
+				.where(eq(profiles.userId, options.userId))
+				.limit(1);
 			const curUser = curUserRows[0];
 			const curProfile = curProfileRows[0];
 

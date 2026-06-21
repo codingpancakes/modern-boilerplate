@@ -37,8 +37,8 @@ inherit `[vars]` or R2 bindings).
 
 | Variable | Purpose |
 |---|---|
-| `NODE_ENV` | `development` / `staging` / `production`. Gates 5xx error masking (`lib/errors.ts`) and dev CORS origins (`lib/cors.ts`) |
-| `STAGE` | Deployment stage (`local` / `staging` / `production`). `production` disables the dev-only `/v1/test/*` routes |
+| `NODE_ENV` | Runtime mode hint (`development` / `staging` / `production`). Core deploy-sensitive behavior is keyed on `STAGE`, not this value |
+| `STAGE` | Deployment stage (`local` / `staging` / `production`). Gates 5xx error masking (`lib/errors.ts`), dev CORS origins (`lib/cors.ts`), and dev-only `/v1/test/*` routes |
 | `PROJECT_NAME` | Project identifier (drives naming, docs) |
 | `API_VERSION` | URL version prefix (`v1`) |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag (staging/production blocks only) |

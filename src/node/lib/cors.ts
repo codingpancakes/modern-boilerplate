@@ -1,6 +1,7 @@
 /**
  * Dynamic CORS handler for multi-tenant architecture
  */
+import { isDevLikeStage } from "./stage";
 
 function exactOrigins(): Set<string> {
 	return new Set(
@@ -28,12 +29,6 @@ function parentDomains(): Set<string> {
 			.filter((s) => s.length > 0)
 			// Reject bare TLDs (e.g. "com", "io") — must contain at least one dot
 			.filter((s) => s.includes(".")),
-	);
-}
-
-function isDevLikeStage(): boolean {
-	return (
-		process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "staging"
 	);
 }
 

@@ -12,6 +12,7 @@ import {
 	logAudit,
 } from "../audit";
 import { ApiError } from "../errors";
+import { isLocalDevelopmentStage } from "../stage";
 import type { AppEnv, AuthClaims } from "./types";
 
 /**
@@ -42,10 +43,6 @@ const unauthorized = () => new ApiError(401, "UNAUTHORIZED", "Unauthorized");
  */
 let jwksCache: { clientId: string; jwks: JWTVerifyGetKey } | undefined;
 
-function isClientBindingOptionalStage(stage: string | undefined): boolean {
-	return stage === "local" || stage === "development";
-}
-
 async function verifyBearerToken(
 	authHeader: string | undefined,
 ): Promise<AuthClaims> {
@@ -61,7 +58,7 @@ async function verifyBearerToken(
 	// client id disables the `client_id` audience binding, which would accept any
 	// WorkOS-signed token. A missing/typoed STAGE must not silently run unbound.
 	const stage = process.env.STAGE;
-	if (!clientId && !isClientBindingOptionalStage(stage)) {
+	if (!clientId && !isLocalDevelopmentStage(stage)) {
 		throw new Error(
 			"WORKOS_CLIENT_ID is required unless STAGE is explicitly local/development (audience binding must not be disabled)",
 		);

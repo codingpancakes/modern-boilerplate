@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, Errors, formatError } from "@/lib/errors";
 
 describe("Error Handling", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	describe("ApiError", () => {
 		it("should create an error with statusCode, code, and message", () => {
 			const error = new ApiError(404, "NOT_FOUND", "Resource not found");
@@ -111,6 +115,37 @@ describe("Error Handling", () => {
 
 			const body = JSON.parse(formatted.body);
 			expect(body.details.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+		});
+
+		it("masks 5xx ApiError details from STAGE at call time", () => {
+			vi.stubEnv("NODE_ENV", "development");
+			vi.stubEnv("STAGE", "production");
+
+			const formatted = formatError(
+				new ApiError(500, "INTERNAL_ERROR", "database password leaked", {
+					secret: "do-not-return",
+				}),
+				"req-prod",
+			);
+
+			const body = JSON.parse(formatted.body);
+			expect(body.error).toBe("Internal server error");
+			expect(body.details.extra).toBeUndefined();
+		});
+
+		it("keeps 5xx ApiError details visible in local stages", () => {
+			vi.stubEnv("NODE_ENV", "production");
+			vi.stubEnv("STAGE", "local");
+
+			const formatted = formatError(
+				new ApiError(500, "INTERNAL_ERROR", "local diagnostic", {
+					reason: "visible locally",
+				}),
+			);
+
+			const body = JSON.parse(formatted.body);
+			expect(body.error).toBe("local diagnostic");
+			expect(body.details.extra).toEqual({ reason: "visible locally" });
 		});
 	});
 });
