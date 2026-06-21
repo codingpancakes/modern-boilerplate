@@ -27,7 +27,7 @@ are account-level platform config, not code).
 
 ## Secrets & config
 - Secrets: `.dev.vars` locally (gitignored), `wrangler secret put` deployed (driven by `pnpm sync-secrets <stage>` from `.env.<stage>` over the `.dev.vars.example` registry). Never plaintext credentials in code or committed files.
-- `pnpm migrate` / drizzle-kit read `DATABASE_URL` from `.env.local` (dotenv), not `.dev.vars` — keep both in sync.
+- `pnpm migrate` / drizzle-kit read `DATABASE_URL` from `.dev.vars` (dotenv); keep stage-specific `.env.<stage>` files aligned for secret sync.
 - Media S3-API path needs `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` (presigned via `aws4fetch` in `lib/media.ts`); unset → media routes return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED`.
 - Do NOT reintroduce Lambda-era toggles (`ORIGIN_VERIFY_SECRET`, `ENABLE_WAF`) — gone by construction.
 

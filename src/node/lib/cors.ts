@@ -109,45 +109,6 @@ export function getCorsHeaders(
 }
 
 /**
- * CORS headers for external webhook/service endpoints
- * Allows specific external origins that need to call your APIs
- */
-export function getExternalCorsHeaders(
-	origin: string | undefined,
-): Record<string, string> {
-	const headers: Record<string, string> = {
-		"Content-Type": "application/json",
-	};
-
-	if (!origin) {
-		return headers;
-	}
-
-	// Exact allow-list of known external service origins (no wildcards)
-	const ALLOWED_EXTERNAL_ORIGINS = new Set([
-		"https://api.workos.com",
-		"https://dashboard.workos.com",
-		"https://github.com",
-		"https://hooks.slack.com",
-	]);
-
-	const isAllowedExternalOrigin =
-		(isDevLikeStage() && /^http:\/\/localhost:\d+$/.test(origin)) ||
-		ALLOWED_EXTERNAL_ORIGINS.has(origin);
-
-	if (isAllowedExternalOrigin) {
-		headers["Access-Control-Allow-Origin"] = origin;
-		headers["Access-Control-Allow-Methods"] =
-			"GET, POST, PUT, PATCH, DELETE, OPTIONS";
-		headers["Access-Control-Allow-Headers"] =
-			"Authorization, Content-Type, Idempotency-Key, X-Requested-With, X-API-Key, X-Secret-Token, X-Webhook-Signature";
-		headers["Access-Control-Max-Age"] = "86400";
-	}
-
-	return headers;
-}
-
-/**
  * Standard security headers — apply to every response regardless of auth model
  */
 export function securityHeaders(
@@ -212,14 +173,6 @@ export function handleOptionsRequest(
 	return {
 		statusCode: 204,
 		headers: { ...base },
-		body: "",
-	};
-}
-
-export function handleExternalOptionsRequest(origin: string | undefined) {
-	return {
-		statusCode: 200,
-		headers: getExternalCorsHeaders(origin),
 		body: "",
 	};
 }

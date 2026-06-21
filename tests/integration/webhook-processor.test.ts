@@ -19,6 +19,7 @@ const { getDbMock } = vi.hoisted(() => ({ getDbMock: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 
 import {
+	AUDIT_ACTIONS,
 	auditLogs,
 	authIdentities,
 	idempotencyKeys,
@@ -276,7 +277,7 @@ describe("processWorkosEvent (real Postgres)", () => {
 		expect(identities).toHaveLength(0);
 
 		const [deleted] = await db.select().from(users);
-		expect(deleted?.status).toBe("deleted");
+		expect(deleted?.status).toBe("DELETED");
 		expect(deleted?.email).toBeNull();
 		expect(deleted?.firstName).toBeNull();
 
@@ -383,7 +384,7 @@ describe("processWorkosEvent (real Postgres)", () => {
 		expect(orgRows).toHaveLength(0);
 
 		const [auditRow] = await db.select().from(auditLogs);
-		expect(auditRow?.action).toBe("ACCESS_DENIED");
+		expect(auditRow?.action).toBe(AUDIT_ACTIONS.LOGIN_FAILED);
 		expect(auditRow?.resourceType).toBe("USER");
 		expect(auditRow?.status).toBe("FAILURE");
 		expect(auditRow?.metadata).toMatchObject({

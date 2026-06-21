@@ -14,6 +14,7 @@ import {
 } from "../audit";
 import type { DbInstance } from "../db";
 import { createLogger } from "../logger";
+import { RECORD_STATUS } from "../status";
 import {
 	isWorkOSAuthFailure,
 	type WorkOSAuthData,
@@ -178,7 +179,7 @@ export async function deleteUserFromWorkOS(
 		await tx
 			.update(users)
 			.set({
-				status: "deleted",
+				status: RECORD_STATUS.DELETED,
 				email: null,
 				firstName: null,
 				lastName: null,
@@ -253,7 +254,10 @@ export async function deleteOrgFromWorkOS(
 	await db.transaction(async (tx) => {
 		const [del] = await tx
 			.update(organizations)
-			.set({ status: "DELETED", updatedAt: new Date().toISOString() })
+			.set({
+				status: RECORD_STATUS.DELETED,
+				updatedAt: new Date().toISOString(),
+			})
 			.where(eq(organizations.workosOrgId, orgData.id))
 			.returning({ id: organizations.id });
 
@@ -262,7 +266,7 @@ export async function deleteOrgFromWorkOS(
 		await tx
 			.update(organizationMembers)
 			.set({
-				status: "INACTIVE",
+				status: RECORD_STATUS.INACTIVE,
 				updatedAt: new Date().toISOString(),
 			})
 			.where(eq(organizationMembers.organizationId, del.id));

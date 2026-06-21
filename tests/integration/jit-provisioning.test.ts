@@ -142,12 +142,25 @@ describe("getUserIdFromClaims JIT provisioning (real Postgres)", () => {
 	it("rethrows non-unique provisioning errors instead of retrying as auth races", async () => {
 		await installJitFailureTrigger();
 
-		await expect(
-			getUserIdFromClaims({
+		let thrown: unknown;
+		try {
+			await getUserIdFromClaims({
 				sub: "user_jit_non_unique_failure",
 				email: "boom@example.com",
-			}),
-		).rejects.toThrow("jit insert boom");
+			});
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(Error);
+		expect(thrown instanceof Error ? thrown.cause : undefined).toBeInstanceOf(
+			Error,
+		);
+		expect(
+			thrown instanceof Error && thrown.cause instanceof Error
+				? thrown.cause.message
+				: "",
+		).toContain("jit insert boom");
 
 		const identities = await rowsForSubject("user_jit_non_unique_failure");
 		expect(identities).toHaveLength(0);

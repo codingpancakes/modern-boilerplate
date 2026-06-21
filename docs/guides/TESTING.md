@@ -3,7 +3,7 @@
 Complete guide for unit tests, integration tests, and testing the backend locally and deployed.
 
 **Framework**: Vitest (unit + real-DB integration) + Bash scripts (live-API integration)
-**Status**: Boilerplate — enough tests to show the patterns
+**Status**: Production hardening coverage — fast unit gate plus real-DB race and transaction tests
 
 ---
 
@@ -42,8 +42,8 @@ tests/
     └── test-image-upload.sh            Manual R2 upload walkthrough
 ```
 
-Current totals: **11 unit test files, 100 tests** (~0.5s) plus the real-DB
-transaction suite (3 tests).
+Current totals: **21 unit test files, 145 tests** (~0.8s) plus **6 real-DB
+integration files, 39 tests**.
 
 ---
 
