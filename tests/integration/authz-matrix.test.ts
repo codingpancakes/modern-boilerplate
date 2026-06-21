@@ -28,10 +28,10 @@ import {
 /**
  * AUTHORIZATION REGRESSION MATRIX.
  *
- * The org resolvers enforce tenant- and role-scoped access in code
- * (`requireMembership` + role-hierarchy checks). That logic is correct today,
- * but it's enforced by hand in every resolver — exactly the kind of invariant
- * that silently regresses when someone adds a mutation and forgets the gate.
+ * The org service layer enforces tenant- and role-scoped access in code
+ * (`requireActiveMembership` + role-hierarchy checks). That logic is correct
+ * today, but it is exactly the kind of invariant that silently regresses when
+ * someone adds a mutation and forgets the gate.
  *
  * This suite turns "I read the code and it looks right" into "the build fails
  * if anyone weakens a gate". Every org-scoped operation is asserted to DENY:
@@ -41,7 +41,7 @@ import {
  *   4. privilege escalation  (assign/modify a role >= your own)
  *   5. removing the last owner (integrity)
  *
- * Run against real Postgres because `requireMembership` issues real queries.
+ * Run against real Postgres because `requireActiveMembership` issues real queries.
  */
 describe("authorization matrix (org resolvers)", () => {
 	let db: TestDb;
@@ -136,9 +136,8 @@ describe("authorization matrix (org resolvers)", () => {
 	});
 
 	// Each gated op, invoked with otherwise-valid args so any rejection is
-	// authorization, not input validation. `requireMembership` runs first in
-	// every one of these, so a caller without the membership/role is denied
-	// before any argument parsing.
+	// authorization, not input validation. The service membership gate runs
+	// before any write, so a caller without the membership/role is denied.
 	const gatedOps: Array<{
 		name: string;
 		run: (callerId: string, organizationId: string) => Promise<unknown>;
