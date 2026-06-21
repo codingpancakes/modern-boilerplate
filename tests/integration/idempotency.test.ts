@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import type { Pool } from "pg";
 import {
 	afterAll,
@@ -19,18 +20,20 @@ const { getDbMock } = vi.hoisted(() => ({ getDbMock: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 
-import { idempotencyKeys } from "@/db/schema/index";
+import { idempotencyKeys, users } from "@/db/schema/index";
 import { ApiError } from "@/lib/errors";
 import {
 	cleanupExpiredKeys,
 	type IdempotentRequest,
 	type StoredResponse,
 	withIdempotency,
+	withTransactionalIdempotency,
 } from "@/lib/idempotency";
 import {
 	createTestDb,
 	type TestDb,
 	truncateIdempotencyKeys,
+	truncateUserGraph,
 } from "./helpers/test-db";
 
 /**
@@ -55,6 +58,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+	await pool.query(`
+		DROP TRIGGER IF EXISTS reject_idempotency_completion ON idempotency_keys;
+		DROP FUNCTION IF EXISTS reject_idempotency_completion();
+	`);
+	await truncateUserGraph(pool);
 	await truncateIdempotencyKeys(pool);
 });
 
@@ -239,6 +247,83 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(handler).toHaveBeenCalledOnce();
 		const rows = await db.select().from(idempotencyKeys);
 		expect(rows).toHaveLength(0);
+	});
+});
+
+describe("withTransactionalIdempotency (real Postgres)", () => {
+	it("rolls back the handler mutation when storing the completed marker fails", async () => {
+		const [user] = await db
+			.insert(users)
+			.values({
+				email: "tx-idempotency@example.com",
+				type: "MEMBER",
+				firstName: "Before",
+			})
+			.returning({ id: users.id });
+		expect(user).toBeDefined();
+
+		await pool.query(`
+			CREATE OR REPLACE FUNCTION reject_idempotency_completion()
+			RETURNS trigger AS $$
+			BEGIN
+				RAISE EXCEPTION 'forced idempotency completion failure';
+			END;
+			$$ LANGUAGE plpgsql;
+
+			CREATE TRIGGER reject_idempotency_completion
+			BEFORE UPDATE ON idempotency_keys
+			FOR EACH ROW
+			WHEN (NEW.status = 'completed')
+			EXECUTE FUNCTION reject_idempotency_completion();
+		`);
+
+		const handler = vi.fn(async (tx) => {
+			await tx
+				.update(users)
+				.set({ firstName: "After" })
+				.where(eq(users.id, user?.id));
+			return okResponse;
+		});
+
+		await expect(
+			withTransactionalIdempotency(
+				baseRequest("transactional-complete-fails"),
+				handler,
+			),
+		).rejects.toThrow('Failed query: update "idempotency_keys"');
+
+		const [afterFailure] = await db
+			.select()
+			.from(users)
+			.where(eq(users.id, user?.id))
+			.limit(1);
+		expect(afterFailure?.firstName).toBe("Before");
+		expect(handler).toHaveBeenCalledOnce();
+
+		const failedRow = await onlyIdempotencyRow();
+		expect(failedRow?.status).toBe("failed");
+
+		await pool.query(`
+			DROP TRIGGER reject_idempotency_completion ON idempotency_keys;
+			DROP FUNCTION reject_idempotency_completion();
+		`);
+
+		const retry = await withTransactionalIdempotency(
+			baseRequest("transactional-complete-fails"),
+			handler,
+		);
+		expect(retry).toEqual(okResponse);
+		expect(handler).toHaveBeenCalledTimes(2);
+
+		const [afterRetry] = await db
+			.select()
+			.from(users)
+			.where(eq(users.id, user?.id))
+			.limit(1);
+		expect(afterRetry?.firstName).toBe("After");
+
+		const completedRow = await onlyIdempotencyRow();
+		expect(completedRow?.status).toBe("completed");
 	});
 });
 

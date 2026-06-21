@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, lt, or, type SQL } from "drizzle-orm";
 import { idempotencyKeys } from "../db/schema/index";
-import { getDb } from "./db";
+import { type DbClient, type DbTransaction, getDb } from "./db";
 import { ApiError } from "./errors";
 
 export interface IdempotencyOptions {
@@ -71,6 +71,12 @@ export interface ClaimIdempotencyKeyOptions {
 	insertIfMissing?: boolean;
 }
 
+/**
+ * Generic idempotency wrapper for non-DB or low-risk handlers.
+ *
+ * DB mutations whose side effects must commit atomically with the stored
+ * idempotency response should use {@link withTransactionalIdempotency}.
+ */
 export async function withIdempotency(
 	request: IdempotentRequest,
 	handler: () => Promise<StoredResponse>,
@@ -84,6 +90,78 @@ export async function withIdempotency(
 	}
 
 	const db = await getDb();
+	const claimed = await claimRequestIdempotencyKey(db, request, options);
+	if (claimed.status === "completed") {
+		return claimed.response;
+	}
+
+	try {
+		// Execute the handler
+		const response = await handler();
+
+		// Store successful response
+		await completeIdempotencyKey(db, claimed.key, response);
+
+		return response;
+	} catch (error) {
+		// Mark as failed
+		await failIdempotencyKey(db, claimed.key);
+
+		throw error;
+	}
+}
+
+/**
+ * Transactional idempotency wrapper for DB mutations.
+ *
+ * The request claim is acquired first, then the handler and completed marker
+ * are committed in the same transaction. If either the mutation or completion
+ * write fails, the transaction rolls back and the key is marked failed outside
+ * the transaction so a retry can reclaim it.
+ */
+export async function withTransactionalIdempotency(
+	request: IdempotentRequest,
+	handler: (tx: DbTransaction) => Promise<StoredResponse>,
+	options: IdempotencyOptions = {},
+): Promise<StoredResponse> {
+	const idempotencyKey = request.key;
+	const db = await getDb();
+
+	if (!idempotencyKey) {
+		return db.transaction(handler);
+	}
+
+	const claimed = await claimRequestIdempotencyKey(db, request, options);
+	if (claimed.status === "completed") {
+		return claimed.response;
+	}
+
+	try {
+		return await db.transaction(async (tx) => {
+			const response = await handler(tx);
+			await completeIdempotencyKey(tx, claimed.key, response);
+			return response;
+		});
+	} catch (error) {
+		await failIdempotencyKey(db, claimed.key);
+		throw error;
+	}
+}
+
+type ClaimedRequestKey =
+	| { status: "claimed"; key: string }
+	| { status: "completed"; response: StoredResponse };
+
+async function claimRequestIdempotencyKey(
+	db: IdempotencyDb,
+	request: IdempotentRequest,
+	options: IdempotencyOptions,
+): Promise<ClaimedRequestKey> {
+	const idempotencyKey = request.key;
+	if (!idempotencyKey) {
+		throw new Error("Idempotency key is required before claiming");
+	}
+
 	const requestHash = hashRequest(request);
 	const storageKey = storageKeyForRequest(request, idempotencyKey);
 	const ttl = options.ttlSeconds || 86400; // 24 hours default
@@ -106,7 +184,7 @@ export async function withIdempotency(
 		insertIfMissing: false,
 	});
 	if (legacyResolution.status === "completed" && legacyResolution.response) {
-		return legacyResolution.response;
+		return { status: "completed", response: legacyResolution.response };
 	}
 	if (legacyResolution.status === "claimed") {
 		claimedKey = idempotencyKey;
@@ -130,7 +208,7 @@ export async function withIdempotency(
 			reclaimExpiredProcessing: true,
 		});
 		if (resolution.status === "completed" && resolution.response) {
-			return resolution.response;
+			return { status: "completed", response: resolution.response };
 		}
 		if (resolution.status === "mismatched") {
 			throw new ApiError(
@@ -149,24 +227,11 @@ export async function withIdempotency(
 		claimedKey = storageKey;
 	}
 
-	try {
-		// Execute the handler
-		const response = await handler();
-
-		// Store successful response
-		await completeIdempotencyKey(db, claimedKey, response);
-
-		return response;
-	} catch (error) {
-		// Mark as failed
-		await failIdempotencyKey(db, claimedKey);
-
-		throw error;
-	}
+	return { status: "claimed", key: claimedKey };
 }
 
 export async function claimIdempotencyKey(
-	db: IdempotencyDb,
+	db: DbClient,
 	options: ClaimIdempotencyKeyOptions,
 ): Promise<IdempotencyClaimResult> {
 	const {
@@ -288,7 +353,7 @@ export async function claimIdempotencyKey(
 }
 
 export async function completeIdempotencyKey(
-	db: IdempotencyDb,
+	db: DbClient,
 	key: string,
 	response?: StoredResponse,
 ): Promise<void> {
@@ -304,7 +369,7 @@ export async function completeIdempotencyKey(
 }
 
 export async function failIdempotencyKey(
-	db: IdempotencyDb,
+	db: DbClient,
 	key: string,
 ): Promise<void> {
 	await db

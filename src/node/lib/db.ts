@@ -28,6 +28,10 @@ if (typeof WebSocket !== "undefined") {
 neonConfig.poolQueryViaFetch = true;
 
 export type DbInstance = NeonDatabase<typeof schema>;
+export type DbTransaction = Parameters<
+	Parameters<DbInstance["transaction"]>[0]
+>[0];
+export type DbClient = DbInstance | DbTransaction;
 
 // Hard ceiling on a single statement (server-enforced via Postgres
 // `statement_timeout`) so a hung query can't pin an invocation for its whole
