@@ -262,6 +262,41 @@ describe("processWorkosEvent (real Postgres)", () => {
 		]);
 	});
 
+	it("sanitizes WorkOS user and organization fields before DB writes", async () => {
+		await processWorkosEvent({
+			...userCreatedEvent("evt_user_sanitize", "user_workos_sanitize"),
+			data: {
+				id: "user_workos_sanitize",
+				email: "sanitize@example.com",
+				first_name: "<script>alert(1)</script>",
+				last_name: "Lovelace",
+			},
+		});
+		await processWorkosEvent({
+			...orgCreatedEvent("evt_org_sanitize", "org_workos_sanitize"),
+			data: {
+				id: "org_workos_sanitize",
+				name: "<img src=x onerror=alert(1)>",
+			},
+		});
+
+		const [identity] = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_sanitize"));
+		const userId = identity?.userId;
+		if (!userId) throw new Error("expected user id");
+
+		const [user] = await db.select().from(users).where(eq(users.id, userId));
+		expect(user?.firstName).toBe("&lt;script&gt;alert(1)&lt;&#x2F;script&gt;");
+
+		const [org] = await db
+			.select()
+			.from(organizations)
+			.where(eq(organizations.workosOrgId, "org_workos_sanitize"));
+		expect(org?.name).toBe("&lt;img src=x onerror=alert(1)&gt;");
+	});
+
 	it("soft-deletes a user and removes its WorkOS identity for user.deleted", async () => {
 		await processWorkosEvent(
 			userCreatedEvent("evt_user_create_delete", "user_workos_delete"),
