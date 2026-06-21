@@ -29,6 +29,7 @@ vi.mock("@/lib/logger", () => ({
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
+	cleanupExpiredAuditLogs,
 	flushAudits,
 	logAudit,
 	logAuditStrict,
@@ -106,6 +107,39 @@ describe("audit write failure signaling", () => {
 		await expect(logAudit(sampleEntry)).resolves.toBeUndefined();
 
 		expect(captureExceptionMock).not.toHaveBeenCalled();
+	});
+});
+
+describe("audit retention cleanup", () => {
+	beforeEach(() => vi.clearAllMocks());
+
+	it("deletes expired audit logs in bounded batches", async () => {
+		const limit = vi
+			.fn()
+			.mockResolvedValueOnce([{ id: "audit-1" }, { id: "audit-2" }])
+			.mockResolvedValueOnce([{ id: "audit-3" }])
+			.mockResolvedValueOnce([]);
+		const orderBy = vi.fn().mockReturnValue({ limit });
+		const selectWhere = vi.fn().mockReturnValue({ orderBy });
+		const from = vi.fn().mockReturnValue({ where: selectWhere });
+		const select = vi.fn().mockReturnValue({ from });
+
+		const deleteWhere = vi
+			.fn()
+			.mockResolvedValueOnce({ rowCount: 2 })
+			.mockResolvedValueOnce({ rowCount: 1 });
+		const deleteFn = vi.fn().mockReturnValue({ where: deleteWhere });
+
+		getDbMock.mockResolvedValue({
+			select,
+			delete: deleteFn,
+		});
+
+		await expect(cleanupExpiredAuditLogs()).resolves.toBe(3);
+
+		expect(select).toHaveBeenCalledTimes(3);
+		expect(deleteFn).toHaveBeenCalledTimes(2);
+		expect(deleteWhere).toHaveBeenCalledTimes(2);
 	});
 });
 

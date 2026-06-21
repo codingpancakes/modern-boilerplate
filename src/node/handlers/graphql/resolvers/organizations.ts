@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, inArray, or } from "drizzle-orm";
 import { GraphQLError } from "graphql";
+import type { z } from "zod";
 import {
 	organizationMembers,
 	organizations,
@@ -15,7 +16,9 @@ import {
 import { createPaginatedResponse, decodeCursor } from "../../../lib/pagination";
 import { sanitizeObject } from "../../../lib/sanitize";
 import { organizationSchemas } from "../../../lib/validation";
+import { validate } from "../../../lib/validation/helpers";
 import type { GraphQLContext } from "../context";
+import { toGraphQLError } from "../errors";
 
 const ROLE_HIERARCHY: Record<string, number> = {
 	VIEWER: 0,
@@ -41,6 +44,14 @@ function hasMinRole(userRole: string, requiredRole: string): boolean {
 
 function hasHigherRole(userRole: string, targetRole: string): boolean {
 	return roleLevel(userRole) > roleLevel(targetRole);
+}
+
+function parseInput<T>(schema: z.ZodSchema<T>, input: unknown): T {
+	try {
+		return validate(schema, input);
+	} catch (error) {
+		throw toGraphQLError(error);
+	}
 }
 
 async function requireMembership(
@@ -172,7 +183,7 @@ export const organizationResolvers = {
 			{ input }: { input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
-			const validated = organizationSchemas.create.parse(input);
+			const validated = parseInput(organizationSchemas.create, input);
 			const sanitized = sanitizeObject(validated);
 
 			const result = await context.db.transaction(async (tx) => {
@@ -230,7 +241,7 @@ export const organizationResolvers = {
 		) => {
 			await requireMembership(context, id, "ADMIN");
 
-			const validated = organizationSchemas.update.parse(input);
+			const validated = parseInput(organizationSchemas.update, input);
 			const sanitized = sanitizeObject(validated);
 
 			if (Object.keys(sanitized).length === 0) {
@@ -346,9 +357,10 @@ export const organizationResolvers = {
 				"ADMIN",
 			);
 
-			const validated = organizationSchemas.inviteMember.parse(input);
+			const validated = parseInput(organizationSchemas.inviteMember, input);
+			const targetRole = validated.role ?? "MEMBER";
 
-			if (!hasMinRole(callerMembership.role ?? "MEMBER", validated.role)) {
+			if (!hasMinRole(callerMembership.role ?? "MEMBER", targetRole)) {
 				throw new GraphQLError("Cannot assign a role higher than your own", {
 					extensions: { code: "FORBIDDEN" },
 				});
@@ -396,7 +408,7 @@ export const organizationResolvers = {
 				.values({
 					organizationId,
 					userId: validated.userId,
-					role: validated.role,
+					role: targetRole,
 					status: "PENDING",
 				})
 				.onConflictDoUpdate({
@@ -405,7 +417,7 @@ export const organizationResolvers = {
 						organizationMembers.organizationId,
 					],
 					set: {
-						role: validated.role,
+						role: targetRole,
 						status: "PENDING",
 						updatedAt: new Date().toISOString(),
 					},
@@ -424,7 +436,7 @@ export const organizationResolvers = {
 					source: "graphql",
 					action: "invite_member",
 					targetUserId: validated.userId,
-					role: validated.role,
+					role: targetRole,
 				},
 			});
 
@@ -445,7 +457,7 @@ export const organizationResolvers = {
 				"ADMIN",
 			);
 
-			const validated = organizationSchemas.updateMemberRole.parse(input);
+			const validated = parseInput(organizationSchemas.updateMemberRole, input);
 
 			// Read-check-write in one transaction with the target row locked
 			// (FOR UPDATE) so concurrent role changes to the same member can't

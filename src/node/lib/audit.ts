@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sql } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -20,6 +20,7 @@ import { captureException } from "./sentry";
  * tamper-proof within the window and only the retention job can prune beyond it.
  */
 export const AUDIT_RETENTION_YEARS = 7;
+const AUDIT_RETENTION_BATCH_SIZE = 1_000;
 
 const logger = createLogger({ serviceName: "audit" });
 
@@ -476,11 +477,29 @@ export function auditResolver<
  */
 export async function cleanupExpiredAuditLogs(): Promise<number> {
 	const db = await getDb();
-	const result = await db
-		.delete(auditLogs)
-		.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`);
+	let deletedCount = 0;
 
-	return result.rowCount ?? 0;
+	for (;;) {
+		const expiredRows = await db
+			.select({ id: auditLogs.id })
+			.from(auditLogs)
+			.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`)
+			.orderBy(asc(auditLogs.timestamp))
+			.limit(AUDIT_RETENTION_BATCH_SIZE);
+
+		if (expiredRows.length === 0) break;
+
+		const result = await db.delete(auditLogs).where(
+			inArray(
+				auditLogs.id,
+				expiredRows.map((row) => row.id),
+			),
+		);
+
+		deletedCount += result.rowCount ?? expiredRows.length;
+	}
+
+	return deletedCount;
 }
 
 // Re-export constants for convenience
