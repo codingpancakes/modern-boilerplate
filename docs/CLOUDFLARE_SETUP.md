@@ -140,7 +140,9 @@ via `HEALTH_URL`, `SMOKE_CORS_ORIGIN_STAGING` / `SMOKE_CORS_ORIGIN_PRODUCTION`
 version is uploaded. It intentionally fails deploys when the target DB has pending
 migrations instead of auto-running migrations inside deploy; schema changes remain a
 manual expand/contract step so Worker rollback stays meaningful. This preflight needs
-`DATABASE_URL` available in the GitHub environment or local shell.
+`DATABASE_URL` available in the GitHub environment or local shell. The check requires
+every migration in the current repo journal to be present in the target DB; older
+applied migration rows from a reused database do not fail it.
 
 The health-check URL is derived from the Worker `name` + `WORKERS_SUBDOMAIN` (your
 `*.workers.dev` subdomain) as `https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`,
