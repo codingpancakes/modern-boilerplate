@@ -117,7 +117,7 @@ beforeAll(async () => {
 	// Routes/middleware read these off process.env (mirrored from Worker vars by
 	// nodejs_compat in prod). Set explicit values so assertions are deterministic
 	// and not dependent on the developer's shell env.
-	process.env.STAGE = "dev";
+	process.env.STAGE = "local";
 	process.env.API_VERSION = "v1";
 	// Ensure media is NOT configured for the 503 assertion. Must DELETE, not set
 	// to undefined: `process.env.X = undefined` stores the truthy string

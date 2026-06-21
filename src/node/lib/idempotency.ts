@@ -40,6 +40,8 @@ export interface StoredResponse {
 	body?: string;
 }
 
+const STORAGE_KEY_VERSION = "v2";
+
 export async function withIdempotency(
 	request: IdempotentRequest,
 	handler: () => Promise<StoredResponse>,
@@ -54,98 +56,55 @@ export async function withIdempotency(
 
 	const db = await getDb();
 	const requestHash = hashRequest(request);
+	const storageKey = storageKeyForRequest(request, idempotencyKey);
 	const ttl = options.ttlSeconds || 86400; // 24 hours default
 	const expiresAt = new Date(Date.now() + ttl * 1000);
+	let claimedKey = storageKey;
+
+	// Compatibility for rows written before keys were subject-scoped. Only a
+	// same-subject/same-request legacy row is honored; a different request hash
+	// is ignored so another caller cannot preclaim a user's key globally.
+	const legacyResolution = await resolveExistingKey({
+		db,
+		key: idempotencyKey,
+		requestHash,
+		expiresAt,
+		ignoreHashMismatch: true,
+		ignoreExpired: true,
+	});
+	if (legacyResolution.action === "return") return legacyResolution.response;
+	if (legacyResolution.action === "claimed") {
+		claimedKey = idempotencyKey;
+	}
 
 	// Atomic upsert: INSERT the key as "processing" or DO NOTHING if it already exists.
 	// This eliminates the race condition where two concurrent requests both pass a
 	// SELECT-then-INSERT check before either inserts.
-	const insertResult = await db
-		.insert(idempotencyKeys)
-		.values({
-			key: idempotencyKey,
-			requestHash,
-			status: "processing",
-			createdAt: new Date().toISOString(),
-			expiresAt: expiresAt.toISOString(),
-		})
-		.onConflictDoNothing({ target: idempotencyKeys.key });
-
-	// If insert succeeded (rowCount > 0), we own the key — proceed to execute.
-	// If insert was a no-op (rowCount === 0), the key already existed — check its state.
-	if ((insertResult.rowCount ?? 0) === 0) {
-		const [existing] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, idempotencyKey))
-			.limit(1);
-
-		let expired = false;
-		if (existing) {
-			expired = !!(
-				existing.expiresAt && new Date(existing.expiresAt) < new Date()
-			);
-
-			if (!expired) {
-				if (existing.requestHash !== requestHash) {
-					throw new ApiError(
-						422,
-						"IDEMPOTENCY_KEY_REUSED",
-						"Idempotency key already used for different request",
-					);
-				}
-
-				if (existing.status === "processing") {
-					throw new ApiError(
-						409,
-						"REQUEST_IN_PROGRESS",
-						"Request is still being processed",
-					);
-				}
-
-				if (existing.status === "completed" && existing.response) {
-					try {
-						const parsed: unknown = JSON.parse(existing.response);
-						if (
-							typeof parsed === "object" &&
-							parsed !== null &&
-							"statusCode" in parsed
-						) {
-							return parsed as StoredResponse;
-						}
-					} catch {
-						// Corrupt JSON — fall through to reclaim
-					}
-				}
-			}
-		}
-
-		// Expired rows can be reclaimed regardless of status (including stuck "processing")
-		const reclaimStatuses = expired
-			? ["failed", "completed", "processing"]
-			: ["failed", "completed"];
-
-		const reclaimed = await db
-			.update(idempotencyKeys)
-			.set({
-				status: "processing",
+	if (claimedKey === storageKey) {
+		const insertResult = await db
+			.insert(idempotencyKeys)
+			.values({
+				key: storageKey,
 				requestHash,
-				updatedAt: new Date().toISOString(),
+				status: "processing",
+				createdAt: new Date().toISOString(),
 				expiresAt: expiresAt.toISOString(),
 			})
-			.where(
-				and(
-					eq(idempotencyKeys.key, idempotencyKey),
-					inArray(idempotencyKeys.status, reclaimStatuses),
-				),
-			);
+			.onConflictDoNothing({ target: idempotencyKeys.key });
 
-		if ((reclaimed.rowCount ?? 0) === 0) {
-			throw new ApiError(
-				409,
-				"REQUEST_IN_PROGRESS",
-				"Request is still being processed",
-			);
+		// If insert succeeded (rowCount > 0), we own the key — proceed to execute.
+		// If insert was a no-op (rowCount === 0), the key already existed — check its state.
+		if ((insertResult.rowCount ?? 0) === 0) {
+			const resolution = await resolveExistingKey({
+				db,
+				key: storageKey,
+				requestHash,
+				expiresAt,
+				ignoreHashMismatch: false,
+				ignoreExpired: false,
+			});
+			if (resolution.action === "return") return resolution.response;
+			claimedKey = storageKey;
 		}
 	}
 
@@ -162,7 +121,7 @@ export async function withIdempotency(
 				completedAt: new Date().toISOString(),
 				updatedAt: new Date().toISOString(),
 			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+			.where(eq(idempotencyKeys.key, claimedKey));
 
 		return response;
 	} catch (error) {
@@ -173,10 +132,110 @@ export async function withIdempotency(
 				status: "failed",
 				updatedAt: new Date().toISOString(),
 			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+			.where(eq(idempotencyKeys.key, claimedKey));
 
 		throw error;
 	}
+}
+
+type IdempotencyDb = Awaited<ReturnType<typeof getDb>>;
+
+type ExistingKeyResolution =
+	| { action: "ignore" }
+	| { action: "claimed" }
+	| { action: "return"; response: StoredResponse };
+
+async function resolveExistingKey({
+	db,
+	key,
+	requestHash,
+	expiresAt,
+	ignoreHashMismatch,
+	ignoreExpired,
+}: {
+	db: IdempotencyDb;
+	key: string;
+	requestHash: string;
+	expiresAt: Date;
+	ignoreHashMismatch: boolean;
+	ignoreExpired: boolean;
+}): Promise<ExistingKeyResolution> {
+	const [existing] = await db
+		.select()
+		.from(idempotencyKeys)
+		.where(eq(idempotencyKeys.key, key))
+		.limit(1);
+
+	if (!existing) return { action: "ignore" };
+
+	const expired = !!(
+		existing.expiresAt && new Date(existing.expiresAt) < new Date()
+	);
+	if (expired && ignoreExpired) return { action: "ignore" };
+
+	if (!expired) {
+		if (existing.requestHash !== requestHash) {
+			if (ignoreHashMismatch) return { action: "ignore" };
+			throw new ApiError(
+				422,
+				"IDEMPOTENCY_KEY_REUSED",
+				"Idempotency key already used for different request",
+			);
+		}
+
+		if (existing.status === "processing") {
+			throw new ApiError(
+				409,
+				"REQUEST_IN_PROGRESS",
+				"Request is still being processed",
+			);
+		}
+
+		if (existing.status === "completed" && existing.response) {
+			try {
+				const parsed: unknown = JSON.parse(existing.response);
+				if (
+					typeof parsed === "object" &&
+					parsed !== null &&
+					"statusCode" in parsed
+				) {
+					return { action: "return", response: parsed as StoredResponse };
+				}
+			} catch {
+				// Corrupt JSON — fall through to reclaim
+			}
+		}
+	}
+
+	// Expired rows can be reclaimed regardless of status (including stuck "processing")
+	const reclaimStatuses = expired
+		? ["failed", "completed", "processing"]
+		: ["failed", "completed"];
+
+	const reclaimed = await db
+		.update(idempotencyKeys)
+		.set({
+			status: "processing",
+			requestHash,
+			updatedAt: new Date().toISOString(),
+			expiresAt: expiresAt.toISOString(),
+		})
+		.where(
+			and(
+				eq(idempotencyKeys.key, key),
+				inArray(idempotencyKeys.status, reclaimStatuses),
+			),
+		);
+
+	if ((reclaimed.rowCount ?? 0) === 0) {
+		throw new ApiError(
+			409,
+			"REQUEST_IN_PROGRESS",
+			"Request is still being processed",
+		);
+	}
+
+	return { action: "claimed" };
 }
 
 function hashRequest(request: IdempotentRequest): string {
@@ -191,6 +250,20 @@ function hashRequest(request: IdempotentRequest): string {
 	};
 
 	return createHash("sha256").update(JSON.stringify(data)).digest("hex");
+}
+
+function storageKeyForRequest(
+	request: IdempotentRequest,
+	idempotencyKey: string,
+): string {
+	const subject = request.sub || "anonymous";
+	const subjectHash = sha256Hex(subject);
+	const keyHash = sha256Hex(idempotencyKey);
+	return `${STORAGE_KEY_VERSION}:${subjectHash}:${keyHash}`;
+}
+
+function sha256Hex(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 // Janitor function to clean up expired keys

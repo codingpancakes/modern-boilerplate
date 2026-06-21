@@ -68,7 +68,7 @@ exactly what `pnpm sync-secrets <stage>` pushes. Current registry:
 | Secret | Purpose |
 |---|---|
 | `DATABASE_URL` | Neon Postgres connection string |
-| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`). An empty value disables the `client_id` audience check (local-dev only); auth **fails closed** when it's empty and `STAGE` is `staging`/`production` (`lib/hono/auth.ts` refuses to verify unbound) |
+| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`). An empty value disables the `client_id` audience check (local-dev only); auth **fails closed** unless `STAGE` is exactly `local` or `development` (`lib/hono/auth.ts` refuses to verify unbound) |
 
 ### Feature-dependent
 | Secret | Purpose |

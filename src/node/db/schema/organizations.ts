@@ -85,7 +85,10 @@ export const orgUnits = pgTable(
 );
 
 /**
- * Idempotency Keys table - Prevents duplicate request processing
+ * Idempotency Keys table - prevents duplicate request processing.
+ *
+ * For user-supplied HTTP idempotency keys, `key` stores the internal
+ * subject-scoped storage key, not the raw Idempotency-Key header value.
  */
 export const idempotencyKeys = pgTable(
 	"idempotency_keys",

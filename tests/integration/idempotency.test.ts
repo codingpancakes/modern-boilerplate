@@ -1,4 +1,3 @@
-import { eq } from "drizzle-orm";
 import type { Pool } from "pg";
 import {
 	afterAll,
@@ -78,6 +77,12 @@ const okResponse: StoredResponse = {
 	body: '{"ok":true}',
 };
 
+async function onlyIdempotencyRow() {
+	const rows = await db.select().from(idempotencyKeys);
+	expect(rows).toHaveLength(1);
+	return rows[0];
+}
+
 describe("withIdempotency (real Postgres)", () => {
 	it("runs the handler once and replays the stored response on a repeat with the same key + request", async () => {
 		const handler = vi.fn(() => Promise.resolve(okResponse));
@@ -87,10 +92,9 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(handler).toHaveBeenCalledOnce();
 
 		// The row is now "completed" with the serialized response.
-		const [row] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-replay"));
+		const row = await onlyIdempotencyRow();
+		expect(row?.key).not.toBe("key-replay");
+		expect(row?.key.startsWith("v2:")).toBe(true);
 		expect(row?.status).toBe("completed");
 
 		const second = await withIdempotency(baseRequest("key-replay"), handler);
@@ -135,10 +139,7 @@ describe("withIdempotency (real Postgres)", () => {
 		const inflight = withIdempotency(baseRequest("key-inflight"), slowHandler);
 		// Let the claim INSERT land before the second attempt races in.
 		await vi.waitFor(async () => {
-			const [row] = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(eq(idempotencyKeys.key, "key-inflight"));
+			const row = await onlyIdempotencyRow();
 			expect(row?.status).toBe("processing");
 		});
 
@@ -162,10 +163,7 @@ describe("withIdempotency (real Postgres)", () => {
 			withIdempotency(baseRequest("key-retry"), failingHandler),
 		).rejects.toThrow("handler exploded");
 
-		const [failedRow] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-retry"));
+		const failedRow = await onlyIdempotencyRow();
 		expect(failedRow?.status).toBe("failed");
 
 		// A retry with the same key reclaims the failed lock and re-runs.
@@ -177,11 +175,58 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(result).toEqual(okResponse);
 		expect(recoveringHandler).toHaveBeenCalledOnce();
 
-		const [completedRow] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-retry"));
+		const completedRow = await onlyIdempotencyRow();
 		expect(completedRow?.status).toBe("completed");
+	});
+
+	it("scopes the same idempotency key by subject", async () => {
+		const firstHandler = vi.fn(() => Promise.resolve(okResponse));
+		const secondHandler = vi.fn(() =>
+			Promise.resolve({
+				...okResponse,
+				body: '{"ok":true,"subject":"user-2"}',
+			}),
+		);
+
+		await withIdempotency(baseRequest("shared-key"), firstHandler);
+
+		const second = await withIdempotency(
+			{ ...baseRequest("shared-key"), sub: "user-2" },
+			secondHandler,
+		);
+
+		expect(second.body).toBe('{"ok":true,"subject":"user-2"}');
+		expect(firstHandler).toHaveBeenCalledOnce();
+		expect(secondHandler).toHaveBeenCalledOnce();
+
+		const rows = await db.select().from(idempotencyKeys);
+		expect(rows).toHaveLength(2);
+		expect(new Set(rows.map((row) => row.key)).size).toBe(2);
+		expect(rows.every((row) => row.key.startsWith("v2:"))).toBe(true);
+	});
+
+	it("ignores a mismatched legacy raw-key row so another subject cannot preclaim globally", async () => {
+		await db.insert(idempotencyKeys).values({
+			key: "legacy-preclaim",
+			requestHash: "different-subject-request-hash",
+			status: "processing",
+			createdAt: new Date().toISOString(),
+			expiresAt: new Date(Date.now() + 100_000).toISOString(),
+		});
+
+		const handler = vi.fn(() => Promise.resolve(okResponse));
+		const result = await withIdempotency(
+			baseRequest("legacy-preclaim"),
+			handler,
+		);
+
+		expect(result).toEqual(okResponse);
+		expect(handler).toHaveBeenCalledOnce();
+
+		const rows = await db.select().from(idempotencyKeys);
+		expect(rows).toHaveLength(2);
+		expect(rows.some((row) => row.key === "legacy-preclaim")).toBe(true);
+		expect(rows.some((row) => row.key.startsWith("v2:"))).toBe(true);
 	});
 
 	it("skips the idempotency machinery entirely when no key is supplied", async () => {
