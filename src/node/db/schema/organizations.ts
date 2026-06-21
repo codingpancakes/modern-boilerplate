@@ -112,13 +112,7 @@ export const idempotencyKeys = pgTable(
 			.defaultNow()
 			.notNull(),
 	},
-	(table) => [
-		uniqueIndex("idempotency_keys_key_request_hash_unique").on(
-			table.key,
-			table.requestHash,
-		),
-		index("ix_idempotency_keys_expires").on(table.expiresAt),
-	],
+	(table) => [index("ix_idempotency_keys_expires").on(table.expiresAt)],
 );
 
 /**

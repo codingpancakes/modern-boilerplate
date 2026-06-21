@@ -28,6 +28,7 @@ tests/
 │       └── resolvers/users.test.ts     ✅ Resolvers (mocked db.transaction)
 │
 ├── integration/
+│   ├── db-constraints.test.ts          ✅ Real-DB CHECK/index constraints (Vitest)
 │   ├── db-transactions.test.ts         ✅ Real-DB commit/rollback (Vitest)
 │   ├── helpers/test-db.ts              ✅ Real-DB harness (migrations + citext)
 │   ├── test-all.sh                     ✅ Master runner (live API)
@@ -42,8 +43,8 @@ tests/
     └── test-image-upload.sh            Manual R2 upload walkthrough
 ```
 
-Current totals: **21 unit test files, 145 tests** (~0.8s) plus **6 real-DB
-integration files, 39 tests**.
+Current totals: **21 unit test files, 145 tests** (~0.8s) plus **7 real-DB
+integration files, 41 tests**.
 
 ---
 
