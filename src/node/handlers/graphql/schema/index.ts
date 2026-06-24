@@ -267,7 +267,7 @@ const media = /* GraphQL */ `
 	}
 `;
 
-// audit.graphql — Audit log read API (admin/owner only)
+// audit.graphql — Audit log read API
 const audit = /* GraphQL */ `
 	type AuditLog {
 		id: ID!
@@ -288,10 +288,11 @@ const audit = /* GraphQL */ `
 	}
 
 	extend type Query {
-		# Returns audit logs for an organization the caller administers.
-		# Requires ADMIN role or higher in the target organization.
+		# With organizationId: returns logs for an organization the caller administers.
+		# Without organizationId: returns org-less system/user logs for OPERATOR users.
 		auditLogs(
-			organizationId: ID!
+			organizationId: ID
+			userId: ID
 			limit: Int
 			action: String
 			resourceType: String

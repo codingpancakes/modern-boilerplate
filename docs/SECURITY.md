@@ -44,10 +44,11 @@ rules remain the place for global/per-path limits.
 - Verifies signature, expiration, issuer, and audience (`WORKOS_CLIENT_ID` binding)
 - JWKS fetched from WorkOS and cached with TTL
 - Verified claims land on `c.get("claims")` — route code never re-parses tokens
-- **Fails closed in deployed environments:** an empty `WORKOS_CLIENT_ID` disables the
+- **Fails closed unless explicitly local:** an empty `WORKOS_CLIENT_ID` disables the
   `client_id` audience binding (intended only for local dev), which would accept any
-  WorkOS-signed token. When `STAGE` is `staging` or `production`, verification refuses
-  to run with an empty client id rather than verifying unbound
+  WorkOS-signed token. Verification refuses to run with an empty client id unless
+  `STAGE` is exactly `local` or `development`, so an unset/typoed stage cannot
+  silently verify unbound
 
 **Flow:**
 ```

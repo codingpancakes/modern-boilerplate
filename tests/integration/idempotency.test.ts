@@ -20,18 +20,20 @@ const { getDbMock } = vi.hoisted(() => ({ getDbMock: vi.fn() }));
 
 vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 
-import { idempotencyKeys } from "@/db/schema/index";
+import { idempotencyKeys, users } from "@/db/schema/index";
 import { ApiError } from "@/lib/errors";
 import {
 	cleanupExpiredKeys,
 	type IdempotentRequest,
 	type StoredResponse,
 	withIdempotency,
+	withTransactionalIdempotency,
 } from "@/lib/idempotency";
 import {
 	createTestDb,
 	type TestDb,
 	truncateIdempotencyKeys,
+	truncateUserGraph,
 } from "./helpers/test-db";
 
 /**
@@ -56,6 +58,11 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+	await pool.query(`
+		DROP TRIGGER IF EXISTS reject_idempotency_completion ON idempotency_keys;
+		DROP FUNCTION IF EXISTS reject_idempotency_completion();
+	`);
+	await truncateUserGraph(pool);
 	await truncateIdempotencyKeys(pool);
 });
 
@@ -78,6 +85,12 @@ const okResponse: StoredResponse = {
 	body: '{"ok":true}',
 };
 
+async function onlyIdempotencyRow() {
+	const rows = await db.select().from(idempotencyKeys);
+	expect(rows).toHaveLength(1);
+	return rows[0];
+}
+
 describe("withIdempotency (real Postgres)", () => {
 	it("runs the handler once and replays the stored response on a repeat with the same key + request", async () => {
 		const handler = vi.fn(() => Promise.resolve(okResponse));
@@ -87,10 +100,9 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(handler).toHaveBeenCalledOnce();
 
 		// The row is now "completed" with the serialized response.
-		const [row] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-replay"));
+		const row = await onlyIdempotencyRow();
+		expect(row?.key).not.toBe("key-replay");
+		expect(row?.key.startsWith("v2:")).toBe(true);
 		expect(row?.status).toBe("completed");
 
 		const second = await withIdempotency(baseRequest("key-replay"), handler);
@@ -135,10 +147,7 @@ describe("withIdempotency (real Postgres)", () => {
 		const inflight = withIdempotency(baseRequest("key-inflight"), slowHandler);
 		// Let the claim INSERT land before the second attempt races in.
 		await vi.waitFor(async () => {
-			const [row] = await db
-				.select()
-				.from(idempotencyKeys)
-				.where(eq(idempotencyKeys.key, "key-inflight"));
+			const row = await onlyIdempotencyRow();
 			expect(row?.status).toBe("processing");
 		});
 
@@ -162,10 +171,7 @@ describe("withIdempotency (real Postgres)", () => {
 			withIdempotency(baseRequest("key-retry"), failingHandler),
 		).rejects.toThrow("handler exploded");
 
-		const [failedRow] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-retry"));
+		const failedRow = await onlyIdempotencyRow();
 		expect(failedRow?.status).toBe("failed");
 
 		// A retry with the same key reclaims the failed lock and re-runs.
@@ -177,11 +183,58 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(result).toEqual(okResponse);
 		expect(recoveringHandler).toHaveBeenCalledOnce();
 
-		const [completedRow] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, "key-retry"));
+		const completedRow = await onlyIdempotencyRow();
 		expect(completedRow?.status).toBe("completed");
+	});
+
+	it("scopes the same idempotency key by subject", async () => {
+		const firstHandler = vi.fn(() => Promise.resolve(okResponse));
+		const secondHandler = vi.fn(() =>
+			Promise.resolve({
+				...okResponse,
+				body: '{"ok":true,"subject":"user-2"}',
+			}),
+		);
+
+		await withIdempotency(baseRequest("shared-key"), firstHandler);
+
+		const second = await withIdempotency(
+			{ ...baseRequest("shared-key"), sub: "user-2" },
+			secondHandler,
+		);
+
+		expect(second.body).toBe('{"ok":true,"subject":"user-2"}');
+		expect(firstHandler).toHaveBeenCalledOnce();
+		expect(secondHandler).toHaveBeenCalledOnce();
+
+		const rows = await db.select().from(idempotencyKeys);
+		expect(rows).toHaveLength(2);
+		expect(new Set(rows.map((row) => row.key)).size).toBe(2);
+		expect(rows.every((row) => row.key.startsWith("v2:"))).toBe(true);
+	});
+
+	it("ignores a mismatched legacy raw-key row so another subject cannot preclaim globally", async () => {
+		await db.insert(idempotencyKeys).values({
+			key: "legacy-preclaim",
+			requestHash: "different-subject-request-hash",
+			status: "processing",
+			createdAt: new Date().toISOString(),
+			expiresAt: new Date(Date.now() + 100_000).toISOString(),
+		});
+
+		const handler = vi.fn(() => Promise.resolve(okResponse));
+		const result = await withIdempotency(
+			baseRequest("legacy-preclaim"),
+			handler,
+		);
+
+		expect(result).toEqual(okResponse);
+		expect(handler).toHaveBeenCalledOnce();
+
+		const rows = await db.select().from(idempotencyKeys);
+		expect(rows).toHaveLength(2);
+		expect(rows.some((row) => row.key === "legacy-preclaim")).toBe(true);
+		expect(rows.some((row) => row.key.startsWith("v2:"))).toBe(true);
 	});
 
 	it("skips the idempotency machinery entirely when no key is supplied", async () => {
@@ -194,6 +247,83 @@ describe("withIdempotency (real Postgres)", () => {
 		expect(handler).toHaveBeenCalledOnce();
 		const rows = await db.select().from(idempotencyKeys);
 		expect(rows).toHaveLength(0);
+	});
+});
+
+describe("withTransactionalIdempotency (real Postgres)", () => {
+	it("rolls back the handler mutation when storing the completed marker fails", async () => {
+		const [user] = await db
+			.insert(users)
+			.values({
+				email: "tx-idempotency@example.com",
+				type: "MEMBER",
+				firstName: "Before",
+			})
+			.returning({ id: users.id });
+		expect(user).toBeDefined();
+
+		await pool.query(`
+			CREATE OR REPLACE FUNCTION reject_idempotency_completion()
+			RETURNS trigger AS $$
+			BEGIN
+				RAISE EXCEPTION 'forced idempotency completion failure';
+			END;
+			$$ LANGUAGE plpgsql;
+
+			CREATE TRIGGER reject_idempotency_completion
+			BEFORE UPDATE ON idempotency_keys
+			FOR EACH ROW
+			WHEN (NEW.status = 'completed')
+			EXECUTE FUNCTION reject_idempotency_completion();
+		`);
+
+		const handler = vi.fn(async (tx) => {
+			await tx
+				.update(users)
+				.set({ firstName: "After" })
+				.where(eq(users.id, user?.id));
+			return okResponse;
+		});
+
+		await expect(
+			withTransactionalIdempotency(
+				baseRequest("transactional-complete-fails"),
+				handler,
+			),
+		).rejects.toThrow('Failed query: update "idempotency_keys"');
+
+		const [afterFailure] = await db
+			.select()
+			.from(users)
+			.where(eq(users.id, user?.id))
+			.limit(1);
+		expect(afterFailure?.firstName).toBe("Before");
+		expect(handler).toHaveBeenCalledOnce();
+
+		const failedRow = await onlyIdempotencyRow();
+		expect(failedRow?.status).toBe("failed");
+
+		await pool.query(`
+			DROP TRIGGER reject_idempotency_completion ON idempotency_keys;
+			DROP FUNCTION reject_idempotency_completion();
+		`);
+
+		const retry = await withTransactionalIdempotency(
+			baseRequest("transactional-complete-fails"),
+			handler,
+		);
+		expect(retry).toEqual(okResponse);
+		expect(handler).toHaveBeenCalledTimes(2);
+
+		const [afterRetry] = await db
+			.select()
+			.from(users)
+			.where(eq(users.id, user?.id))
+			.limit(1);
+		expect(afterRetry?.firstName).toBe("After");
+
+		const completedRow = await onlyIdempotencyRow();
+		expect(completedRow?.status).toBe("completed");
 	});
 });
 

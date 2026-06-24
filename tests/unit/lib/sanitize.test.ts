@@ -12,10 +12,12 @@ describe("sanitizeObject", () => {
 		const out = sanitizeObject({
 			photoUrl: "javascript:alert(1)",
 			website_url: "https://example.com/x",
+			redirectUrl: "http://example.com/insecure",
 		});
 		// javascript: scheme is stripped to empty; valid https URL is preserved
 		expect(out.photoUrl).toBe("");
 		expect(out.website_url).toBe("https://example.com/x");
+		expect(out.redirectUrl).toBe("");
 	});
 
 	it("recurses into nested objects and arrays", () => {

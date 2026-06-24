@@ -1,0 +1,43 @@
+# CodeQL — static application security testing (SAST).
+# Runs GitHub's semantic analysis over the TypeScript source to catch
+# injection, auth, and data-flow bugs that the unit/integration suite and a
+# human reviewer can miss. Results surface in the repo Security tab and as PR
+# annotations. Free for public repos and GitHub Advanced Security orgs.
+name: CodeQL
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+  schedule:
+    # Weekly full scan catches newly-published query patterns against unchanged
+    # code (off-peak Monday 07:17 UTC; odd minute avoids the cron herd).
+    - cron: "17 7 * * 1"
+
+# CodeQL needs to write analysis results; everything else stays read-only.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-extended adds higher-signal security queries on top of the
+          # default set; security-and-quality would add style noise we don't want.
+          queries: security-extended
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript-typescript"

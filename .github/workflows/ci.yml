@@ -39,6 +39,18 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Full history so the secret scan covers every commit, not just the tip.
+          fetch-depth: 0
+      - name: Secret scan (gitleaks, BLOCKING)
+        # Self-contained pinned binary — no marketplace action or license needed,
+        # works on private forks. Scans the full git history and fails the build
+        # if any credential pattern is found. --redact keeps secrets out of logs.
+        run: |
+          GITLEAKS_VERSION=8.18.4
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --no-banner --exit-code 1
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:

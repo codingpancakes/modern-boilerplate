@@ -1,6 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import { auditLogs, organizationMembers } from "../../../db/schema/index";
+import {
+	auditLogs,
+	organizationMembers,
+	users,
+} from "../../../db/schema/index";
 import type { GraphQLContext } from "../context";
 
 const ADMIN_ROLES = new Set(["ADMIN", "OWNER"]);
@@ -29,24 +33,44 @@ async function requireAuditReadAccess(
 	}
 }
 
+async function requireSystemAuditReadAccess(
+	context: GraphQLContext,
+): Promise<void> {
+	const user = await context.db.query.users.findFirst({
+		where: eq(users.id, context.userId),
+	});
+
+	if (user?.type !== "OPERATOR") {
+		throw new GraphQLError("Requires OPERATOR user type", {
+			extensions: { code: "FORBIDDEN" },
+		});
+	}
+}
+
 export const auditResolvers = {
 	Query: {
 		auditLogs: async (
 			_parent: unknown,
 			{
 				organizationId,
+				userId,
 				limit = 50,
 				action,
 				resourceType,
 			}: {
-				organizationId: string;
+				organizationId?: string | null;
+				userId?: string | null;
 				limit?: number;
-				action?: string;
-				resourceType?: string;
+				action?: string | null;
+				resourceType?: string | null;
 			},
 			context: GraphQLContext,
 		) => {
-			await requireAuditReadAccess(context, organizationId);
+			if (organizationId) {
+				await requireAuditReadAccess(context, organizationId);
+			} else {
+				await requireSystemAuditReadAccess(context);
+			}
 
 			const clampedLimit = Math.min(Math.max(limit ?? 50, 1), 200);
 
@@ -55,7 +79,10 @@ export const auditResolvers = {
 				.from(auditLogs)
 				.where(
 					and(
-						eq(auditLogs.organizationId, organizationId),
+						organizationId
+							? eq(auditLogs.organizationId, organizationId)
+							: isNull(auditLogs.organizationId),
+						userId ? eq(auditLogs.userId, userId) : undefined,
 						action ? eq(auditLogs.action, action) : undefined,
 						resourceType ? eq(auditLogs.resourceType, resourceType) : undefined,
 					),

@@ -24,8 +24,9 @@ export type WorkosTokenClaims = JWTPayload & {
 	permissions?: unknown;
 };
 
-const DEFAULT_AUTH_ISSUER =
-	process.env.AUTH_ISSUER ?? "https://api.workos.com/";
+function defaultAuthIssuer(): string {
+	return process.env.AUTH_ISSUER ?? "https://api.workos.com/";
+}
 
 /** Build the remote JWKS key set for a WorkOS client. */
 export function createWorkosJwks(clientId: string): JWTVerifyGetKey {
@@ -75,7 +76,7 @@ export async function verifyWorkosToken(
 ): Promise<WorkosTokenClaims> {
 	const {
 		clientId,
-		authIssuer = DEFAULT_AUTH_ISSUER,
+		authIssuer = defaultAuthIssuer(),
 		// Outer guard against a hung verify. Must sit ABOVE the JWKS fetch
 		// timeout (6s) so it never cuts off a legitimate cold-start fetch.
 		timeoutMs = 10_000,

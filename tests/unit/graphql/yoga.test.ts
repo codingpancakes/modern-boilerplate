@@ -1,6 +1,8 @@
+import { parse } from "graphql";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
+import { calculateComplexity } from "@/handlers/graphql/plugins";
 import type { AppEnv } from "@/lib/hono/types";
 
 // The route builds its per-request context via createContext, which needs a
@@ -166,6 +168,17 @@ describe("GraphQL Yoga route", () => {
 		const body = await res.json();
 		expect(body.errors[0].message).toMatch(/exceeds maximum 150/);
 		expect(body.errors[0].extensions).toEqual({ code: "BAD_USER_INPUT" });
+	});
+
+	it("clamps non-positive INT literal list multipliers to one", () => {
+		const negative = parse(
+			"query { images(limit: -1) { images { key url size } } }",
+		);
+		const one = parse("query { images(limit: 1) { images { key url size } } }");
+
+		expect(calculateComplexity(negative, null)).toBe(
+			calculateComplexity(one, null),
+		);
 	});
 
 	it("rejects more than 5 mutations per request", async () => {

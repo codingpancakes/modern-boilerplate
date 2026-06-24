@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, or, type SQL } from "drizzle-orm";
 import { idempotencyKeys } from "../db/schema/index";
-import { getDb } from "./db";
+import { type DbClient, type DbTransaction, getDb } from "./db";
 import { ApiError } from "./errors";
 
 export interface IdempotencyOptions {
@@ -40,6 +40,43 @@ export interface StoredResponse {
 	body?: string;
 }
 
+const STORAGE_KEY_VERSION = "v2";
+const PROCESSING = "processing";
+const FAILED = "failed";
+const COMPLETED = "completed";
+
+type IdempotencyDb = Awaited<ReturnType<typeof getDb>>;
+
+type CompletedMode = "return" | "returnStoredResponse" | "reclaim";
+
+export type IdempotencyClaimResult =
+	| { status: "claimed"; key: string; source: "inserted" | "reclaimed" }
+	| { status: "completed"; key: string; response?: StoredResponse }
+	| { status: "in_progress"; key: string }
+	| { status: "mismatched"; key: string }
+	| { status: "ignored"; key: string };
+
+export interface ClaimIdempotencyKeyOptions {
+	key: string;
+	requestHash: string;
+	expiresAt: Date;
+	completedMode: CompletedMode;
+	ignoreHashMismatch?: boolean;
+	ignoreExpired?: boolean;
+	reclaimFailed?: boolean;
+	reclaimCompleted?: boolean;
+	reclaimExpiredProcessing?: boolean;
+	staleProcessingMs?: number;
+	resetCreatedAtOnReclaim?: boolean;
+	insertIfMissing?: boolean;
+}
+
+/**
+ * Generic idempotency wrapper for non-DB or low-risk handlers.
+ *
+ * DB mutations whose side effects must commit atomically with the stored
+ * idempotency response should use {@link withTransactionalIdempotency}.
+ */
 export async function withIdempotency(
 	request: IdempotentRequest,
 	handler: () => Promise<StoredResponse>,
@@ -53,100 +90,9 @@ export async function withIdempotency(
 	}
 
 	const db = await getDb();
-	const requestHash = hashRequest(request);
-	const ttl = options.ttlSeconds || 86400; // 24 hours default
-	const expiresAt = new Date(Date.now() + ttl * 1000);
-
-	// Atomic upsert: INSERT the key as "processing" or DO NOTHING if it already exists.
-	// This eliminates the race condition where two concurrent requests both pass a
-	// SELECT-then-INSERT check before either inserts.
-	const insertResult = await db
-		.insert(idempotencyKeys)
-		.values({
-			key: idempotencyKey,
-			requestHash,
-			status: "processing",
-			createdAt: new Date().toISOString(),
-			expiresAt: expiresAt.toISOString(),
-		})
-		.onConflictDoNothing({ target: idempotencyKeys.key });
-
-	// If insert succeeded (rowCount > 0), we own the key — proceed to execute.
-	// If insert was a no-op (rowCount === 0), the key already existed — check its state.
-	if ((insertResult.rowCount ?? 0) === 0) {
-		const [existing] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, idempotencyKey))
-			.limit(1);
-
-		let expired = false;
-		if (existing) {
-			expired = !!(
-				existing.expiresAt && new Date(existing.expiresAt) < new Date()
-			);
-
-			if (!expired) {
-				if (existing.requestHash !== requestHash) {
-					throw new ApiError(
-						422,
-						"IDEMPOTENCY_KEY_REUSED",
-						"Idempotency key already used for different request",
-					);
-				}
-
-				if (existing.status === "processing") {
-					throw new ApiError(
-						409,
-						"REQUEST_IN_PROGRESS",
-						"Request is still being processed",
-					);
-				}
-
-				if (existing.status === "completed" && existing.response) {
-					try {
-						const parsed: unknown = JSON.parse(existing.response);
-						if (
-							typeof parsed === "object" &&
-							parsed !== null &&
-							"statusCode" in parsed
-						) {
-							return parsed as StoredResponse;
-						}
-					} catch {
-						// Corrupt JSON — fall through to reclaim
-					}
-				}
-			}
-		}
-
-		// Expired rows can be reclaimed regardless of status (including stuck "processing")
-		const reclaimStatuses = expired
-			? ["failed", "completed", "processing"]
-			: ["failed", "completed"];
-
-		const reclaimed = await db
-			.update(idempotencyKeys)
-			.set({
-				status: "processing",
-				requestHash,
-				updatedAt: new Date().toISOString(),
-				expiresAt: expiresAt.toISOString(),
-			})
-			.where(
-				and(
-					eq(idempotencyKeys.key, idempotencyKey),
-					inArray(idempotencyKeys.status, reclaimStatuses),
-				),
-			);
-
-		if ((reclaimed.rowCount ?? 0) === 0) {
-			throw new ApiError(
-				409,
-				"REQUEST_IN_PROGRESS",
-				"Request is still being processed",
-			);
-		}
+	const claimed = await claimRequestIdempotencyKey(db, request, options);
+	if (claimed.status === "completed") {
+		return claimed.response;
 	}
 
 	try {
@@ -154,29 +100,304 @@ export async function withIdempotency(
 		const response = await handler();
 
 		// Store successful response
-		await db
-			.update(idempotencyKeys)
-			.set({
-				status: "completed",
-				response: JSON.stringify(response),
-				completedAt: new Date().toISOString(),
-				updatedAt: new Date().toISOString(),
-			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+		await completeIdempotencyKey(db, claimed.key, response);
 
 		return response;
 	} catch (error) {
 		// Mark as failed
-		await db
-			.update(idempotencyKeys)
-			.set({
-				status: "failed",
-				updatedAt: new Date().toISOString(),
-			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+		await failIdempotencyKey(db, claimed.key);
 
 		throw error;
 	}
+}
+
+/**
+ * Transactional idempotency wrapper for DB mutations.
+ *
+ * The request claim is acquired first, then the handler and completed marker
+ * are committed in the same transaction. If either the mutation or completion
+ * write fails, the transaction rolls back and the key is marked failed outside
+ * the transaction so a retry can reclaim it.
+ */
+export async function withTransactionalIdempotency(
+	request: IdempotentRequest,
+	handler: (tx: DbTransaction) => Promise<StoredResponse>,
+	options: IdempotencyOptions = {},
+): Promise<StoredResponse> {
+	const idempotencyKey = request.key;
+	const db = await getDb();
+
+	if (!idempotencyKey) {
+		return db.transaction(handler);
+	}
+
+	const claimed = await claimRequestIdempotencyKey(db, request, options);
+	if (claimed.status === "completed") {
+		return claimed.response;
+	}
+
+	try {
+		return await db.transaction(async (tx) => {
+			const response = await handler(tx);
+			await completeIdempotencyKey(tx, claimed.key, response);
+			return response;
+		});
+	} catch (error) {
+		await failIdempotencyKey(db, claimed.key);
+		throw error;
+	}
+}
+
+type ClaimedRequestKey =
+	| { status: "claimed"; key: string }
+	| { status: "completed"; response: StoredResponse };
+
+async function claimRequestIdempotencyKey(
+	db: IdempotencyDb,
+	request: IdempotentRequest,
+	options: IdempotencyOptions,
+): Promise<ClaimedRequestKey> {
+	const idempotencyKey = request.key;
+	if (!idempotencyKey) {
+		throw new Error("Idempotency key is required before claiming");
+	}
+
+	const requestHash = hashRequest(request);
+	const storageKey = storageKeyForRequest(request, idempotencyKey);
+	const ttl = options.ttlSeconds || 86400; // 24 hours default
+	const expiresAt = new Date(Date.now() + ttl * 1000);
+	let claimedKey = storageKey;
+
+	// Compatibility for rows written before keys were subject-scoped. Only a
+	// same-subject/same-request legacy row is honored; a different request hash
+	// is ignored so another caller cannot preclaim a user's key globally.
+	const legacyResolution = await claimIdempotencyKey(db, {
+		key: idempotencyKey,
+		requestHash,
+		expiresAt,
+		completedMode: "returnStoredResponse",
+		ignoreHashMismatch: true,
+		ignoreExpired: true,
+		reclaimFailed: true,
+		reclaimCompleted: true,
+		reclaimExpiredProcessing: true,
+		insertIfMissing: false,
+	});
+	if (legacyResolution.status === "completed" && legacyResolution.response) {
+		return { status: "completed", response: legacyResolution.response };
+	}
+	if (legacyResolution.status === "claimed") {
+		claimedKey = idempotencyKey;
+	}
+	if (legacyResolution.status === "in_progress") {
+		throw new ApiError(
+			409,
+			"REQUEST_IN_PROGRESS",
+			"Request is still being processed",
+		);
+	}
+
+	if (claimedKey === storageKey) {
+		const resolution = await claimIdempotencyKey(db, {
+			key: storageKey,
+			requestHash,
+			expiresAt,
+			completedMode: "returnStoredResponse",
+			reclaimFailed: true,
+			reclaimCompleted: true,
+			reclaimExpiredProcessing: true,
+		});
+		if (resolution.status === "completed" && resolution.response) {
+			return { status: "completed", response: resolution.response };
+		}
+		if (resolution.status === "mismatched") {
+			throw new ApiError(
+				422,
+				"IDEMPOTENCY_KEY_REUSED",
+				"Idempotency key already used for different request",
+			);
+		}
+		if (resolution.status === "in_progress") {
+			throw new ApiError(
+				409,
+				"REQUEST_IN_PROGRESS",
+				"Request is still being processed",
+			);
+		}
+		claimedKey = storageKey;
+	}
+
+	return { status: "claimed", key: claimedKey };
+}
+
+export async function claimIdempotencyKey(
+	db: DbClient,
+	options: ClaimIdempotencyKeyOptions,
+): Promise<IdempotencyClaimResult> {
+	const {
+		key,
+		requestHash,
+		expiresAt,
+		completedMode,
+		ignoreHashMismatch = false,
+		ignoreExpired = false,
+		reclaimFailed = false,
+		reclaimCompleted = false,
+		reclaimExpiredProcessing = false,
+		staleProcessingMs,
+		resetCreatedAtOnReclaim = false,
+		insertIfMissing = true,
+	} = options;
+	const now = new Date();
+	const nowIso = now.toISOString();
+
+	if (insertIfMissing) {
+		const inserted = await db
+			.insert(idempotencyKeys)
+			.values({
+				key,
+				requestHash,
+				status: PROCESSING,
+				createdAt: nowIso,
+				expiresAt: expiresAt.toISOString(),
+			})
+			.onConflictDoNothing({ target: idempotencyKeys.key })
+			.returning({ key: idempotencyKeys.key });
+
+		if (inserted.length > 0) {
+			return { status: "claimed", key, source: "inserted" };
+		}
+	}
+
+	const [existing] = await db
+		.select()
+		.from(idempotencyKeys)
+		.where(eq(idempotencyKeys.key, key))
+		.limit(1);
+
+	if (!existing) {
+		return insertIfMissing
+			? { status: "in_progress", key }
+			: { status: "ignored", key };
+	}
+
+	const expired = !!(
+		existing.expiresAt && new Date(existing.expiresAt) < new Date()
+	);
+	if (expired && ignoreExpired) return { status: "ignored", key };
+
+	if (!expired) {
+		if (existing.requestHash !== requestHash) {
+			if (ignoreHashMismatch) return { status: "ignored", key };
+			return { status: "mismatched", key };
+		}
+
+		if (existing.status === COMPLETED) {
+			if (completedMode === "return") {
+				return { status: "completed", key };
+			}
+			if (completedMode === "returnStoredResponse") {
+				const response = parseStoredResponse(existing.response);
+				if (response) return { status: "completed", key, response };
+			}
+		}
+	}
+
+	const reclaimStatuses: string[] = [];
+	if (reclaimFailed) reclaimStatuses.push(FAILED);
+	if (reclaimCompleted) reclaimStatuses.push(COMPLETED);
+
+	const predicates: SQL[] = [];
+	if (reclaimStatuses.length > 0) {
+		predicates.push(inArray(idempotencyKeys.status, reclaimStatuses));
+	}
+	if (expired && reclaimExpiredProcessing) {
+		predicates.push(eq(idempotencyKeys.status, PROCESSING));
+	}
+	if (staleProcessingMs !== undefined) {
+		const staleThreshold = new Date(
+			now.getTime() - staleProcessingMs,
+		).toISOString();
+		const stalePredicate = and(
+			eq(idempotencyKeys.status, PROCESSING),
+			lt(idempotencyKeys.createdAt, staleThreshold),
+		);
+		if (stalePredicate) predicates.push(stalePredicate);
+	}
+
+	const [firstPredicate, ...remainingPredicates] = predicates;
+	if (!firstPredicate) return { status: "in_progress", key };
+	const reclaimPredicate =
+		remainingPredicates.length === 0
+			? firstPredicate
+			: or(firstPredicate, ...remainingPredicates);
+	if (!reclaimPredicate) return { status: "in_progress", key };
+
+	const updateValues = {
+		status: PROCESSING,
+		requestHash,
+		updatedAt: nowIso,
+		expiresAt: expiresAt.toISOString(),
+		...(resetCreatedAtOnReclaim ? { createdAt: nowIso } : {}),
+	};
+
+	const reclaimed = await db
+		.update(idempotencyKeys)
+		.set(updateValues)
+		.where(and(eq(idempotencyKeys.key, key), reclaimPredicate))
+		.returning({ key: idempotencyKeys.key });
+
+	return reclaimed.length > 0
+		? { status: "claimed", key, source: "reclaimed" }
+		: { status: "in_progress", key };
+}
+
+export async function completeIdempotencyKey(
+	db: DbClient,
+	key: string,
+	response?: StoredResponse,
+): Promise<void> {
+	await db
+		.update(idempotencyKeys)
+		.set({
+			status: COMPLETED,
+			...(response ? { response: JSON.stringify(response) } : {}),
+			completedAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(idempotencyKeys.key, key));
+}
+
+export async function failIdempotencyKey(
+	db: DbClient,
+	key: string,
+): Promise<void> {
+	await db
+		.update(idempotencyKeys)
+		.set({
+			status: FAILED,
+			updatedAt: new Date().toISOString(),
+		})
+		.where(eq(idempotencyKeys.key, key));
+}
+
+function parseStoredResponse(
+	response: string | null,
+): StoredResponse | undefined {
+	if (!response) return undefined;
+	try {
+		const parsed: unknown = JSON.parse(response);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			"statusCode" in parsed
+		) {
+			return parsed as StoredResponse;
+		}
+	} catch {
+		// Corrupt JSON — callers configured for reclaim can re-run the handler.
+	}
+	return undefined;
 }
 
 function hashRequest(request: IdempotentRequest): string {
@@ -191,6 +412,20 @@ function hashRequest(request: IdempotentRequest): string {
 	};
 
 	return createHash("sha256").update(JSON.stringify(data)).digest("hex");
+}
+
+function storageKeyForRequest(
+	request: IdempotentRequest,
+	idempotencyKey: string,
+): string {
+	const subject = request.sub || "anonymous";
+	const subjectHash = sha256Hex(subject);
+	const keyHash = sha256Hex(idempotencyKey);
+	return `${STORAGE_KEY_VERSION}:${subjectHash}:${keyHash}`;
+}
+
+function sha256Hex(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 // Janitor function to clean up expired keys

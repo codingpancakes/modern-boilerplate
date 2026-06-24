@@ -49,6 +49,14 @@ function getWebhookSecret(): string {
 	return secret;
 }
 
+function parseWebhookPayload(payload: string): unknown {
+	try {
+		return JSON.parse(payload);
+	} catch {
+		throw Errors.BadRequest("Malformed JSON payload");
+	}
+}
+
 // Reject webhook payloads older than 5 minutes to prevent replay attacks
 export const WEBHOOK_TIMESTAMP_TOLERANCE_MS = 5 * 60 * 1000;
 
@@ -206,7 +214,10 @@ webhooks.post("/workos", async (c) => {
 	logger.info("Signature verified");
 
 	// Parse and validate webhook event
-	const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
+	const webhookEvent = validate(
+		webhookSchemas.workos,
+		parseWebhookPayload(payload),
+	);
 
 	if (c.env.WEBHOOK_QUEUE) {
 		// Durable path: hand the verified event to Cloudflare Queues. Retries +

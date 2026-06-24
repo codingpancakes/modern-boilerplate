@@ -191,11 +191,13 @@ function sanitizeUrlValue(value: string): string {
 	// Block protocol-relative URLs (//host/path)
 	if (value.startsWith("//")) return "";
 
-	// For absolute URLs, validate they have a proper http(s) scheme
+	// For absolute URLs, require HTTPS. URL-like keys are often later used as
+	// redirects, images, or fetch targets; preserving http:// would create an
+	// unnecessary downgrade/open-redirect footgun.
 	if (value.includes("://")) {
 		try {
 			const parsed = new URL(value);
-			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+			if (parsed.protocol !== "https:") {
 				return "";
 			}
 		} catch {

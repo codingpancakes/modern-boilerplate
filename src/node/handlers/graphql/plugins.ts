@@ -19,6 +19,7 @@ import {
 } from "../../lib/graphql-error-codes";
 import { createLogger } from "../../lib/logger";
 import { captureException, flush as flushSentry } from "../../lib/sentry";
+import { isDevLikeStage } from "../../lib/stage";
 import type { GraphQLContext } from "./context";
 
 /**
@@ -56,8 +57,7 @@ export const MAX_QUERY_DEPTH = 10;
  * request.
  */
 export function isDevelopmentStage(): boolean {
-	const stage = process.env.STAGE ?? "";
-	return stage !== "production" && stage !== "staging";
+	return isDevLikeStage();
 }
 
 // --- Query complexity (inline — no extra dep) ---
@@ -73,7 +73,10 @@ function getListMultiplier(
 		if (arg.name.value === "limit" || arg.name.value === "first") {
 			if (arg.value.kind === Kind.INT) {
 				return Math.min(
-					Number.parseInt(arg.value.value, 10) || DEFAULT_LIST_MULTIPLIER,
+					Math.max(
+						1,
+						Number.parseInt(arg.value.value, 10) || DEFAULT_LIST_MULTIPLIER,
+					),
 					MAX_LIST_MULTIPLIER,
 				);
 			}

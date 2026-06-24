@@ -7,7 +7,7 @@ import {
 	logAudit,
 } from "./audit";
 import { getDb } from "./db";
-import { errorMessage } from "./error-utils";
+import { isUniqueConstraintViolation } from "./error-utils";
 import { Errors } from "./errors";
 import { createUserWithIdentity } from "./services/user-provisioning";
 
@@ -99,13 +99,7 @@ export async function getUserIdFromClaims(
 		return newUserId;
 	} catch (err) {
 		// Unique-constraint violation means a concurrent request already provisioned
-		const msg = errorMessage(err);
-		const isUniqueViolation =
-			msg.includes("unique") ||
-			msg.includes("duplicate") ||
-			msg.includes("23505");
-
-		if (isUniqueViolation) {
+		if (isUniqueConstraintViolation(err)) {
 			const retry = await lookup();
 			if (retry[0]?.userId) {
 				return retry[0].userId;

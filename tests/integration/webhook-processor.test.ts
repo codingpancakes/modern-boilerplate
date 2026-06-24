@@ -19,8 +19,11 @@ const { getDbMock } = vi.hoisted(() => ({ getDbMock: vi.fn() }));
 vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 
 import {
+	AUDIT_ACTIONS,
+	auditLogs,
 	authIdentities,
 	idempotencyKeys,
+	organizationMembers,
 	organizations,
 	users,
 } from "@/db/schema/index";
@@ -86,6 +89,40 @@ function userCreatedEvent(
 	};
 }
 
+function userUpdatedEvent(
+	eventId: string,
+	workosUserId: string,
+): WorkOSWebhookEvent {
+	return {
+		id: eventId,
+		event: "user.updated",
+		data: {
+			id: workosUserId,
+			email: "ada.updated@example.com",
+			first_name: "Augusta",
+			last_name: "King",
+		},
+		created_at: "2026-06-14T00:01:00Z",
+	};
+}
+
+function userDeletedEvent(
+	eventId: string,
+	workosUserId: string,
+): WorkOSWebhookEvent {
+	return {
+		id: eventId,
+		event: "user.deleted",
+		data: {
+			id: workosUserId,
+			email: "ada.updated@example.com",
+			first_name: "Augusta",
+			last_name: "King",
+		},
+		created_at: "2026-06-14T00:02:00Z",
+	};
+}
+
 function orgCreatedEvent(
 	eventId: string,
 	workosOrgId: string,
@@ -95,6 +132,45 @@ function orgCreatedEvent(
 		event: "organization.created",
 		data: { id: workosOrgId, name: "Acme Inc" },
 		created_at: "2026-06-14T00:00:00Z",
+	};
+}
+
+function orgUpdatedEvent(
+	eventId: string,
+	workosOrgId: string,
+): WorkOSWebhookEvent {
+	return {
+		id: eventId,
+		event: "organization.updated",
+		data: { id: workosOrgId, name: "Acme Updated" },
+		created_at: "2026-06-14T00:01:00Z",
+	};
+}
+
+function orgDeletedEvent(
+	eventId: string,
+	workosOrgId: string,
+): WorkOSWebhookEvent {
+	return {
+		id: eventId,
+		event: "organization.deleted",
+		data: { id: workosOrgId, name: "Acme Updated" },
+		created_at: "2026-06-14T00:02:00Z",
+	};
+}
+
+function authEvent(eventId: string): WorkOSWebhookEvent {
+	return {
+		id: eventId,
+		event: "authentication.password_failed",
+		data: {
+			user_id: "user_workos_auth",
+			email: "auth@example.com",
+			ip_address: "203.0.113.10",
+			user_agent: "Vitest",
+			type: "password",
+		},
+		created_at: "2026-06-14T00:03:00Z",
 	};
 }
 
@@ -129,6 +205,14 @@ describe("processWorkosEvent (real Postgres)", () => {
 			.where(eq(idempotencyKeys.key, "workos-webhook-evt_user_1"));
 		expect(lock?.status).toBe("completed");
 		expect(lock?.completedAt).toBeTruthy();
+
+		const userAuditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, provisionedUserId));
+		expect(userAuditRows).toHaveLength(1);
+		expect(userAuditRows[0]?.action).toBe("CREATE");
+		expect(userAuditRows[0]?.resourceType).toBe("USER");
 	});
 
 	it("is a no-op when the SAME event id is reprocessed (no duplicate user, no error)", async () => {
@@ -148,6 +232,97 @@ describe("processWorkosEvent (real Postgres)", () => {
 		expect(allUsers).toHaveLength(1);
 	});
 
+	it("updates an existing user for user.updated", async () => {
+		await processWorkosEvent(
+			userCreatedEvent("evt_user_create", "user_workos_update"),
+		);
+		await processWorkosEvent(
+			userUpdatedEvent("evt_user_update", "user_workos_update"),
+		);
+
+		const [identity] = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_update"));
+		const userId = identity?.userId;
+		if (!userId) throw new Error("expected user id");
+
+		const [updated] = await db.select().from(users).where(eq(users.id, userId));
+		expect(updated?.email).toBe("ada.updated@example.com");
+		expect(updated?.firstName).toBe("Augusta");
+		expect(updated?.lastName).toBe("King");
+
+		const auditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, userId));
+		expect(auditRows.map((row) => row.action).sort()).toEqual([
+			"CREATE",
+			"UPDATE",
+		]);
+	});
+
+	it("sanitizes WorkOS user and organization fields before DB writes", async () => {
+		await processWorkosEvent({
+			...userCreatedEvent("evt_user_sanitize", "user_workos_sanitize"),
+			data: {
+				id: "user_workos_sanitize",
+				email: "sanitize@example.com",
+				first_name: "<script>alert(1)</script>",
+				last_name: "Lovelace",
+			},
+		});
+		await processWorkosEvent({
+			...orgCreatedEvent("evt_org_sanitize", "org_workos_sanitize"),
+			data: {
+				id: "org_workos_sanitize",
+				name: "<img src=x onerror=alert(1)>",
+			},
+		});
+
+		const [identity] = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_sanitize"));
+		const userId = identity?.userId;
+		if (!userId) throw new Error("expected user id");
+
+		const [user] = await db.select().from(users).where(eq(users.id, userId));
+		expect(user?.firstName).toBe("&lt;script&gt;alert(1)&lt;&#x2F;script&gt;");
+
+		const [org] = await db
+			.select()
+			.from(organizations)
+			.where(eq(organizations.workosOrgId, "org_workos_sanitize"));
+		expect(org?.name).toBe("&lt;img src=x onerror=alert(1)&gt;");
+	});
+
+	it("soft-deletes a user and removes its WorkOS identity for user.deleted", async () => {
+		await processWorkosEvent(
+			userCreatedEvent("evt_user_create_delete", "user_workos_delete"),
+		);
+		await processWorkosEvent(
+			userDeletedEvent("evt_user_delete", "user_workos_delete"),
+		);
+
+		const identities = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_delete"));
+		expect(identities).toHaveLength(0);
+
+		const [deleted] = await db.select().from(users);
+		expect(deleted?.status).toBe("DELETED");
+		expect(deleted?.email).toBeNull();
+		expect(deleted?.firstName).toBeNull();
+
+		const auditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, deleted?.id));
+		expect(auditRows.some((row) => row.action === "DELETE")).toBe(true);
+	});
+
 	it("provisions an organization for organization.created", async () => {
 		await processWorkosEvent(orgCreatedEvent("evt_org_1", "org_workos_1"));
 
@@ -163,5 +338,93 @@ describe("processWorkosEvent (real Postgres)", () => {
 			.from(idempotencyKeys)
 			.where(eq(idempotencyKeys.key, "workos-webhook-evt_org_1"));
 		expect(lock?.status).toBe("completed");
+
+		const orgAuditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, orgs[0]?.id));
+		expect(orgAuditRows).toHaveLength(1);
+		expect(orgAuditRows[0]?.action).toBe("CREATE");
+		expect(orgAuditRows[0]?.resourceType).toBe("ORGANIZATION");
+	});
+
+	it("updates an organization for organization.updated", async () => {
+		await processWorkosEvent(
+			orgCreatedEvent("evt_org_create_update", "org_workos_update"),
+		);
+		await processWorkosEvent(
+			orgUpdatedEvent("evt_org_update", "org_workos_update"),
+		);
+
+		const [org] = await db
+			.select()
+			.from(organizations)
+			.where(eq(organizations.workosOrgId, "org_workos_update"));
+		expect(org?.name).toBe("Acme Updated");
+
+		const auditRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.resourceId, org?.id));
+		expect(auditRows.map((row) => row.action).sort()).toEqual([
+			"CREATE",
+			"UPDATE",
+		]);
+	});
+
+	it("soft-deletes an organization and inactivates memberships for organization.deleted", async () => {
+		await processWorkosEvent(
+			orgCreatedEvent("evt_org_create_delete", "org_workos_delete"),
+		);
+		const [org] = await db
+			.select()
+			.from(organizations)
+			.where(eq(organizations.workosOrgId, "org_workos_delete"));
+		if (!org) throw new Error("expected organization");
+
+		const [user] = await db
+			.insert(users)
+			.values({ email: "member@example.com", type: "MEMBER" })
+			.returning();
+		await db.insert(organizationMembers).values({
+			organizationId: org.id,
+			userId: user.id,
+			role: "MEMBER",
+			status: "ACTIVE",
+		});
+
+		await processWorkosEvent(
+			orgDeletedEvent("evt_org_delete", "org_workos_delete"),
+		);
+
+		const [deletedOrg] = await db
+			.select()
+			.from(organizations)
+			.where(eq(organizations.id, org.id));
+		expect(deletedOrg?.status).toBe("DELETED");
+
+		const [membership] = await db
+			.select()
+			.from(organizationMembers)
+			.where(eq(organizationMembers.organizationId, org.id));
+		expect(membership?.status).toBe("INACTIVE");
+	});
+
+	it("audits authentication lifecycle events without mutating users or organizations", async () => {
+		await processWorkosEvent(authEvent("evt_auth_failed"));
+
+		const userRows = await db.select().from(users);
+		const orgRows = await db.select().from(organizations);
+		expect(userRows).toHaveLength(0);
+		expect(orgRows).toHaveLength(0);
+
+		const [auditRow] = await db.select().from(auditLogs);
+		expect(auditRow?.action).toBe(AUDIT_ACTIONS.LOGIN_FAILED);
+		expect(auditRow?.resourceType).toBe("USER");
+		expect(auditRow?.status).toBe("FAILURE");
+		expect(auditRow?.metadata).toMatchObject({
+			source: "workos_webhook",
+			eventType: "authentication.password_failed",
+		});
 	});
 });

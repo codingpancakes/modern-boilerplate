@@ -10,14 +10,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
 	processWorkosEventMock,
 	runWithDbScopeMock,
+	runWithAuditScopeMock,
+	flushAuditsMock,
 	captureExceptionMock,
-	logAuditMock,
+	logAuditStrictMock,
 } = vi.hoisted(() => ({
 	processWorkosEventMock: vi.fn(),
 	// Pass-through: invoke the wrapped fn so the real call path is exercised.
 	runWithDbScopeMock: vi.fn((fn: () => Promise<unknown>) => fn()),
+	runWithAuditScopeMock: vi.fn((fn: () => Promise<unknown>) => fn()),
+	flushAuditsMock: vi.fn(() => Promise.resolve()),
 	captureExceptionMock: vi.fn(),
-	logAuditMock: vi.fn(() => Promise.resolve()),
+	logAuditStrictMock: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/lib/services/webhook-processor", () => ({
@@ -35,7 +39,9 @@ vi.mock("@/lib/sentry", () => ({
 // The audit module is consumed both for `logAudit` and for the AUDIT_* enums
 // the dead-letter handler references; keep the real enums, mock only the write.
 vi.mock("@/lib/audit", () => ({
-	logAudit: logAuditMock,
+	logAuditStrict: logAuditStrictMock,
+	runWithAuditScope: runWithAuditScopeMock,
+	flushAudits: flushAuditsMock,
 	AUDIT_ACTIONS: { WEBHOOK_FAILED: "WEBHOOK_FAILED" },
 	AUDIT_RESOURCE_TYPES: { WEBHOOK: "WEBHOOK" },
 	AUDIT_STATUS: { FAILURE: "FAILURE" },
@@ -94,6 +100,11 @@ function fakeBatch(
 beforeEach(() => {
 	vi.clearAllMocks();
 	runWithDbScopeMock.mockImplementation((fn: () => Promise<unknown>) => fn());
+	runWithAuditScopeMock.mockImplementation((fn: () => Promise<unknown>) =>
+		fn(),
+	);
+	flushAuditsMock.mockResolvedValue(undefined);
+	logAuditStrictMock.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -109,6 +120,33 @@ describe("handleQueueBatch — main webhook queue", () => {
 		await handleQueueBatch(batch, env, ctx);
 
 		expect(processWorkosEventMock).toHaveBeenCalledOnce();
+		expect(runWithAuditScopeMock).toHaveBeenCalledOnce();
+		expect(flushAuditsMock).toHaveBeenCalledOnce();
+		expect(message.ack).toHaveBeenCalledOnce();
+		expect(message.retry).not.toHaveBeenCalled();
+	});
+
+	it("does not ack until the queue audit scope has flushed", async () => {
+		processWorkosEventMock.mockResolvedValue(undefined);
+		let completeFlush!: () => void;
+		flushAuditsMock.mockReturnValue(
+			new Promise<void>((resolve) => {
+				completeFlush = resolve;
+			}),
+		);
+		const message = fakeMessage(event("evt_waits_for_audit"));
+		const batch = fakeBatch("sidedoor-webhooks-staging", [message]);
+
+		const handling = handleQueueBatch(batch, env, ctx);
+		await Promise.resolve();
+
+		expect(processWorkosEventMock).toHaveBeenCalledOnce();
+		expect(flushAuditsMock).toHaveBeenCalledOnce();
+		expect(message.ack).not.toHaveBeenCalled();
+
+		completeFlush();
+		await handling;
+
 		expect(message.ack).toHaveBeenCalledOnce();
 		expect(message.retry).not.toHaveBeenCalled();
 	});
@@ -155,8 +193,8 @@ describe("handleQueueBatch — dead-letter queue", () => {
 		// Permanent failures are NOT reprocessed through processWorkosEvent.
 		expect(processWorkosEventMock).not.toHaveBeenCalled();
 		expect(captureExceptionMock).toHaveBeenCalledOnce();
-		expect(logAuditMock).toHaveBeenCalledOnce();
-		expect(logAuditMock).toHaveBeenCalledWith(
+		expect(logAuditStrictMock).toHaveBeenCalledOnce();
+		expect(logAuditStrictMock).toHaveBeenCalledWith(
 			expect.objectContaining({
 				action: "WEBHOOK_FAILED",
 				resourceType: "WEBHOOK",
@@ -170,7 +208,7 @@ describe("handleQueueBatch — dead-letter queue", () => {
 
 	it("retries (does NOT silently ack) when the dead-letter audit write throws", async () => {
 		// A DB blip on the audit write must not drop the compliance record.
-		logAuditMock.mockRejectedValue(new Error("audit write failed"));
+		logAuditStrictMock.mockRejectedValue(new Error("audit write failed"));
 		const message = fakeMessage(event("evt_dead_fail"));
 		const batch = fakeBatch("sidedoor-webhooks-dlq-staging", [message]);
 

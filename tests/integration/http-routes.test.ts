@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Pool } from "pg";
 import {
@@ -81,6 +82,7 @@ const SEEDED_SUBJECT = "user_workos_http_routes";
 // not production/staging (vitest runs as "test"), so the CORS assertions stay
 // independent from project-specific CORS env vars.
 const ALLOWED_ORIGIN = "http://localhost:3000";
+const WORKOS_WEBHOOK_SECRET = "whsec_test_http_routes";
 
 // A no-op ExecutionContext — the app's middleware never touches waitUntil in
 // these flows, but app.fetch's third arg is typed, so pass a minimal stub.
@@ -105,6 +107,14 @@ function fetchApp(
 	);
 }
 
+function workosSignatureFor(payload: string): string {
+	const timestamp = Date.now();
+	const signature = createHmac("sha256", WORKOS_WEBHOOK_SECRET)
+		.update(`${timestamp}.${payload}`)
+		.digest("hex");
+	return `t=${timestamp}, v1=${signature}`;
+}
+
 beforeAll(async () => {
 	({ db, pool } = await createTestDb());
 	getDbMock.mockResolvedValue(db);
@@ -117,8 +127,9 @@ beforeAll(async () => {
 	// Routes/middleware read these off process.env (mirrored from Worker vars by
 	// nodejs_compat in prod). Set explicit values so assertions are deterministic
 	// and not dependent on the developer's shell env.
-	process.env.STAGE = "dev";
+	process.env.STAGE = "local";
 	process.env.API_VERSION = "v1";
+	process.env.WORKOS_WEBHOOK_SECRET = WORKOS_WEBHOOK_SECRET;
 	// Ensure media is NOT configured for the 503 assertion. Must DELETE, not set
 	// to undefined: `process.env.X = undefined` stores the truthy string
 	// "undefined", which would make getMediaConfig() pass and the route 500.
@@ -215,15 +226,11 @@ describe("HTTP routes — public / unauthenticated", () => {
 		process.env.IMAGES_BUCKET = "images-test";
 		process.env.IMAGES_CDN_URL = "https://cdn.example.test";
 
-		const res = await fetchApp(
-			"/v1/health/detailed",
-			undefined,
-			{
-				IMAGES: {
-					list: vi.fn().mockRejectedValue(new Error("r2 unavailable")),
-				},
-			} as unknown as Parameters<typeof app.fetch>[1],
-		);
+		const res = await fetchApp("/v1/health/detailed", undefined, {
+			IMAGES: {
+				list: vi.fn().mockRejectedValue(new Error("r2 unavailable")),
+			},
+		} as unknown as Parameters<typeof app.fetch>[1]);
 		expect(res.status).toBe(200);
 
 		const body = await res.json();
@@ -305,6 +312,24 @@ describe("HTTP routes — public / unauthenticated", () => {
 		const body = await res.json();
 		expect(body.success).toBe(false);
 		expect(body.details.code).toBe("UNAUTHORIZED");
+	});
+
+	it("POST /v1/webhooks/workos with signed malformed JSON → 400 BAD_REQUEST", async () => {
+		const payload = '{"id":"evt_bad_json",';
+		const res = await fetchApp("/v1/webhooks/workos", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"workos-signature": workosSignatureFor(payload),
+			},
+			body: payload,
+		});
+
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.success).toBe(false);
+		expect(body.details.code).toBe("BAD_REQUEST");
+		expect(body.error).toBe("Malformed JSON payload");
 	});
 });
 

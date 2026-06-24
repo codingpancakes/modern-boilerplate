@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sql } from "drizzle-orm";
+import { asc, inArray, sql } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -20,6 +20,7 @@ import { captureException } from "./sentry";
  * tamper-proof within the window and only the retention job can prune beyond it.
  */
 export const AUDIT_RETENTION_YEARS = 7;
+const AUDIT_RETENTION_BATCH_SIZE = 1_000;
 
 const logger = createLogger({ serviceName: "audit" });
 
@@ -65,6 +66,14 @@ export interface AuditLogEntry {
 	metadata?: Record<string, unknown>;
 	status?: AuditStatus;
 	errorMessage?: string;
+}
+
+type AuditInsertValues = typeof auditLogs.$inferInsert;
+
+interface AuditWriteTarget {
+	insert(table: typeof auditLogs): {
+		values(values: AuditInsertValues): Promise<unknown>;
+	};
 }
 
 /**
@@ -214,7 +223,7 @@ export async function flushAudits(): Promise<void> {
  * ```
  */
 export async function logAudit(entry: AuditLogEntry): Promise<void> {
-	const write = persistAudit(entry);
+	const write = persistAuditBestEffort(entry);
 	const pending = auditScopeStorage.getStore();
 	// Outside a request scope (cron/scripts): no buffer to drain later, so
 	// await inline to guarantee the write completes.
@@ -230,24 +239,45 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 	}
 }
 
-async function persistAudit(entry: AuditLogEntry): Promise<void> {
+function auditInsertValues(entry: AuditLogEntry): AuditInsertValues {
+	return {
+		userId: entry.userId,
+		organizationId: entry.organizationId,
+		orgUnitId: entry.orgUnitId,
+		action: entry.action,
+		resourceType: entry.resourceType,
+		resourceId: entry.resourceId,
+		changes: redactChanges(entry.changes),
+		ipAddress: entry.ipAddress,
+		userAgent: entry.userAgent,
+		requestId: entry.requestId,
+		metadata: redactMetadata(entry.metadata),
+		status: entry.status || AUDIT_STATUS.SUCCESS,
+		errorMessage: entry.errorMessage,
+	};
+}
+
+/**
+ * Strict audit write for durable background paths. Unlike logAudit(), this
+ * propagates persistence failures so queue consumers can retry instead of acking
+ * a message whose compliance record was not written.
+ */
+export async function writeAuditLog(
+	target: AuditWriteTarget,
+	entry: AuditLogEntry,
+): Promise<void> {
+	await target.insert(auditLogs).values(auditInsertValues(entry));
+}
+
+export async function logAuditStrict(entry: AuditLogEntry): Promise<void> {
+	const db = await getDb();
+	await writeAuditLog(db, entry);
+}
+
+async function persistAuditBestEffort(entry: AuditLogEntry): Promise<void> {
 	try {
 		const db = await getDb();
-		await db.insert(auditLogs).values({
-			userId: entry.userId,
-			organizationId: entry.organizationId,
-			orgUnitId: entry.orgUnitId,
-			action: entry.action,
-			resourceType: entry.resourceType,
-			resourceId: entry.resourceId,
-			changes: redactChanges(entry.changes),
-			ipAddress: entry.ipAddress,
-			userAgent: entry.userAgent,
-			requestId: entry.requestId,
-			metadata: redactMetadata(entry.metadata),
-			status: entry.status || AUDIT_STATUS.SUCCESS,
-			errorMessage: entry.errorMessage,
-		});
+		await writeAuditLog(db, entry);
 	} catch (error) {
 		// Don't throw — audit logging should never break the main flow.
 		// Log the full entry as fallback so it can be backfilled from logs.
@@ -447,11 +477,29 @@ export function auditResolver<
  */
 export async function cleanupExpiredAuditLogs(): Promise<number> {
 	const db = await getDb();
-	const result = await db
-		.delete(auditLogs)
-		.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`);
+	let deletedCount = 0;
 
-	return result.rowCount ?? 0;
+	for (;;) {
+		const expiredRows = await db
+			.select({ id: auditLogs.id })
+			.from(auditLogs)
+			.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`)
+			.orderBy(asc(auditLogs.timestamp))
+			.limit(AUDIT_RETENTION_BATCH_SIZE);
+
+		if (expiredRows.length === 0) break;
+
+		const result = await db.delete(auditLogs).where(
+			inArray(
+				auditLogs.id,
+				expiredRows.map((row) => row.id),
+			),
+		);
+
+		deletedCount += result.rowCount ?? expiredRows.length;
+	}
+
+	return deletedCount;
 }
 
 // Re-export constants for convenience

@@ -2,9 +2,42 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 import { userResolvers as resolvers } from "@/handlers/graphql/resolvers/users";
 
+type MockFn = ReturnType<typeof vi.fn>;
+
+type MockDb = {
+	query: {
+		users: {
+			findFirst: MockFn;
+		};
+		profiles: {
+			findFirst: MockFn;
+		};
+		organizationMembers: {
+			findFirst: MockFn;
+			findMany: MockFn;
+		};
+	};
+	select: MockFn;
+	update: MockFn;
+	transaction: MockFn;
+};
+
+type MockLoaders = {
+	userById: { load: MockFn };
+	profileByUserId: { load: MockFn };
+	orgById: { load: MockFn };
+	membershipsByUserId: { load: MockFn };
+	membershipsByOrgId: { load: MockFn };
+};
+
+type MockGraphQLContext = GraphQLContext & {
+	db: GraphQLContext["db"] & MockDb;
+	loaders: GraphQLContext["loaders"] & MockLoaders;
+};
+
 // Mock database with Drizzle query API structure
-const createMockDb = () => {
-	const db: Record<string, any> = {
+const createMockDb = (): MockDb => {
+	const db = {
 		query: {
 			users: {
 				findFirst: vi.fn(),
@@ -19,17 +52,18 @@ const createMockDb = () => {
 		},
 		select: vi.fn(),
 		update: vi.fn(),
-	};
+		transaction: vi.fn(),
+	} satisfies MockDb;
 	// Faithfully models neon-serverless interactive transactions: the callback
 	// runs against a tx handle that behaves like the connection. (The real
 	// neon-serverless driver supports this; neon-http would throw — see
 	// tests/unit/lib/db.test.ts for the driver regression guard.)
-	db.transaction = vi.fn(async (fn: (tx: any) => Promise<any>) => fn(db));
+	db.transaction = vi.fn((fn: (tx: MockDb) => Promise<unknown>) => fn(db));
 	return db;
 };
 
 // Mock loaders
-const createMockLoaders = () => ({
+const createMockLoaders = (): MockLoaders => ({
 	userById: { load: vi.fn() },
 	profileByUserId: { load: vi.fn() },
 	orgById: { load: vi.fn() },
@@ -38,7 +72,9 @@ const createMockLoaders = () => ({
 });
 
 // Mock context
-const createMockContext = (overrides = {}): GraphQLContext => {
+const createMockContext = (
+	overrides: Partial<GraphQLContext> = {},
+): MockGraphQLContext => {
 	const mockDb = createMockDb();
 	return {
 		userId: "test-user-id",
@@ -48,10 +84,10 @@ const createMockContext = (overrides = {}): GraphQLContext => {
 		providerSubject: "workos-123",
 		claims: {},
 		requestId: "test-request-id",
-		db: mockDb as any,
-		loaders: createMockLoaders() as any,
+		db: mockDb as unknown as MockGraphQLContext["db"],
+		loaders: createMockLoaders() as unknown as MockGraphQLContext["loaders"],
 		...overrides,
-	};
+	} as MockGraphQLContext;
 };
 
 describe("User Resolvers", () => {
@@ -70,7 +106,7 @@ describe("User Resolvers", () => {
 			};
 
 			const context = createMockContext();
-			(context.db.query.users.findFirst as any).mockResolvedValue(mockUser);
+			context.db.query.users.findFirst.mockResolvedValue(mockUser);
 
 			const result = await resolvers.Query.me(null, {}, context);
 
@@ -80,7 +116,7 @@ describe("User Resolvers", () => {
 
 		it("should throw error if user not found", async () => {
 			const context = createMockContext();
-			(context.db.query.users.findFirst as any).mockResolvedValue(undefined);
+			context.db.query.users.findFirst.mockResolvedValue(undefined);
 
 			await expect(resolvers.Query.me(null, {}, context)).rejects.toThrow();
 		});
@@ -88,6 +124,11 @@ describe("User Resolvers", () => {
 
 	describe("Mutation.updateMe", () => {
 		it("should update user fields", async () => {
+			const existingUser = { id: "test-user-id", firstName: "Old" };
+			const existingProfile = {
+				userId: "test-user-id",
+				preferredName: "Existing",
+			};
 			const updatedUser = {
 				id: "test-user-id",
 				email: "test@example.com",
@@ -96,7 +137,18 @@ describe("User Resolvers", () => {
 			};
 
 			const context = createMockContext();
-			(context.db.update as any).mockReturnValue({
+			const selectChain = {
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi
+							.fn()
+							.mockResolvedValueOnce([existingUser])
+							.mockResolvedValueOnce([existingProfile]),
+					}),
+				}),
+			};
+			context.db.select.mockReturnValue(selectChain);
+			context.db.update.mockReturnValue({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -110,14 +162,19 @@ describe("User Resolvers", () => {
 				null,
 				{ input },
 				context,
-				{} as any,
 			);
 
 			expect(result.firstName).toBe("Updated");
 			expect(context.db.update).toHaveBeenCalled();
+			expect(context.db.transaction).toHaveBeenCalled();
 		});
 
 		it("should sanitize input data", async () => {
+			const existingUser = { id: "test-user-id", firstName: "Old" };
+			const existingProfile = {
+				userId: "test-user-id",
+				preferredName: "Existing",
+			};
 			const updatedUser = {
 				id: "test-user-id",
 				firstName: "Clean",
@@ -130,7 +187,18 @@ describe("User Resolvers", () => {
 			});
 
 			const context = createMockContext();
-			(context.db.update as any).mockReturnValue({
+			const selectChain = {
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi
+							.fn()
+							.mockResolvedValueOnce([existingUser])
+							.mockResolvedValueOnce([existingProfile]),
+					}),
+				}),
+			};
+			context.db.select.mockReturnValue(selectChain);
+			context.db.update.mockReturnValue({
 				set: mockSet,
 			});
 
@@ -139,7 +207,7 @@ describe("User Resolvers", () => {
 				__proto__: { malicious: true },
 			};
 
-			await resolvers.Mutation.updateMe(null, { input }, context, {} as any);
+			await resolvers.Mutation.updateMe(null, { input }, context);
 
 			// Verify sanitization removed __proto__
 			const setCall = mockSet.mock.calls[0][0];
@@ -149,13 +217,29 @@ describe("User Resolvers", () => {
 
 	describe("Mutation.updateProfile", () => {
 		it("should update profile fields", async () => {
+			const existingUser = { id: "test-user-id", firstName: "Existing" };
+			const existingProfile = {
+				userId: "test-user-id",
+				preferredName: "OldNick",
+			};
 			const updatedProfile = {
 				userId: "test-user-id",
 				preferredName: "TestNick",
 			};
 
 			const context = createMockContext();
-			(context.db.update as any).mockReturnValue({
+			const selectChain = {
+				from: vi.fn().mockReturnValue({
+					where: vi.fn().mockReturnValue({
+						limit: vi
+							.fn()
+							.mockResolvedValueOnce([existingUser])
+							.mockResolvedValueOnce([existingProfile]),
+					}),
+				}),
+			};
+			context.db.select.mockReturnValue(selectChain);
+			context.db.update.mockReturnValue({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedProfile]),
@@ -169,10 +253,10 @@ describe("User Resolvers", () => {
 				null,
 				{ input },
 				context,
-				{} as any,
 			);
 
 			expect(result.preferredName).toBe("TestNick");
+			expect(context.db.transaction).toHaveBeenCalled();
 		});
 	});
 
@@ -207,10 +291,10 @@ describe("User Resolvers", () => {
 					}),
 				}),
 			};
-			(context.db.select as any).mockReturnValue(selectChain);
+			context.db.select.mockReturnValue(selectChain);
 
 			// Mock user update
-			(context.db.update as any).mockReturnValueOnce({
+			context.db.update.mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -219,7 +303,7 @@ describe("User Resolvers", () => {
 			});
 
 			// Mock profile update
-			(context.db.update as any).mockReturnValueOnce({
+			context.db.update.mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedProfile]),
@@ -270,9 +354,9 @@ describe("User Resolvers", () => {
 					}),
 				}),
 			};
-			(context.db.select as any).mockReturnValue(selectChain);
+			context.db.select.mockReturnValue(selectChain);
 
-			(context.db.update as any).mockReturnValueOnce({
+			context.db.update.mockReturnValueOnce({
 				set: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
 						returning: vi.fn().mockResolvedValue([updatedUser]),
@@ -305,9 +389,7 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.loaders.profileByUserId.load as any).mockResolvedValue(
-				mockProfile,
-			);
+			context.loaders.profileByUserId.load.mockResolvedValue(mockProfile);
 
 			const result = await resolvers.User.profile(parent, {}, context);
 
@@ -332,9 +414,7 @@ describe("User Resolvers", () => {
 
 			const parent = { id: "test-user-id" };
 			const context = createMockContext();
-			(context.loaders.membershipsByUserId.load as any).mockResolvedValue(
-				mockOrgs,
-			);
+			context.loaders.membershipsByUserId.load.mockResolvedValue(mockOrgs);
 
 			const result = await resolvers.User.organizations(parent, {}, context);
 

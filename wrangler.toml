@@ -10,7 +10,7 @@
 # process.env from [vars] + secrets, so existing `process.env.X` reads in
 # src/node keep working unchanged.
 
-name = "sidedoor-backend"
+name = "replace-me-backend"
 main = "src/node/worker.ts"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
@@ -46,7 +46,7 @@ crons = [
 [vars]
 NODE_ENV = "development"
 STAGE = "local"
-PROJECT_NAME = "sidedoor"                     # project identifier
+PROJECT_NAME = "replace-me"                   # PLACEHOLDER: project identifier
 API_VERSION = "v1"
 # CORS — same semantics as the Lambda env (see src/node/lib/cors.ts)
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER: regex patterns, comma-separated
@@ -54,15 +54,15 @@ CORS_EXACT_ORIGINS = "http://localhost:3000"    # PLACEHOLDER: exact origins, co
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER: parent domains, comma-separated
 # Media — IMAGES_BUCKET must match [[r2_buckets]].bucket_name below; the CDN
 # URL becomes the R2 public/custom-domain URL (was CloudFront).
-IMAGES_BUCKET = "sidedoor-images-local"
-IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
+IMAGES_BUCKET = "replace-me-images-local"
+IMAGES_CDN_URL = "https://images-local.example.com"
 
 # R2 — replaces the S3 images bucket. Route code reaches it as c.env.IMAGES
 # (see src/node/worker.ts WorkerBindings). `wrangler dev --local` simulates the
 # bucket on disk; the name does not need to exist on a real account.
 [[r2_buckets]]
 binding = "IMAGES"
-bucket_name = "sidedoor-images-local"         # PLACEHOLDER: local-sim name, anything works
+bucket_name = "replace-me-images-local"       # PLACEHOLDER: local-sim name, anything works
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cloudflare Queues — WorkOS webhook ingest/processing (replaces the webhook
@@ -73,11 +73,11 @@ bucket_name = "sidedoor-images-local"         # PLACEHOLDER: local-sim name, any
 # route also falls back to inline processing when the binding is absent.
 # ─────────────────────────────────────────────────────────────────────────────
 [[queues.producers]]
-queue = "sidedoor-webhooks-local"
+queue = "replace-me-webhooks-local"
 binding = "WEBHOOK_QUEUE"
 
 [[queues.consumers]]
-queue = "sidedoor-webhooks-local"
+queue = "replace-me-webhooks-local"
 
 # Per-IP rate limiting — Workers Rate Limiting binding (RATE_LIMITER; no
 # dashboard resource needed). Top-level/local; repeated per env below.
@@ -97,18 +97,18 @@ simple = { limit = 100, period = 60 }
 [env.staging.vars]
 NODE_ENV = "staging"
 STAGE = "staging"
-PROJECT_NAME = "sidedoor"                     # project identifier
+PROJECT_NAME = "replace-me"                   # PLACEHOLDER: project identifier
 API_VERSION = "v1"
 SENTRY_ENVIRONMENT = "staging"
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
-CORS_EXACT_ORIGINS = "https://sidedoor-backend-staging.jon-e59.workers.dev" # PLACEHOLDER: e.g. https://staging.yourdomain.com
+CORS_EXACT_ORIGINS = "https://staging.example.com" # PLACEHOLDER: e.g. https://staging.yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
-IMAGES_BUCKET = "sidedoor-images-staging"     # PLACEHOLDER: must match the R2 bucket below
-IMAGES_CDN_URL = "https://pub-1cbf6ddb89f14c8caedd15d9364a6a7c.r2.dev"
+IMAGES_BUCKET = "replace-me-images-staging"   # PLACEHOLDER: must match the R2 bucket below
+IMAGES_CDN_URL = "https://images-staging.example.com"
 
 [[env.staging.r2_buckets]]
 binding = "IMAGES"
-bucket_name = "sidedoor-images-staging"       # PLACEHOLDER: create with `wrangler r2 bucket create`
+bucket_name = "replace-me-images-staging"     # PLACEHOLDER: create with `wrangler r2 bucket create`
 
 # Queues (staging) — create before the first staging deploy:
 #   wrangler queues create <project>-webhooks-staging
@@ -116,16 +116,16 @@ bucket_name = "sidedoor-images-staging"       # PLACEHOLDER: create with `wrangl
 # Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
 # DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
 [[env.staging.queues.producers]]
-queue = "sidedoor-webhooks-staging"
+queue = "replace-me-webhooks-staging"
 binding = "WEBHOOK_QUEUE"
 
 [[env.staging.queues.consumers]]
-queue = "sidedoor-webhooks-staging"
+queue = "replace-me-webhooks-staging"
 max_retries = 5
-dead_letter_queue = "sidedoor-webhooks-dlq-staging"
+dead_letter_queue = "replace-me-webhooks-dlq-staging"
 
 [[env.staging.queues.consumers]]
-queue = "sidedoor-webhooks-dlq-staging"
+queue = "replace-me-webhooks-dlq-staging"
 
 [[env.staging.ratelimits]]
 name = "RATE_LIMITER"
@@ -142,18 +142,18 @@ simple = { limit = 100, period = 60 }
 [env.production.vars]
 NODE_ENV = "production"
 STAGE = "production"
-PROJECT_NAME = "sidedoor"                     # project identifier
+PROJECT_NAME = "replace-me"                   # PLACEHOLDER: project identifier
 API_VERSION = "v1"
 SENTRY_ENVIRONMENT = "production"
 CORS_DOMAIN_PATTERNS = ""                       # PLACEHOLDER
-CORS_EXACT_ORIGINS = "https://sidedoor-backend-production.jon-e59.workers.dev" # PLACEHOLDER: e.g. https://yourdomain.com
+CORS_EXACT_ORIGINS = "https://example.com" # PLACEHOLDER: e.g. https://yourdomain.com
 CORS_PARENT_DOMAINS = ""                        # PLACEHOLDER
-IMAGES_BUCKET = "sidedoor-images-production"  # PLACEHOLDER: must match the R2 bucket below
-IMAGES_CDN_URL = "https://pub-d4d2f34704a04b05a07e014da0252522.r2.dev"
+IMAGES_BUCKET = "replace-me-images-production" # PLACEHOLDER: must match the R2 bucket below
+IMAGES_CDN_URL = "https://images.example.com"
 
 [[env.production.r2_buckets]]
 binding = "IMAGES"
-bucket_name = "sidedoor-images-production"    # PLACEHOLDER: create with `wrangler r2 bucket create`
+bucket_name = "replace-me-images-production"  # PLACEHOLDER: create with `wrangler r2 bucket create`
 
 # Queues (production) — create before the first production deploy:
 #   wrangler queues create <project>-webhooks-production
@@ -161,16 +161,16 @@ bucket_name = "sidedoor-images-production"    # PLACEHOLDER: create with `wrangl
 # Producer + main consumer (with DLQ routing), then a consumer that DRAINS the
 # DLQ — both land in `handleQueueBatch`, which branches on `batch.queue`.
 [[env.production.queues.producers]]
-queue = "sidedoor-webhooks-production"
+queue = "replace-me-webhooks-production"
 binding = "WEBHOOK_QUEUE"
 
 [[env.production.queues.consumers]]
-queue = "sidedoor-webhooks-production"
+queue = "replace-me-webhooks-production"
 max_retries = 5
-dead_letter_queue = "sidedoor-webhooks-dlq-production"
+dead_letter_queue = "replace-me-webhooks-dlq-production"
 
 [[env.production.queues.consumers]]
-queue = "sidedoor-webhooks-dlq-production"
+queue = "replace-me-webhooks-dlq-production"
 
 [[env.production.ratelimits]]
 name = "RATE_LIMITER"
