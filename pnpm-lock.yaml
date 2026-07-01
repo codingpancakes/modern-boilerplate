@@ -26,8 +26,8 @@ importers:
         specifier: ^2.2.3
         version: 2.2.3
       dotenv:
-        specifier: ^16.6.1
-        version: 16.6.1
+        specifier: ^17.4.2
+        version: 17.4.2
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@4.20260612.1)(@neondatabase/serverless@0.10.4)(@opentelemetry/api@1.9.1)(@types/pg@8.20.0)(pg@8.21.0)(postgres@3.4.7)
