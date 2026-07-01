@@ -62,7 +62,7 @@
 		"wrangler": "^4.103.0"
 	},
 	"dependencies": {
-		"@neondatabase/serverless": "^0.10.4",
+		"@neondatabase/serverless": "^1.1.0",
 		"aws4fetch": "^1.0.20",
 		"dataloader": "^2.2.3",
 		"dotenv": "^16.6.1",
