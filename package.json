@@ -46,7 +46,7 @@
 		"@graphql-codegen/typescript": "^5.0.10",
 		"@graphql-codegen/typescript-resolvers": "^5.1.8",
 		"@types/graphql-depth-limit": "^1.1.6",
-		"@types/node": "24.10.1",
+		"@types/node": "26.0.1",
 		"@types/pg": "^8.20.0",
 		"@vitest/ui": "^4.1.8",
 		"dotenv-cli": "^10.0.0",
