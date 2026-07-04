@@ -10,7 +10,8 @@
  *   - creates the webhook queue + its dead-letter queue   (deploy fails without them)
  *   - creates the R2 images bucket
  *   - [--neon <project-id>] creates a Neon branch and writes DATABASE_URL into .env.<stage>
- *   - [--deploy] chains: pnpm sync-secrets <stage> → pnpm migrate → pnpm deploy:<stage>
+ *   - [--deploy] chains: sync-secrets → migrate (the STAGE DB, using DATABASE_URL
+ *     from .env.<stage>) → deploy:<stage>
  *
  * All resource creation is idempotent — an "already exists" from the CLI is
  * treated as success, so re-running is safe.
@@ -169,6 +170,16 @@ function provisionNeon(
 	writeEnvVar(path.join(root, `.env.${stage}`), "DATABASE_URL", url, logger);
 }
 
+/** Read a KEY's value from a .env file, or undefined if absent. */
+function readEnvVar(file: string, key: string): string | undefined {
+	if (!fs.existsSync(file)) return undefined;
+	const line = fs
+		.readFileSync(file, "utf-8")
+		.split("\n")
+		.find((l) => l.startsWith(`${key}=`));
+	return line?.slice(key.length + 1).replace(/^["']|["']$/g, "") || undefined;
+}
+
 /** Replace (or note the absence of) a KEY=... line in a .env file. */
 function writeEnvVar(
 	file: string,
@@ -230,7 +241,22 @@ export function bootstrap(options: BootstrapOptions): void {
 	if (deploy && !dryRun) {
 		logger.log(`\n→ sync-secrets + migrate + deploy (${stage})`);
 		execFileSync("pnpm", ["sync-secrets", stage], { stdio: "inherit" });
-		execFileSync("pnpm", ["migrate"], { stdio: "inherit" });
+
+		// migrate the STAGE database, not local. `pnpm migrate` reads .dev.vars by
+		// default; force the stage's DATABASE_URL (from .env.<stage>, which --neon
+		// may have just written) so we never migrate the wrong DB.
+		const stageDbUrl = readEnvVar(path.join(root, `.env.${stage}`), "DATABASE_URL");
+		if (stageDbUrl) {
+			execFileSync("pnpm", ["migrate"], {
+				stdio: "inherit",
+				env: { ...process.env, DATABASE_URL: stageDbUrl },
+			});
+		} else {
+			logger.log(
+				`  ⚠️  no DATABASE_URL in .env.${stage} — skipping migrate; run it manually against the ${stage} DB before serving traffic`,
+			);
+		}
+
 		execFileSync("pnpm", [`deploy:${stage}`], { stdio: "inherit" });
 	}
 

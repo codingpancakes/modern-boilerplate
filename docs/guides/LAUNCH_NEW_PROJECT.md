@@ -140,7 +140,9 @@ to target a deployed database instead.
 pnpm deploy:staging
 ```
 
-Or do c→e in one shot: `pnpm bootstrap staging --neon <id> --deploy`.
+Or do c→e in one shot: `pnpm bootstrap staging --neon <id> --deploy` — it
+sync-secrets, then migrates the **staging** DB (using `DATABASE_URL` from
+`.env.staging`, not your local `.dev.vars`), then deploys.
 
 ## 7. Put the API on your domain
 
