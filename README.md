@@ -124,6 +124,7 @@ domain — mount it in `routes/index.ts` (with `requireAuth()` if protected). Th
 
 | Doc | Purpose |
 |-----|---------|
+| [Launch a New Project](./docs/guides/LAUNCH_NEW_PROJECT.md) | Step-by-step: scaffold → local → staging → production → custom domain |
 | [Cloudflare Setup](./docs/CLOUDFLARE_SETUP.md) | Zero-to-running: local dev, tests, secrets, deploy |
 | [Environment Variables](./docs/ENVIRONMENT_VARIABLES.md) | wrangler vars, secrets, `.dev.vars` |
 | [Security Model](./docs/SECURITY.md) | Auth, CORS, edge protection, error masking |

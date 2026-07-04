@@ -244,15 +244,20 @@ so cloned boilerplates do not keep the source project's name.
 
 ## 9. New project from this boilerplate
 
+For the full walkthrough (scaffold → local → staging → production → domain),
+see **[guides/LAUNCH_NEW_PROJECT.md](./guides/LAUNCH_NEW_PROJECT.md)**. In short:
+
 ```bash
-pnpm init-project <project-name> <domain> [--force]
+pnpm init-project <project-name> <domain> [--force]   # scaffold names/envs/domains
+pnpm bootstrap <stage>                                # create queues + R2 bucket
+pnpm sync-secrets <stage> && pnpm deploy:<stage>      # push secrets + canary deploy
 ```
 
-Generates the `.env.*` files, sets the package name, and rewrites `wrangler.toml`
-resource names: Worker name, `PROJECT_NAME`, CORS exact origins, R2 bucket names,
-image CDN placeholders, and webhook queue/DLQ names. Then create the named R2
-buckets/queues and replace `IMAGES_CDN_URL` with the real R2 public or custom-domain
-URL for each environment.
+`init-project` sets the package name and rewrites `wrangler.toml` (Worker name,
+`PROJECT_NAME`, CORS origins, R2 bucket + webhook queue/DLQ names, image CDN URLs,
+and the API custom-domain routes), and writes the `.env.*` secret templates.
+`bootstrap` then creates the named queues/buckets; replace `IMAGES_CDN_URL` with
+the real R2 public/custom-domain URL per environment.
 
 ---
 

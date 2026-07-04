@@ -6,7 +6,8 @@
 - [Audit (June 2026)](./direction/AUDIT_2026-06.md) — verified audit of the pre-migration AWS stack: findings and dismissed false positives (historical; scores removed to avoid anchoring future audits)
 
 ## Setup & Operations
-- [Cloudflare Setup](./CLOUDFLARE_SETUP.md) — **start here.** Zero-to-running: local dev (`wrangler dev --local`), migrations, tests, secrets, deploys, R2/Hyperdrive
+- [Launch a New Project](./guides/LAUNCH_NEW_PROJECT.md) — **start here for a new project.** Linear walkthrough: scaffold → local → staging → production → custom domain, and where every credential goes.
+- [Cloudflare Setup](./CLOUDFLARE_SETUP.md) — reference: local dev (`wrangler dev --local`), migrations, tests, secrets, deploys, R2/Hyperdrive
 - [Environment Variables](./ENVIRONMENT_VARIABLES.md) — wrangler `[vars]`, secrets, `.dev.vars`, `.env.*` files
 - [Webhook/DLQ Runbook](./runbooks/WEBHOOK_DLQ.md) — Queue failure alerts, triage, replay, and acknowledgement policy
 
