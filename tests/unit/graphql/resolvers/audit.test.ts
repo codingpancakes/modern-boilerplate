@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 import { auditResolvers } from "@/handlers/graphql/resolvers/audit";
 
+const ORG_ID = "00000000-0000-4000-8000-000000000001";
+const USER_ID = "00000000-0000-4000-8000-000000000002";
+
 type MockContext = GraphQLContext & {
 	db: GraphQLContext["db"] & {
 		select: ReturnType<typeof vi.fn>;
@@ -56,7 +59,7 @@ describe("Audit Resolvers", () => {
 	});
 
 	it("returns organization audit logs for an active admin", async () => {
-		const rows = [{ id: "audit-1", organizationId: "org-1" }];
+		const rows = [{ id: "audit-1", organizationId: ORG_ID }];
 		const context = createMockContext({
 			membership: { role: "ADMIN" },
 			rows,
@@ -64,7 +67,7 @@ describe("Audit Resolvers", () => {
 
 		const result = await auditResolvers.Query.auditLogs(
 			null,
-			{ organizationId: "org-1", limit: 999, action: "UPDATE" },
+			{ organizationId: ORG_ID, limit: 200, action: "UPDATE" },
 			context,
 		);
 
@@ -84,7 +87,7 @@ describe("Audit Resolvers", () => {
 		await expect(
 			auditResolvers.Query.auditLogs(
 				null,
-				{ organizationId: "org-1" },
+				{ organizationId: ORG_ID },
 				context,
 			),
 		).rejects.toThrow("Requires ADMIN role or higher");
@@ -93,7 +96,7 @@ describe("Audit Resolvers", () => {
 	});
 
 	it("returns org-less audit logs for operator users", async () => {
-		const rows = [{ id: "audit-2", organizationId: null, userId: "user-1" }];
+		const rows = [{ id: "audit-2", organizationId: null, userId: USER_ID }];
 		const context = createMockContext({
 			user: { id: "current-user-id", type: "OPERATOR" },
 			rows,
@@ -101,7 +104,7 @@ describe("Audit Resolvers", () => {
 
 		const result = await auditResolvers.Query.auditLogs(
 			null,
-			{ userId: "user-1", resourceType: "WEBHOOK" },
+			{ userId: USER_ID, resourceType: "WEBHOOK" },
 			context,
 		);
 
@@ -119,9 +122,27 @@ describe("Audit Resolvers", () => {
 		});
 
 		await expect(
-			auditResolvers.Query.auditLogs(null, { userId: "user-1" }, context),
+			auditResolvers.Query.auditLogs(null, { userId: USER_ID }, context),
 		).rejects.toThrow("Requires OPERATOR user type");
 
+		expect(context.db.select).not.toHaveBeenCalled();
+	});
+
+	it("rejects invalid scalar filters before checking access", async () => {
+		const context = createMockContext({
+			user: { id: "current-user-id", type: "OPERATOR" },
+		});
+
+		await expect(
+			auditResolvers.Query.auditLogs(null, { userId: "not-a-uuid" }, context),
+		).rejects.toMatchObject({
+			extensions: {
+				code: "BAD_USER_INPUT",
+				http: { status: 400 },
+			},
+		});
+
+		expect(context.db.query.users.findFirst).not.toHaveBeenCalled();
 		expect(context.db.select).not.toHaveBeenCalled();
 	});
 });

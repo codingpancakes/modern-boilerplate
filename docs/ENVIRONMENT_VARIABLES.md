@@ -54,6 +54,7 @@ inherit `[vars]` or R2 bindings).
 |---|---|---|
 | `IMAGES` | `[[r2_buckets]]` | R2 images bucket, available as `c.env.IMAGES`. Simulated on disk under `.wrangler/state` in local dev |
 | `RATE_LIMITER` | `[[ratelimits]]` (+ per-env) | Cloudflare Workers Rate Limiting binding for the per-IP limiter (`lib/hono/rate-limit.ts`), available as `c.env.RATE_LIMITER`. **No dashboard resource** — configured entirely in `wrangler.toml` (`simple = { limit = 100, period = 60 }`). Absent under `wrangler dev` → the limiter no-ops |
+| `WEBHOOK_QUEUE` | `[[queues.producers]]` (+ per-env `[[queues.consumers]]`) | Cloudflare Queues producer for verified WorkOS webhook events (`routes/webhooks.ts` enqueues; `src/node/queue.ts` consumes; `*-dlq-*` holds exhausted retries). Queues must exist before first deploy — see `docs/runbooks/WEBHOOK_DLQ.md` |
 
 Add a property to `WorkerBindings` in `src/node/worker.ts` whenever you add a binding.
 

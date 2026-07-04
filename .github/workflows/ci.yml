@@ -70,7 +70,10 @@ jobs:
       - run: pnpm typecheck
       - name: OpenAPI docs are current
         run: pnpm docs:check
-      - run: pnpm test:run
+      - name: Unit tests + coverage ratchet
+        # Enforces the coverage floors in vitest.config.ts — a PR that drops
+        # unit coverage below them fails here instead of eroding it silently.
+        run: pnpm test:coverage
       - name: Integration tests (real Postgres)
         run: pnpm test:integration
         env:

@@ -26,11 +26,13 @@
  *  - Zod-validate every input via `parseBody` (#2).
  *  - `sanitizeObject()` before every DB write (#3).
  *  - `logAudit()` fire-and-forget on every mutation, with request context (#4).
- *  - Multi-step writes wrapped in `db.transaction()` (#8).
+ *  - Multi-step writes wrapped in `db.transaction()` (#8) — or run them on the
+ *    `tx` from `withTransactionalIdempotentJson` so the mutation and the stored
+ *    idempotency response commit atomically.
  *  - `getDb()` per request; never cache the client at module scope (#9).
- *  - Throw via `Errors.*`; respond via `sendSuccess` / `createSuccessResponse`
- *    (#7). No hand-rolled bodies, no `any` / `as unknown as`.
- *  - Non-idempotent mutations wrapped in `withIdempotency`.
+ *  - Throw via `Errors.*`; respond via `sendSuccess` (#7). No hand-rolled
+ *    bodies, no `any` / `as unknown as`.
+ *  - Non-idempotent DB mutations wrapped in `withTransactionalIdempotentJson`.
  */
 
 import { eq } from "drizzle-orm";
@@ -46,11 +48,10 @@ import {
 import { getUserIdFromClaims } from "../lib/auth";
 import { getDb } from "../lib/db";
 import { Errors } from "../lib/errors";
+import { withTransactionalIdempotentJson } from "../lib/hono/idempotent-response";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
-import { type StoredResponse, withIdempotency } from "../lib/idempotency";
 import { createLogger } from "../lib/logger";
-import { createSuccessResponse } from "../lib/response";
 import { sanitizeObject } from "../lib/sanitize";
 import { parseBody } from "../lib/validation/helpers";
 // import * as schemas from "../lib/validation/<domain>";
@@ -59,24 +60,6 @@ export const widgetRoutes = new Hono<AppEnv>();
 
 const getLogger = createLogger({ serviceName: "widgets-get" });
 const updateLogger = createLogger({ serviceName: "widgets-update" });
-
-/**
- * Adapt a stored/replayed idempotency result into a Hono `Response`.
- * `withIdempotency` both produces (via `createSuccessResponse`) and replays
- * (from `idempotency_keys`) `{ statusCode, headers, body }` objects — that
- * stored shape is part of its replay contract, so it is preserved here.
- * CORS + security headers are applied by app-level middleware.
- */
-function toResponse(result: StoredResponse): Response {
-	const headers = new Headers();
-	for (const [key, value] of Object.entries(result.headers ?? {})) {
-		headers.set(key, value);
-	}
-	return new Response(result.body ?? null, {
-		status: result.statusCode,
-		headers,
-	});
-}
 
 /**
  * @swagger
@@ -156,8 +139,14 @@ widgetRoutes.post("/", async (c) => {
 	const claims = c.get("claims");
 	const rawBody = await c.req.text();
 	const queryParams = c.req.query();
+	const userId = await getUserIdFromClaims(claims);
 
-	const result = await withIdempotency(
+	// withTransactionalIdempotentJson commits the mutation AND the stored
+	// idempotency response in ONE transaction: a crash between them can't leave
+	// a "processing" key that a retry double-executes. The handler returns plain
+	// data; the wrapper shapes `{ success, data }` and the Response, and replays
+	// the identical body on a repeat with the same Idempotency-Key.
+	return withTransactionalIdempotentJson(
 		{
 			key: c.req.header("idempotency-key"),
 			sub: claims.sub,
@@ -168,9 +157,7 @@ widgetRoutes.post("/", async (c) => {
 			body: rawBody === "" ? undefined : rawBody,
 			query: Object.keys(queryParams).length > 0 ? queryParams : undefined,
 		},
-		async () => {
-			const userId = await getUserIdFromClaims(claims);
-
+		async (tx) => {
 			// 1. Validate the raw body with Zod (bounded strings/arrays in the schema).
 			//    Replace `schemas.create` with your domain schema.
 			const input = parseBody(rawBody, schemas.create);
@@ -180,21 +167,16 @@ widgetRoutes.post("/", async (c) => {
 				fields: Object.keys(input),
 			});
 
-			const db = await getDb();
-
 			// 2. Sanitize all string fields (XSS prevention) BEFORE the write.
 			const clean = sanitizeObject(input as Record<string, unknown>);
 
-			// 3. Multi-step write → transaction. (A single insert technically does
-			//    not need one, but anything that reads-then-writes or touches >1
-			//    table MUST — this is the shape to copy when you add those steps.)
-			const created = await db.transaction(async (tx) => {
-				const [row] = await tx
-					.insert(widgets)
-					.values({ ...clean, userId })
-					.returning();
-				return row;
-			});
+			// 3. Write on the SAME `tx` the wrapper passed in, so the mutation and
+			//    the idempotency completion commit together. Multi-table /
+			//    read-then-write steps just add more statements on this `tx`.
+			const [created] = await tx
+				.insert(widgets)
+				.values({ ...clean, userId })
+				.returning();
 
 			// 4. Null-guard the DB result before use.
 			if (!created) {
@@ -214,11 +196,8 @@ widgetRoutes.post("/", async (c) => {
 				status: AUDIT_STATUS.SUCCESS,
 			});
 
-			// 6. Return the STORED-RESPONSE shape (not sendSuccess) — withIdempotency
-			//    persists this so a replay returns the identical body.
-			return createSuccessResponse({ widget: created });
+			// 6. Return plain data — the wrapper persists + shapes the response.
+			return { widget: created };
 		},
 	);
-
-	return toResponse(result);
 });

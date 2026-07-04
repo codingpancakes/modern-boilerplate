@@ -2,6 +2,7 @@ import {
 	createRemoteJWKSet,
 	type JWTPayload,
 	type JWTVerifyGetKey,
+	errors as joseErrors,
 	jwtVerify,
 } from "jose";
 
@@ -26,6 +27,31 @@ export type WorkosTokenClaims = JWTPayload & {
 
 function defaultAuthIssuer(): string {
 	return process.env.AUTH_ISSUER ?? "https://api.workos.com/";
+}
+
+/**
+ * Verification failed because the signing keys could not be fetched or read —
+ * a JWKS-endpoint outage, DNS/network failure, or timeout. This says NOTHING
+ * about the token: callers must surface it as a 5xx (service unavailable),
+ * never as a 401, or an auth outage masquerades as "everyone's token is
+ * invalid" with zero operator signal.
+ */
+export class AuthVerificationUnavailableError extends Error {
+	constructor(message: string, options?: { cause?: unknown }) {
+		super(message, options);
+		this.name = "AuthVerificationUnavailableError";
+	}
+}
+
+/**
+ * jose signals JWKS-endpoint problems with these two; anything that is not a
+ * JOSEError at all escaped from the fetch layer itself (network/DNS/abort).
+ * Every other JOSEError is a verdict on the token and must stay a 401.
+ */
+function isKeyFetchInfraError(error: unknown): boolean {
+	if (error instanceof joseErrors.JWKSTimeout) return true;
+	if (error instanceof joseErrors.JWKSInvalid) return true;
+	return !(error instanceof joseErrors.JOSEError);
 }
 
 /** Build the remote JWKS key set for a WorkOS client. */
@@ -91,7 +117,10 @@ export async function verifyWorkosToken(
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeoutPromise = new Promise<never>((_, reject) => {
 		timer = setTimeout(
-			() => reject(new Error("JWT verification timeout")),
+			() =>
+				reject(
+					new AuthVerificationUnavailableError("JWT verification timeout"),
+				),
 			timeoutMs,
 		);
 	});
@@ -100,6 +129,15 @@ export async function verifyWorkosToken(
 	try {
 		const result = await Promise.race([verifyPromise, timeoutPromise]);
 		payload = result.payload;
+	} catch (error) {
+		if (error instanceof AuthVerificationUnavailableError) throw error;
+		if (isKeyFetchInfraError(error)) {
+			throw new AuthVerificationUnavailableError(
+				"Unable to fetch or read the JWKS signing keys",
+				{ cause: error },
+			);
+		}
+		throw error;
 	} finally {
 		clearTimeout(timer);
 	}

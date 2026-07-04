@@ -187,15 +187,19 @@ webhooks.post("/workos", async (c) => {
 	const payload = await c.req.text();
 	const signature = c.req.header("workos-signature");
 
+	// Measure BYTES, not string length — .length counts UTF-16 code units, so
+	// a multi-byte payload could weigh ~3× the intended cap.
+	const payloadBytes = Buffer.byteLength(payload, "utf8");
+
 	logger.info("Webhook received", {
 		hasSignature: !!signature,
-		bodyLength: payload.length,
+		bodyLength: payloadBytes,
 	});
 
 	// Reject oversized payloads before any parsing (DoS protection)
 	const MAX_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
-	if (payload.length > MAX_PAYLOAD_BYTES) {
-		logger.error("Webhook payload too large", { size: payload.length });
+	if (payloadBytes > MAX_PAYLOAD_BYTES) {
+		logger.error("Webhook payload too large", { size: payloadBytes });
 		throw Errors.BadRequest("Payload too large");
 	}
 

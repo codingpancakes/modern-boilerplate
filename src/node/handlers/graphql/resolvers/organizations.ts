@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 import { auditRequestContext } from "../../../lib/audit";
 import * as organizationService from "../../../lib/services/organizations";
 import { organizationSchemas } from "../../../lib/validation";
@@ -13,6 +13,26 @@ function parseInput<T>(schema: z.ZodSchema<T>, input: unknown): T {
 		throw toGraphQLError(error);
 	}
 }
+
+const paginationArgs = z.object({
+	limit: z.number().int().min(1).max(100).optional(),
+	cursor: z.string().max(1_000).optional(),
+});
+
+const idArgs = z.object({
+	id: z.string().uuid(),
+});
+
+const organizationIdArgs = z.object({
+	organizationId: z.string().uuid(),
+});
+
+const organizationMembersArgs = organizationIdArgs.merge(paginationArgs);
+
+const organizationMemberIdArgs = z.object({
+	organizationId: z.string().uuid(),
+	memberId: z.string().uuid(),
+});
 
 async function runService<T>(operation: () => Promise<T>): Promise<T> {
 	try {
@@ -35,41 +55,45 @@ export const organizationResolvers = {
 	Query: {
 		myOrganizations: async (
 			_parent: unknown,
-			{ limit = 20, cursor }: { limit?: number; cursor?: string },
+			args: { limit?: number; cursor?: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { limit, cursor } = parseInput(paginationArgs, args);
+			return runService(() =>
 				organizationService.listMyOrganizations({
 					db: context.db,
 					userId: context.userId,
 					limit,
 					cursor,
 				}),
-			),
+			);
+		},
 
 		organization: async (
 			_parent: unknown,
-			{ id }: { id: string },
+			args: { id: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { id } = parseInput(idArgs, args);
+			return runService(() =>
 				organizationService.getOrganization({
 					db: context.db,
 					userId: context.userId,
 					organizationId: id,
 				}),
-			),
+			);
+		},
 
 		organizationMembers: async (
 			_parent: unknown,
-			{
-				organizationId,
-				limit = 20,
-				cursor,
-			}: { organizationId: string; limit?: number; cursor?: string },
+			args: { organizationId: string; limit?: number; cursor?: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { organizationId, limit, cursor } = parseInput(
+				organizationMembersArgs,
+				args,
+			);
+			return runService(() =>
 				organizationService.listOrganizationMembers({
 					db: context.db,
 					userId: context.userId,
@@ -77,7 +101,8 @@ export const organizationResolvers = {
 					limit,
 					cursor,
 				}),
-			),
+			);
+		},
 	},
 
 	Mutation: {
@@ -97,10 +122,11 @@ export const organizationResolvers = {
 
 		updateOrganization: async (
 			_parent: unknown,
-			{ id, input }: { id: string; input: Record<string, unknown> },
+			args: { id: string; input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
-			const validated = parseInput(organizationSchemas.update, input);
+			const { id } = parseInput(idArgs, args);
+			const validated = parseInput(organizationSchemas.update, args.input);
 			return runService(() =>
 				organizationService.updateOrganization({
 					...serviceOptions(context),
@@ -112,25 +138,28 @@ export const organizationResolvers = {
 
 		deleteOrganization: async (
 			_parent: unknown,
-			{ id }: { id: string },
+			args: { id: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { id } = parseInput(idArgs, args);
+			return runService(() =>
 				organizationService.deleteOrganization({
 					...serviceOptions(context),
 					organizationId: id,
 				}),
-			),
+			);
+		},
 
 		inviteMember: async (
 			_parent: unknown,
-			{
-				organizationId,
-				input,
-			}: { organizationId: string; input: Record<string, unknown> },
+			args: { organizationId: string; input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
-			const validated = parseInput(organizationSchemas.inviteMember, input);
+			const { organizationId } = parseInput(organizationIdArgs, args);
+			const validated = parseInput(
+				organizationSchemas.inviteMember,
+				args.input,
+			);
 			const serviceInput = {
 				...validated,
 				role: validated.role ?? "MEMBER",
@@ -146,13 +175,14 @@ export const organizationResolvers = {
 
 		updateMemberRole: async (
 			_parent: unknown,
-			{
-				organizationId,
-				input,
-			}: { organizationId: string; input: Record<string, unknown> },
+			args: { organizationId: string; input: Record<string, unknown> },
 			context: GraphQLContext,
 		) => {
-			const validated = parseInput(organizationSchemas.updateMemberRole, input);
+			const { organizationId } = parseInput(organizationIdArgs, args);
+			const validated = parseInput(
+				organizationSchemas.updateMemberRole,
+				args.input,
+			);
 			return runService(() =>
 				organizationService.updateMemberRole({
 					...serviceOptions(context),
@@ -164,54 +194,62 @@ export const organizationResolvers = {
 
 		removeMember: async (
 			_parent: unknown,
-			{
-				organizationId,
-				memberId,
-			}: { organizationId: string; memberId: string },
+			args: { organizationId: string; memberId: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { organizationId, memberId } = parseInput(
+				organizationMemberIdArgs,
+				args,
+			);
+			return runService(() =>
 				organizationService.removeMember({
 					...serviceOptions(context),
 					organizationId,
 					memberId,
 				}),
-			),
+			);
+		},
 
 		leaveOrganization: async (
 			_parent: unknown,
-			{ organizationId }: { organizationId: string },
+			args: { organizationId: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { organizationId } = parseInput(organizationIdArgs, args);
+			return runService(() =>
 				organizationService.leaveOrganization({
 					...serviceOptions(context),
 					organizationId,
 				}),
-			),
+			);
+		},
 
 		acceptInvitation: async (
 			_parent: unknown,
-			{ organizationId }: { organizationId: string },
+			args: { organizationId: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { organizationId } = parseInput(organizationIdArgs, args);
+			return runService(() =>
 				organizationService.acceptInvitation({
 					...serviceOptions(context),
 					organizationId,
 				}),
-			),
+			);
+		},
 
 		declineInvitation: async (
 			_parent: unknown,
-			{ organizationId }: { organizationId: string },
+			args: { organizationId: string },
 			context: GraphQLContext,
-		) =>
-			runService(() =>
+		) => {
+			const { organizationId } = parseInput(organizationIdArgs, args);
+			return runService(() =>
 				organizationService.declineInvitation({
 					...serviceOptions(context),
 					organizationId,
 				}),
-			),
+			);
+		},
 	},
 };

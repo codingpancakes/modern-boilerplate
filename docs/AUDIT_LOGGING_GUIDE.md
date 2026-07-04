@@ -73,28 +73,32 @@ void logAudit({
 
 ## GraphQL Pattern
 
-For simple mutations, use `auditResolver()`. For multi-step mutations, write explicit
-`logAudit()` calls so the resource ids and change payloads stay accurate.
+Resolvers write explicit `logAudit()` calls after the mutation, so the resource id
+and change payload stay accurate. Spread `auditRequestContext(context)` (from
+`lib/audit.ts`) to carry the same IP / user-agent / request-id as REST handlers.
 
 ```typescript
-updateProfile: auditResolver(
-  async (_parent, args, context) => {
-    const validated = profileUpdateSchema.parse(args.input);
-    const sanitized = sanitizeObject(validated);
-    const [updated] = await context.db
-      .update(profiles)
-      .set(sanitized)
-      .where(eq(profiles.userId, context.userId))
-      .returning();
-    return updated;
-  },
-  {
+updateProfile: async (_parent, args, context) => {
+  const validated = profileUpdateSchema.parse(args.input);
+  const sanitized = sanitizeObject(validated);
+  const [updated] = await context.db
+    .update(profiles)
+    .set(sanitized)
+    .where(eq(profiles.userId, context.userId))
+    .returning();
+
+  void logAudit({
+    userId: context.userId,
+    ...auditRequestContext(context),
     action: AUDIT_ACTIONS.UPDATE,
     resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
-    getResourceId: (result) => result.id,
-    getChanges: (result) => ({ after: result }),
-  },
-)
+    resourceId: updated.id,
+    changes: { after: updated },
+    status: AUDIT_STATUS.SUCCESS,
+  });
+
+  return updated;
+},
 ```
 
 ## Actions and Resource Types

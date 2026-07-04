@@ -11,7 +11,7 @@ under `docs/legacy-aws/` and are not operational guidance for this branch.
 | Data | Retention | Enforcement | Status |
 |---|---:|---|---|
 | Application audit logs | 7 years | Postgres trigger blocks updates and in-window deletes; daily cron prunes expired rows | Implemented |
-| Idempotency keys | 7 days | Daily Cloudflare Cron Trigger janitor | Implemented |
+| Idempotency keys | 24 hours (HTTP mutations) / 7 days (webhook events) | Daily Cloudflare Cron Trigger janitor deletes expired rows | Implemented |
 | WorkOS webhook DLQ messages | Cloudflare Queue retention | Cloudflare Queues `max_retries = 5` routes permanent failures to DLQ consumer | Implemented |
 | `WEBHOOK_FAILED` audit rows | 7 years | Same audit-log retention and immutability rules | Implemented |
 | Workers request logs | Cloudflare dashboard retention window | Cloudflare Workers Logs via `[observability] enabled` | Enabled |
@@ -47,7 +47,9 @@ limit 50;
 ## Idempotency Keys
 
 The `idempotency_keys` table deduplicates critical mutations and webhook processing.
-Expired keys are removed by the daily janitor cron (`src/node/handlers/utils/janitor.ts`).
+HTTP-mutation keys expire after 24 hours (`lib/idempotency.ts` default TTL); webhook
+event keys after 7 days (`lib/services/webhook-processor.ts`). Expired keys are
+removed by the daily janitor cron (`src/node/handlers/utils/janitor.ts`).
 
 The cleanup is intentionally independent from deploys. If the janitor fails, request
 correctness remains intact; storage grows until the job is repaired.

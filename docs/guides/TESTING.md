@@ -14,23 +14,38 @@ tests/
 ├── unit/                               # Vitest unit tests (no DB, no network*)
 │   ├── lib/
 │   │   ├── auth.test.ts                ✅ Claims-object contract (normalization, sub required)
+│   │   ├── hono-auth.test.ts           ✅ requireAuth middleware (fail-closed client id, 401 vs 503)
 │   │   ├── errors.test.ts              ✅ Error factory + wire format
+│   │   ├── error-utils.test.ts         ✅ Error coercion + unique-violation detection
 │   │   ├── validation-schemas.test.ts  ✅ Zod schemas
 │   │   ├── db.test.ts                  ✅ Driver-wiring guard (neon-serverless)
-│   │   ├── sanitize.test.ts            ✅ XSS escaping + recursion depth
+│   │   ├── sanitize.test.ts            ✅ Tag stripping, control chars, render-time escapeHtml
 │   │   ├── audit.test.ts               ✅ Redaction + write-failure metric format
+│   │   ├── cors.test.ts                ✅ Origin matching + fail-closed stage keying
+│   │   ├── media.test.ts               ✅ Magic-byte / content-type validation
+│   │   ├── rate-limit.test.ts          ✅ Per-IP limiter (allow / 429 / absent binding)
 │   │   └── pagination.test.ts          ✅ Lossless cursor round-trip
 │   ├── authorizers/
 │   │   └── verify-token.test.ts        ✅ WorkOS token verifier (real RS256 keys*)
+│   ├── routes/
+│   │   ├── webhooks.test.ts            ✅ HMAC signature + replay window (route level)
+│   │   └── test-routes-gate.test.ts    ✅ /v1/test/* stage allowlist fails closed
+│   ├── scripts/init-project.test.ts    ✅ Project scaffolding
 │   ├── cron.test.ts                    ✅ Cron registry ↔ wrangler.toml trigger parity
+│   ├── queue.test.ts                   ✅ Queue consumer ack/retry/DLQ contract
 │   └── graphql/
 │       ├── yoga.test.ts                ✅ Yoga harness limits (depth/complexity/masking)
-│       └── resolvers/users.test.ts     ✅ Resolvers (mocked db.transaction)
+│       └── resolvers/                  ✅ users, organizations, audit resolvers
 │
 ├── integration/
 │   ├── authz-matrix.test.ts            ✅ Real-DB authorization regression matrix (Vitest)
 │   ├── db-constraints.test.ts          ✅ Real-DB CHECK/index constraints (Vitest)
 │   ├── db-transactions.test.ts         ✅ Real-DB commit/rollback (Vitest)
+│   ├── http-routes.test.ts             ✅ Full HTTP stack against real DB (Vitest)
+│   ├── idempotency.test.ts             ✅ Claims, replays, races, stale-lock steal (Vitest)
+│   ├── jit-provisioning.test.ts        ✅ First-login JIT races + tombstones (Vitest)
+│   ├── org-invite.test.ts              ✅ Invite consent flow (Vitest)
+│   ├── webhook-processor.test.ts       ✅ Idempotent provisioning core (Vitest)
 │   ├── helpers/test-db.ts              ✅ Real-DB harness (migrations + citext)
 │   ├── test-all.sh                     ✅ Master runner (live API)
 │   ├── test-api.sh                     ✅ Deployed staging/prod smoke
@@ -44,8 +59,8 @@ tests/
     └── test-image-upload.sh            Manual R2 upload walkthrough
 ```
 
-Current totals: **21 unit test files, 145 tests** (~0.8s) plus **8 real-DB
-integration files, 64 tests**.
+Exact file/test counts drift with every hardening pass — `pnpm test:run` and
+`pnpm test:integration` print the live totals.
 
 ---
 
@@ -270,8 +285,8 @@ Workers Logs are also in the Cloudflare dashboard. Check Sentry if `SENTRY_DSN` 
 # Before committing
 pnpm check
 
-# Full local gate (matches what CI should run — no CI pipeline exists yet, see
-# Migration Plan Phase 2)
+# Full local gate (mirrors the CI pipeline — .github/workflows/ci.yml runs
+# lint, typecheck, unit + integration tests, gitleaks, and pnpm audit on every PR)
 pnpm check && pnpm test:integration:local
 
 # Before deploying

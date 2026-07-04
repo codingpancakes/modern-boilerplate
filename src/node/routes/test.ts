@@ -5,6 +5,7 @@ import { Errors } from "../lib/errors";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
+import { isLocalDevelopmentStage } from "../lib/stage";
 
 /**
  * /v1/test/* — dev-only diagnostic routes (Hono port of the old
@@ -23,10 +24,16 @@ export const test = new Hono<AppEnv>();
 
 const logger = createLogger({ serviceName: "test-routes" });
 
-// Hide the diagnostics surface entirely in production: indistinguishable
-// from any other unknown route (same formatted 404 wire shape).
+// Expose the diagnostics surface ONLY on an explicit allowlist of stages
+// (local/development + staging, where test-middleware.sh probes it). Everything
+// else — production, an unset STAGE, a typo — gets the same formatted 404 as
+// any unknown route. Fail CLOSED, matching the convention in lib/stage.ts
+// consumers (auth, CORS, GraphQL introspection): an unknown stage must never
+// widen the attack surface.
 test.use("*", async (_c, next) => {
-	if (process.env.STAGE === "production") {
+	const stage = (process.env.STAGE ?? "").trim().toLowerCase();
+	const allowed = stage === "staging" || isLocalDevelopmentStage(stage);
+	if (!allowed) {
 		throw Errors.NotFound("Route");
 	}
 	await next();

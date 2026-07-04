@@ -38,6 +38,27 @@ import {
  */
 const logger = createLogger({ serviceName: "webhook-processor" });
 
+/** How long a "processing" claim may sit before a redelivery may steal it. */
+export const WEBHOOK_STALE_PROCESSING_MS = 5 * 60 * 1000;
+
+/**
+ * Thrown when an event's idempotency lock is held by another (possibly
+ * crashed) attempt. The consumer must NOT ack — it retries with a delay of at
+ * least the staleness window so the redelivery can reclaim the lock. Acking
+ * here would permanently drop the event: WorkOS already got its 200 at
+ * ingest, so the queue message is the only copy left.
+ */
+export class WebhookInProgressError extends Error {
+	readonly retryDelaySeconds = Math.ceil(WEBHOOK_STALE_PROCESSING_MS / 1000);
+
+	constructor(idempotencyKey: string, claimStatus: string) {
+		super(
+			`Webhook event lock is held (status: ${claimStatus}) for ${idempotencyKey}; retry after the staleness window`,
+		);
+		this.name = "WebhookInProgressError";
+	}
+}
+
 export async function processWorkosEvent(
 	webhookEvent: WorkOSWebhookEvent,
 ): Promise<void> {
@@ -54,7 +75,7 @@ export async function processWorkosEvent(
 		requestHash: webhookEvent.id,
 		completedMode: "return",
 		reclaimFailed: true,
-		staleProcessingMs: 5 * 60 * 1000,
+		staleProcessingMs: WEBHOOK_STALE_PROCESSING_MS,
 		resetCreatedAtOnReclaim: true,
 		expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
 	});
@@ -64,13 +85,16 @@ export async function processWorkosEvent(
 		return;
 	}
 	if (claim.status !== "claimed") {
-		// Another attempt is actively processing this event, or the key was
-		// malformed/reused in a way this event stream should never produce.
-		logger.warn("Event is already being processed", {
+		// Another attempt holds the lock — either it is actively processing or it
+		// crashed mid-flight (isolate eviction, deploy) and its "processing" row
+		// is not yet stale. Do NOT treat this as success: throw so the consumer
+		// retries after the staleness window, at which point the lock is either
+		// completed (dedup no-op) or stale (reclaimed and re-run).
+		logger.warn("Event lock held; deferring to redelivery", {
 			idempotencyKey,
 			claimStatus: claim.status,
 		});
-		return;
+		throw new WebhookInProgressError(idempotencyKey, claim.status);
 	}
 	if (claim.source === "reclaimed") {
 		logger.warn("Reclaimed idempotency key for retry", { idempotencyKey });
@@ -80,15 +104,35 @@ export async function processWorkosEvent(
 
 	try {
 		// Authentication-lifecycle events (login / failed login / session) are
-		// audited rather than mutating domain tables.
+		// audited rather than mutating domain tables. Write the audit row AND
+		// mark the key completed in ONE transaction: otherwise a crash between
+		// the audit commit and the (separate) completion would leave the key
+		// "processing", and a post-stale-window reclaim would re-run this and
+		// write a DUPLICATE login row into the append-only, un-dedupable trail.
+		// Atomic completion makes the auth path exactly-once.
 		if (isWorkOSAuthEvent(webhookEvent.event)) {
 			const authData = parseWorkOSAuthData(
 				webhookEvent.data as Record<string, unknown>,
 			);
-			await recordAuthEventFromWorkOS(db, authData, webhookEvent.event);
+			await db.transaction(async (tx) => {
+				await recordAuthEventFromWorkOS(tx, authData, webhookEvent.event);
+				await completeIdempotencyKey(tx, idempotencyKey);
+			});
+			logger.info("Webhook processed successfully", {
+				eventId: webhookEvent.id,
+			});
+			return;
 		}
 
-		// Delegate to service-layer functions for each event type
+		// Delegate to service-layer functions for each event type. NOTE: domain
+		// provisioning is idempotent (upserts converge), but each provisioning
+		// function opens its own transaction and the completion below is a
+		// separate statement — so a crash in that narrow window can, after a
+		// reclaim, write a duplicate CREATE/UPDATE audit row. Domain STATE stays
+		// correct; only the audit trail may gain a duplicate. This is the
+		// accepted at-least-once cost for the domain path (folding completion
+		// into each provisioning tx conflicts with the email-collision escape
+		// hatch in upsertUserFromWorkOS).
 		switch (webhookEvent.event) {
 			case "user.created":
 			case "user.updated": {

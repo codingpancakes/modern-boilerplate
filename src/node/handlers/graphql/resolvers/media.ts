@@ -1,33 +1,37 @@
-import { GraphQLError } from "graphql";
+import { z } from "zod";
 import { listUserImages } from "../../../lib/media";
 import { createPresignedImageUpload } from "../../../lib/services/media-upload";
-import { validateCategory } from "../../../lib/validation/media";
+import { validate } from "../../../lib/validation/helpers";
+import { categoryField } from "../../../lib/validation/media";
 import type { GraphQLContext } from "../context";
 import { toGraphQLError } from "../errors";
 
-function validateCategoryGraphQL(category: string): void {
+function parseInput<T>(schema: z.ZodSchema<T>, input: unknown): T {
 	try {
-		validateCategory(category);
-	} catch (err) {
-		throw new GraphQLError(
-			err instanceof Error ? err.message : "Invalid category",
-			{ extensions: { code: "BAD_USER_INPUT" } },
-		);
+		return validate(schema, input);
+	} catch (error) {
+		throw toGraphQLError(error);
 	}
 }
+
+const imagesArgs = z.object({
+	category: categoryField.optional(),
+	limit: z.number().int().min(1).max(100).optional(),
+	continuationToken: z.string().max(2_000).optional(),
+});
 
 export const mediaResolvers = {
 	Query: {
 		images: async (
 			_parent: unknown,
-			{
+			args: { category?: string; limit?: number; continuationToken?: string },
+			context: GraphQLContext,
+		) => {
+			const {
 				category,
 				limit = 20,
 				continuationToken,
-			}: { category?: string; limit?: number; continuationToken?: string },
-			context: GraphQLContext,
-		) => {
-			if (category) validateCategoryGraphQL(category);
+			} = parseInput(imagesArgs, args);
 
 			return listUserImages(context.userId, category, limit, continuationToken);
 		},

@@ -127,7 +127,8 @@ await db.select().from(users).where(eq(users.id, userId));
 - HTTPS enforcement in production (no http origins accepted)
 - Subdomain matching with parent domain min-segment validation
 - No header name leakage in rejection responses
-- Dev/local origins only accepted when `NODE_ENV` is neither production nor staging
+- Dev/local origins only accepted when `STAGE` is explicitly `local`/`development`
+  (`isDevLikeStage()` in `lib/stage.ts`); unknown or missing stages fail closed
 - Answers `OPTIONS` preflight with 204 + the allow headers
 
 **Protection against:**
@@ -179,8 +180,8 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 
 **What it does:**
 - No try-catch in route handlers — the app-level `onError` catches and formats everything
-- REST: generic error messages to clients (5xx masked when `NODE_ENV` is
-  production/staging), details to Sentry
+- REST: generic error messages to clients (5xx masked when `STAGE` is
+  production/staging — `isDeployedStage()` in `lib/stage.ts`), details to Sentry
 - GraphQL: errors serialize as `{ message, extensions: { code } }`; outside dev,
   messages for non-safe codes are masked — only whitelisted codes (`BAD_USER_INPUT`,
   `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, `FORBIDDEN`, `UNAUTHENTICATED`,
@@ -194,8 +195,10 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 **Location:** `src/node/lib/sanitize.ts`
 
 **What it does:**
-- `sanitizeObject()` applies HTML escaping via character whitelist
-- Blocks dangerous URL schemes (javascript:, data:, vbscript:)
+- `sanitizeObject()` strips HTML tags (script/style blocks lose their contents)
+  and control characters; stored data stays plain text exactly as the user wrote
+  it — escaping is a render-time concern (`escapeHtml()` is exported for that)
+- Blocks dangerous URL schemes (javascript:, data:, vbscript:, blob:)
 - Blocks protocol-relative URLs (`//host/path`)
 - Sanitizes filenames (strips path separators, null bytes)
 - Category and string field character validation
@@ -238,7 +241,8 @@ a token is verified
 
 ### 12. Org-Membership Consent (invite flow)
 
-**Location:** `src/node/handlers/graphql/resolvers/organizations.ts` (SDL in
+**Location:** `src/node/lib/services/organizations.ts` (resolvers in
+`src/node/handlers/graphql/resolvers/organizations.ts` delegate to it; SDL in
 `src/node/handlers/graphql/schema/index.ts`); `assignment_status` enum in
 `src/node/db/schema/enums.ts`
 
@@ -286,8 +290,9 @@ POST /v1/media/upload-image
 **Defense:**
 1. API returns JSON, not HTML (XSS doesn't work)
 2. Zod validation rejects invalid filenames
-3. `sanitizeObject` escapes HTML entities
-4. Frontend should sanitize before rendering
+3. `sanitizeObject` strips HTML tags before the value is persisted
+4. Frontend must escape at render time (`escapeHtml()` in `lib/sanitize.ts` for
+   any server-rendered HTML)
 
 **Result:** Attack ineffective (API doesn't render HTML)
 

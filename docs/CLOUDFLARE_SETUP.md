@@ -168,7 +168,23 @@ Until configured, media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGUR
    (they are in `.dev.vars.example`, so `pnpm sync-secrets` covers them).
 3. Set `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
 
-### 7d. Hyperdrive (DB pooling) — setup placeholder
+### 7d. Cloudflare Queues (webhook processing) — required before first deploy
+
+The webhook pipeline (`routes/webhooks.ts` → `WEBHOOK_QUEUE` → `src/node/queue.ts`)
+needs its queues to EXIST before `wrangler deploy` will accept the consumer config —
+a deploy against missing queues fails. Per deployed environment:
+
+```bash
+npx wrangler queues create <project>-webhooks-staging
+npx wrangler queues create <project>-webhooks-dlq-staging
+# repeat with -production for production
+```
+
+Names must match the `[[env.<stage>.queues.producers/consumers]]` blocks in
+`wrangler.toml`. Local dev needs nothing — `wrangler dev` simulates queues on disk.
+Operations (DLQ drain, retry semantics): `docs/runbooks/WEBHOOK_DLQ.md`.
+
+### 7e. Hyperdrive (DB pooling) — setup placeholder
 
 Not configured yet. The Worker currently talks to Neon directly via
 `@neondatabase/serverless` (per-request connections, as Workers requires). When
@@ -176,7 +192,7 @@ connection latency or pooling becomes a measured problem, add a `[[hyperdrive]]`
 binding in `wrangler.toml` and point `lib/db.ts` at it — see the North Star's
 target stack table.
 
-### 7e. Rate limiting — no setup needed
+### 7f. Rate limiting — no setup needed
 
 The per-IP rate limiter (`lib/hono/rate-limit.ts`) uses the Cloudflare Workers Rate
 Limiting binding `RATE_LIMITER`, declared as `[[ratelimits]]` (and per-env

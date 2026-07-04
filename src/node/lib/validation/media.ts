@@ -18,19 +18,6 @@ export const categoryField = z
 	.regex(CATEGORY_REGEX, CATEGORY_REGEX_MSG);
 
 /**
- * Validate a category string (for use in non-Zod contexts like GraphQL resolvers).
- * Throws a descriptive error if invalid.
- */
-export function validateCategory(category: string): void {
-	if (category.length > CATEGORY_MAX_LENGTH) {
-		throw new Error("Category must be 50 characters or less");
-	}
-	if (!CATEGORY_REGEX.test(category)) {
-		throw new Error(CATEGORY_REGEX_MSG);
-	}
-}
-
-/**
  * Allowed image content types
  */
 const imageContentTypes = [

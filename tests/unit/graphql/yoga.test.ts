@@ -170,6 +170,40 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({ code: "BAD_USER_INPUT" });
 	});
 
+	it("counts a fragment's cost once per SPREAD, not once per query (complexity bypass guard)", () => {
+		// A fragment spread N times must cost N× — global dedup would let a query
+		// alias many expensive spreads while scoring only one.
+		const once = parse(`
+			query { a: me { ...UserFields } }
+			fragment UserFields on User { id email firstName lastName }
+		`);
+		const thrice = parse(`
+			query {
+				a: me { ...UserFields }
+				b: me { ...UserFields }
+				c: me { ...UserFields }
+			}
+			fragment UserFields on User { id email firstName lastName }
+		`);
+
+		expect(calculateComplexity(thrice, null)).toBe(
+			3 * calculateComplexity(once, null),
+		);
+	});
+
+	it("terminates on cyclic fragment spreads instead of recursing forever", () => {
+		// Invalid per the GraphQL spec (NoFragmentCycles), but the counter runs
+		// pre-validation in onExecute paths and must not stack-overflow.
+		const cyclic = parse(`
+			query { me { ...A } }
+			fragment A on User { id ...B }
+			fragment B on User { email ...A }
+		`);
+
+		expect(() => calculateComplexity(cyclic, null)).not.toThrow();
+		expect(calculateComplexity(cyclic, null)).toBeGreaterThan(0);
+	});
+
 	it("clamps non-positive INT literal list multipliers to one", () => {
 		const negative = parse(
 			"query { images(limit: -1) { images { key url size } } }",
@@ -198,6 +232,25 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({ code: "BAD_USER_INPUT" });
 	});
 
+	it("counts mutations smuggled through a fragment spread (limit bypass guard)", async () => {
+		vi.stubEnv("STAGE", "production");
+
+		// One spread node hiding 6 mutation fields must still trip the limit.
+		const fields = Array.from(
+			{ length: 6 },
+			(_, i) => `m${i}: updateMe(input: { firstName: "x" }) { id }`,
+		).join("\n");
+		const res = await post(
+			`mutation { ...m }\nfragment m on Mutation { ${fields} }`,
+		);
+		expect(res.status).toBe(500);
+
+		const body = await res.json();
+		expect(body.errors[0].message).toBe(
+			"Too many mutations in one request (max 5)",
+		);
+	});
+
 	it("disables introspection in production but serves it in dev-like stages", async () => {
 		vi.stubEnv("STAGE", "production");
 		const blocked = await post("query { __schema { queryType { name } } }");
@@ -212,6 +265,17 @@ describe("GraphQL Yoga route", () => {
 		expect(allowed.status).toBe(200);
 		const allowedBody = await allowed.json();
 		expect(allowedBody.data.__schema.queryType.name).toBe("Query");
+	});
+
+	it("treats typoed stages as deployed for introspection", async () => {
+		vi.stubEnv("STAGE", "prodution");
+
+		const res = await post("query { __schema { queryType { name } } }");
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.errors[0].extensions).toEqual({
+			code: "GRAPHQL_VALIDATION_FAILED",
+		});
 	});
 
 	it("serves GraphiQL on GET only outside production/staging", async () => {

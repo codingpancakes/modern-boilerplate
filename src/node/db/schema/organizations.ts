@@ -48,6 +48,11 @@ export const organizations = pgTable(
 
 /**
  * Org Units table - Hierarchical organizational units (departments, teams, etc.)
+ *
+ * Intentional extension point: no endpoint/service wires this up yet, and
+ * `audit_logs` / `organization_members` carry a nullable `org_unit_id` FK ready
+ * for it. Kept deliberately as conceptual flexibility — NOT dead code; do not
+ * drop it or its `createOrgUnit` validation schema in a cleanup pass.
  */
 export const orgUnits = pgTable(
 	"org_units",
@@ -85,37 +90,6 @@ export const orgUnits = pgTable(
 );
 
 /**
- * Idempotency Keys table - prevents duplicate request processing.
- *
- * For user-supplied HTTP idempotency keys, `key` stores the internal
- * subject-scoped storage key, not the raw Idempotency-Key header value.
- */
-export const idempotencyKeys = pgTable(
-	"idempotency_keys",
-	{
-		key: text("key").primaryKey().notNull(),
-		requestHash: text("request_hash").notNull(),
-		status: text("status").notNull(),
-		response: text("response"),
-		createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
-			.defaultNow()
-			.notNull(),
-		completedAt: timestamp("completed_at", {
-			withTimezone: true,
-			mode: "string",
-		}),
-		expiresAt: timestamp("expires_at", {
-			withTimezone: true,
-			mode: "string",
-		}).notNull(),
-		updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
-			.defaultNow()
-			.notNull(),
-	},
-	(table) => [index("ix_idempotency_keys_expires").on(table.expiresAt)],
-);
-
-/**
  * Organization Members table - User membership in organizations
  */
 export const organizationMembers = pgTable(
@@ -134,14 +108,21 @@ export const organizationMembers = pgTable(
 		role: orgRole("role").default("MEMBER"),
 		status: assignmentStatus("status").default("ACTIVE"),
 		metadata: jsonb("metadata"),
+		// NOT NULL: keyset pagination compares/encodes createdAt as a non-null
+		// string (see listMyOrganizations/listOrganizationMembers); a NULL would
+		// drop out of the `gt(createdAt, cursor)` window and break the cursor.
 		createdAt: timestamp("created_at", {
 			withTimezone: true,
 			mode: "string",
-		}).defaultNow(),
+		})
+			.defaultNow()
+			.notNull(),
 		updatedAt: timestamp("updated_at", {
 			withTimezone: true,
 			mode: "string",
-		}).defaultNow(),
+		})
+			.defaultNow()
+			.notNull(),
 	},
 	(table) => [
 		index("ix_org_members_org").on(table.organizationId),

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { authIdentities } from "../db/schema/index";
+import { authIdentities, users } from "../db/schema/index";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -10,6 +10,7 @@ import { getDb } from "./db";
 import { isUniqueConstraintViolation } from "./error-utils";
 import { Errors } from "./errors";
 import { createUserWithIdentity } from "./services/user-provisioning";
+import { RECORD_STATUS } from "./status";
 
 export type Claims = {
 	sub: string;
@@ -65,8 +66,9 @@ export async function getUserIdFromClaims(
 
 	const lookup = () =>
 		db
-			.select({ userId: authIdentities.userId })
+			.select({ userId: authIdentities.userId, userStatus: users.status })
 			.from(authIdentities)
+			.leftJoin(users, eq(users.id, authIdentities.userId))
 			.where(
 				and(
 					eq(authIdentities.providerType, "workos"),
@@ -77,6 +79,9 @@ export async function getUserIdFromClaims(
 
 	const authResult = await lookup();
 	if (authResult[0]?.userId) {
+		if (authResult[0].userStatus === RECORD_STATUS.DELETED) {
+			throw Errors.Unauthorized();
+		}
 		return authResult[0].userId;
 	}
 
@@ -104,6 +109,12 @@ export async function getUserIdFromClaims(
 			if (retry[0]?.userId) {
 				return retry[0].userId;
 			}
+			// The collision is on EMAIL, owned by a different provider subject —
+			// the retry-by-subject can never find a row. Without a terminal
+			// client error here, this subject would 500 on every request forever.
+			throw Errors.Conflict(
+				"An account with this email already exists for a different login identity",
+			);
 		}
 
 		// Real DB errors should surface as 500, not masquerade as 401

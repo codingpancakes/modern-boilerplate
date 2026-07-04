@@ -60,7 +60,12 @@ vi.mock("@/authorizers/verify-token", async () => {
 });
 
 import { app } from "@/app";
-import { authIdentities, profiles, users } from "@/db/schema/index";
+import {
+	authIdentities,
+	idempotencyKeys,
+	profiles,
+	users,
+} from "@/db/schema/index";
 import {
 	createTestDb,
 	type TestDb,
@@ -368,6 +373,75 @@ describe("HTTP routes — authenticated", () => {
 			.from(profiles)
 			.where(eq(profiles.userId, userId));
 		expect(row?.preferredName).toBe("Ace");
+	});
+
+	it("PATCH /v1/users/me replays the stored response for a repeated Idempotency-Key", async () => {
+		const userId = await seedUser();
+		const headers = {
+			...authHeaders,
+			"Content-Type": "application/json",
+			"Idempotency-Key": "patch-me-key-1",
+		};
+		const send = () =>
+			fetchApp("/v1/users/me", {
+				method: "PATCH",
+				headers,
+				body: JSON.stringify({ profile: { preferredName: "First" } }),
+			});
+
+		const first = await send();
+		expect(first.status).toBe(200);
+
+		// Change what a re-execution WOULD write, then replay the same key: the
+		// stored response comes back and the handler does NOT run again.
+		const second = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ profile: { preferredName: "First" } }),
+		});
+		expect(second.status).toBe(200);
+		expect(await second.json()).toEqual(await first.json());
+
+		// A stored idempotency row exists for this subject+key (proves the header
+		// reached the lib, not just that two identical requests happened to match).
+		const keys = await db.select().from(idempotencyKeys);
+		expect(keys).toHaveLength(1);
+		expect(keys[0]?.status).toBe("completed");
+
+		const [row] = await db
+			.select()
+			.from(profiles)
+			.where(eq(profiles.userId, userId));
+		expect(row?.preferredName).toBe("First");
+	});
+
+	it("PATCH /v1/users/me rejects a reused Idempotency-Key with a different body (422)", async () => {
+		await seedUser();
+		const key = "patch-me-key-reuse";
+
+		const first = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers: {
+				...authHeaders,
+				"Content-Type": "application/json",
+				"Idempotency-Key": key,
+			},
+			body: JSON.stringify({ profile: { preferredName: "Alpha" } }),
+		});
+		expect(first.status).toBe(200);
+
+		const conflicting = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers: {
+				...authHeaders,
+				"Content-Type": "application/json",
+				"Idempotency-Key": key,
+			},
+			body: JSON.stringify({ profile: { preferredName: "Beta" } }),
+		});
+		expect(conflicting.status).toBe(422);
+		const body = await conflicting.json();
+		expect(body.details.code).toBe("IDEMPOTENCY_KEY_REUSED");
 	});
 
 	it("PATCH /v1/users/me with a malformed FLAT body → 400 VALIDATION_ERROR", async () => {

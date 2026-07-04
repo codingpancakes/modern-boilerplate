@@ -37,6 +37,30 @@ export function isUniqueConstraintViolation(err: unknown): boolean {
 	return false;
 }
 
+/**
+ * Extract the violated constraint's NAME from a wrapped Postgres 23505, when
+ * the driver surfaces it. Lets callers distinguish a terminal collision (e.g.
+ * `ux_users_email`) from a transient concurrent-insert race on another index.
+ * Returns undefined when no structured constraint is found — treat that as
+ * "unknown", not as a specific constraint.
+ */
+export function uniqueViolationConstraint(err: unknown): string | undefined {
+	let current: unknown = err;
+
+	for (let depth = 0; depth < 8 && current; depth++) {
+		if (
+			isRecord(current) &&
+			current.code === "23505" &&
+			typeof current.constraint === "string"
+		) {
+			return current.constraint;
+		}
+		current = getCause(current);
+	}
+
+	return undefined;
+}
+
 function hasPostgresUniqueCode(value: unknown): boolean {
 	if (!isRecord(value)) return false;
 	return value.code === "23505";
