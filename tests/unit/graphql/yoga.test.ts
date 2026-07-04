@@ -2,7 +2,10 @@ import { parse } from "graphql";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
-import { calculateComplexity } from "@/handlers/graphql/plugins";
+import {
+	calculateComplexity,
+	MAX_QUERY_COMPLEXITY,
+} from "@/handlers/graphql/plugins";
 import type { AppEnv } from "@/lib/hono/types";
 
 // The route builds its per-request context via createContext, which needs a
@@ -188,6 +191,38 @@ describe("GraphQL Yoga route", () => {
 
 		expect(calculateComplexity(thrice, null)).toBe(
 			3 * calculateComplexity(once, null),
+		);
+	});
+
+	it("counts unbounded list fields (members/organizations) as fan-out, not cost 1", () => {
+		// A shallow, legitimate query stays well under the ceiling...
+		const shallow = parse(
+			"query { organization(id: \"x\") { members { role } } }",
+		);
+		expect(calculateComplexity(shallow, null)).toBeLessThan(
+			MAX_QUERY_COMPLEXITY,
+		);
+
+		// ...but nesting the member graph (members → user → organizations →
+		// organization → members) compounds ×10 per unbounded list and must
+		// exceed the ceiling, so it can't fan out under a cost-1 score.
+		const nested = parse(`
+			query {
+				organization(id: "x") {
+					members {
+						user {
+							organizations {
+								organization {
+									members { role }
+								}
+							}
+						}
+					}
+				}
+			}
+		`);
+		expect(calculateComplexity(nested, null)).toBeGreaterThan(
+			MAX_QUERY_COMPLEXITY,
 		);
 	});
 

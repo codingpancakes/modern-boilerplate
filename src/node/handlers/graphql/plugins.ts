@@ -64,11 +64,29 @@ export function isDevelopmentStage(): boolean {
 const DEFAULT_LIST_MULTIPLIER = 10;
 const MAX_LIST_MULTIPLIER = 100;
 
+/**
+ * List-returning fields that DON'T take a `limit`/`first` bound, so the
+ * argument-based multiplier below can't see their fan-out. Without this they'd
+ * score as cost 1, letting a query nest the member graph
+ * (org.members → user.organizations → org.members → …) under the complexity
+ * ceiling while fanning out multiplicatively at execution. Treating them as
+ * implicit lists makes nested fan-out compound in the score the way it does in
+ * the DB. (Scalar lists like `languages` are leaves and don't fan out.)
+ */
+const IMPLICIT_LIST_FIELDS = new Set(["members", "organizations"]);
+
 function getListMultiplier(
 	field: FieldNode,
 	variables: Readonly<Record<string, unknown>>,
 ): number {
-	if (!field.arguments) return 1;
+	// No explicit limit/first found → known unbounded lists still fan out, so
+	// give them the default multiplier; everything else is cost 1.
+	const fallback = IMPLICIT_LIST_FIELDS.has(field.name.value)
+		? DEFAULT_LIST_MULTIPLIER
+		: 1;
+	if (!field.arguments || field.arguments.length === 0) {
+		return fallback;
+	}
 	for (const arg of field.arguments) {
 		if (arg.name.value === "limit" || arg.name.value === "first") {
 			if (arg.value.kind === Kind.INT) {
@@ -93,7 +111,7 @@ function getListMultiplier(
 			return DEFAULT_LIST_MULTIPLIER;
 		}
 	}
-	return 1;
+	return fallback;
 }
 
 function countSelections(

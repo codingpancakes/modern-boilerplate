@@ -307,11 +307,15 @@ export async function updateOrganization(
 	let updated: typeof organizations.$inferSelect | undefined;
 	try {
 		({ before, updated } = await options.db.transaction(async (tx) => {
+			// Lock the row for the read-then-write: without FOR UPDATE, two
+			// concurrent updates can both capture the same `before`, so the audit
+			// trail records a stale prior-state for the second writer.
 			const [b] = await tx
 				.select()
 				.from(organizations)
 				.where(eq(organizations.id, options.organizationId))
-				.limit(1);
+				.limit(1)
+				.for("update");
 
 			const [u] = await tx
 				.update(organizations)
