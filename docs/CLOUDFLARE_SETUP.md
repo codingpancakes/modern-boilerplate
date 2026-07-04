@@ -201,6 +201,34 @@ with `simple = { limit = 100, period = 60 }`. It needs **no dashboard resource**
 it's configured entirely in `wrangler.toml`. The binding is absent under `wrangler dev`,
 so the limiter no-ops locally.
 
+### 7g. Custom domain (serve the API on your own hostname)
+
+By default the Worker answers on `*.workers.dev`. To serve the API on a real
+hostname, wire the Cloudflare Workers **Custom Domain** routes into
+`wrangler.toml` for both deployed envs:
+
+```bash
+pnpm set-domain acme.dev            # → api.acme.dev / api-staging.acme.dev
+pnpm set-domain acme.dev gateway    # → gateway.acme.dev / gateway-staging.acme.dev
+```
+
+This is idempotent — re-run it to change the domain. It writes a
+`[[env.<stage>.routes]]` block (`custom_domain = true`) that binds on the next
+`pnpm deploy:<stage>`. `scripts/deploy.ts` then probes the custom domain for its
+health check automatically (override with `HEALTH_URL`).
+
+**Manual step (not automated — usually a different DNS provider):** Custom
+Domains require the zone to be **on Cloudflare**. Add `acme.dev` as a zone in
+Cloudflare and point your registrar's nameservers (or use Cloudflare's
+partial/CNAME setup) at it. Once the zone is on Cloudflare, wrangler manages the
+in-zone DNS record for the hostnames above. Run `set-domain` when you're ready to
+wire the domain — once these routes exist, `wrangler deploy` expects the zone to
+be reachable on Cloudflare.
+
+Convention: the API lives on `api.<domain>` (prod) / `api-staging.<domain>`
+(staging), distinct from the frontend origin (`<domain>` / `staging.<domain>`)
+in `CORS_EXACT_ORIGINS`. A BFF/frontend proxies to the API host.
+
 ## 8. API docs (optional)
 
 ```bash

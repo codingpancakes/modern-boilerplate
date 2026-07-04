@@ -44,6 +44,7 @@ No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.m
 | `pnpm migrate` | Run Drizzle migrations |
 | `pnpm db:generate` | Generate a migration from schema changes |
 | `pnpm sync-secrets <stage>` | Push secrets to Cloudflare (`wrangler secret put`) |
+| `pnpm set-domain <domain>` | Wire the API custom domain (`api[-staging].<domain>`) into wrangler.toml for both envs |
 | `pnpm deploy:staging` | Health-gated canary + auto-rollback to staging (`scripts/deploy.ts`) |
 | `pnpm deploy:production` | Health-gated canary + auto-rollback to production (`scripts/deploy.ts`) |
 | `pnpm deploy:staging:simple` | Plain `wrangler deploy --env staging` (no canary) |
@@ -75,7 +76,7 @@ src/node/
 
 wrangler.toml            Worker config: vars, R2 bindings, cron triggers, staging/production envs
 .dev.vars.example        Registry of every secret the Worker reads (copy to .dev.vars)
-scripts/                 migrate, sync-secrets, init-project, generate-openapi
+scripts/                 migrate, sync-secrets, init-project, set-domain, generate-openapi
 templates/               Hono route templates for new domains (see templates/README.md)
 tests/                   Unit (vitest) + integration (vitest + shell scripts)
 docs/                    Human docs (legacy AWS docs under docs/legacy-aws/)

@@ -23,6 +23,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { applyCustomDomains } from "./set-domain";
 
 type Stage = "local" | "staging" | "production";
 type Logger = Pick<Console, "log">;
@@ -198,12 +199,17 @@ export function initProject(options: InitProjectOptions): void {
 	// Rewrite Cloudflare resource names so a fresh project has no source-project
 	// residue in wrangler.toml.
 	const wranglerPath = path.join(root, "wrangler.toml");
-	const rewrittenWrangler = rewriteWranglerToml(
-		fs.readFileSync(wranglerPath, "utf-8"),
-		{ projectName, domain },
+	const rewrittenWrangler = applyCustomDomains(
+		rewriteWranglerToml(fs.readFileSync(wranglerPath, "utf-8"), {
+			projectName,
+			domain,
+		}),
+		{ domain },
 	);
 	fs.writeFileSync(wranglerPath, rewrittenWrangler);
-	logger.log("✅ wrangler.toml resource names updated");
+	logger.log(
+		"✅ wrangler.toml resource names + API custom domains (api[-staging].<domain>) set",
+	);
 
 	logger.log(`
 🎉 Project "${projectName}" initialized for ${domain}.
@@ -217,6 +223,10 @@ Next steps:
   4. pnpm migrate                     # apply schema to the DB
   5. pnpm dev                         # wrangler dev --local
   6. pnpm sync-secrets staging && pnpm deploy:staging
+
+Custom domains for the API (api.${domain} / api-staging.${domain}) are already
+wired into wrangler.toml. They bind on deploy once the zone is on Cloudflare —
+re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7g.
 `);
 }
 

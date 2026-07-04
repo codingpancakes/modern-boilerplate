@@ -37,21 +37,36 @@ if (stage !== "staging" && stage !== "production") {
 
 /**
  * Health-check base URL, project-agnostic so the boilerplate needs no edits:
- *   1. HEALTH_URL env (explicit; use for custom domains), else
- *   2. derived from the Worker `name` in wrangler.toml + WORKERS_SUBDOMAIN env
+ *   1. HEALTH_URL env (explicit override), else
+ *   2. the stage's custom-domain route in wrangler.toml (set by `pnpm
+ *      set-domain`) → https://<host>, else
+ *   3. derived from the Worker `name` + WORKERS_SUBDOMAIN env
  *      → https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev
- * Fails fast if neither is available.
+ * Fails fast if none is available.
  */
+function customDomainForStage(toml: string): string | undefined {
+	// Match the pattern inside this stage's routes block (set-domain writes a
+	// [[env.<stage>.routes]] block with `pattern = "<host>"`).
+	const re = new RegExp(
+		`\\[\\[env\\.${stage}\\.routes\\]\\]\\s*\\n\\s*pattern\\s*=\\s*"([^"]+)"`,
+	);
+	return toml.match(re)?.[1];
+}
+
 function resolveHealthBase(): string {
 	if (process.env.HEALTH_URL) return process.env.HEALTH_URL;
+
+	const toml = readFile("wrangler.toml", "utf-8");
+	const customDomain = customDomainForStage(toml);
+	if (customDomain) return `https://${customDomain}`;
+
 	const subdomain = process.env.WORKERS_SUBDOMAIN;
 	if (!subdomain) {
 		console.error(
-			"Set HEALTH_URL, or WORKERS_SUBDOMAIN (your *.workers.dev subdomain) so the health URL can be derived.",
+			"Set HEALTH_URL, or WORKERS_SUBDOMAIN (your *.workers.dev subdomain), or wire a custom domain with `pnpm set-domain` so the health URL can be derived.",
 		);
 		process.exit(1);
 	}
-	const toml = readFile("wrangler.toml", "utf-8");
 	const name = toml.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
 	if (!name) {
 		console.error("Could not read Worker `name` from wrangler.toml.");
