@@ -29,8 +29,13 @@ pnpm install
 
 ## 2. Scaffold the project
 
+Run it with no arguments for an interactive wizard (prompts for name, domain, and
+API subdomain, `create-next-app` style):
+
 ```bash
-pnpm init-project <project-name> <domain>      # e.g. pnpm init-project acme-api acme.dev
+pnpm init-project                              # interactive
+# or non-interactive (scripts/CI):
+pnpm init-project <project-name> <domain> [api-subdomain]   # e.g. acme-api acme.dev
 ```
 
 This one command:

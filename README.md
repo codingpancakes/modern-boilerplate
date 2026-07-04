@@ -4,8 +4,9 @@ Production-grade API running as **one Cloudflare Worker** — Hono + Neon Postgr
 WorkOS authentication. Built to be owned end-to-end by one person
 (see [docs/direction/NORTH_STAR.md](./docs/direction/NORTH_STAR.md)).
 
-All project naming flows from `PROJECT_NAME` — run `pnpm init-project` to spin off a
-new project (see [docs/CLOUDFLARE_SETUP.md](./docs/CLOUDFLARE_SETUP.md)).
+All project naming flows from `PROJECT_NAME` — run `pnpm init-project` (interactive
+wizard, or pass `<name> <domain>`) to spin off a new project. Full walkthrough:
+[docs/guides/LAUNCH_NEW_PROJECT.md](./docs/guides/LAUNCH_NEW_PROJECT.md).
 
 ## Stack
 

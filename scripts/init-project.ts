@@ -31,6 +31,7 @@ type Logger = Pick<Console, "log">;
 export interface InitProjectOptions {
 	projectName: string;
 	domain: string;
+	apiSubdomain?: string;
 	force?: boolean;
 	root?: string;
 	logger?: Logger;
@@ -43,21 +44,34 @@ function defaultRoot(): string {
 function parseArgs(args: string[]) {
 	const positional = args.filter((a) => !a.startsWith("--"));
 	const hasFlag = (name: string) => args.includes(`--${name}`);
-	const [projectName, domain] = positional;
-	return { projectName, domain, force: hasFlag("force") };
+	const [projectName, domain, apiSubdomain] = positional;
+	return { projectName, domain, apiSubdomain, force: hasFlag("force") };
+}
+
+/** Non-throwing validators (return an error message, or null when valid). */
+export function projectNameError(name: string): string | null {
+	// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
+	// charset that is safe for both.
+	return /^[a-z][a-z0-9-]{2,29}$/.test(name)
+		? null
+		: "Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.";
+}
+
+export function domainError(domain: string): string | null {
+	return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)
+		? null
+		: "Domain doesn't look valid (expected e.g. acme.dev).";
+}
+
+export function apiSubdomainError(sub: string): string | null {
+	return /^[a-z][a-z0-9-]{0,29}$/.test(sub)
+		? null
+		: "API subdomain must be lowercase letters/digits/hyphens, starting with a letter.";
 }
 
 function validateInputs(projectName: string, domain: string): void {
-	// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
-	// charset that is safe for both.
-	if (!/^[a-z][a-z0-9-]{2,29}$/.test(projectName)) {
-		throw new Error(
-			"❌ Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.",
-		);
-	}
-	if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
-		throw new Error("❌ Domain doesn't look valid (expected e.g. acme.dev)");
-	}
+	const err = projectNameError(projectName) ?? domainError(domain);
+	if (err) throw new Error(`❌ ${err}`);
 }
 
 function stageForSection(section: string): Stage {
@@ -163,6 +177,7 @@ export function initProject(options: InitProjectOptions): void {
 	const {
 		projectName,
 		domain,
+		apiSubdomain = "api",
 		force = false,
 		root = defaultRoot(),
 		logger = console,
@@ -204,7 +219,7 @@ export function initProject(options: InitProjectOptions): void {
 			projectName,
 			domain,
 		}),
-		{ domain },
+		{ domain, apiSubdomain },
 	);
 	fs.writeFileSync(wranglerPath, rewrittenWrangler);
 	logger.log(
@@ -230,16 +245,86 @@ re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md �
 `);
 }
 
+export interface GatheredInputs {
+	projectName: string;
+	domain: string;
+	apiSubdomain: string;
+}
+
+/**
+ * Interactively collect the inputs, re-prompting until each is valid. `ask` and
+ * `logger` are injected so this is testable without a real terminal.
+ */
+export async function gatherInputs(
+	ask: (question: string) => Promise<string>,
+	logger: Logger = console,
+): Promise<GatheredInputs> {
+	async function prompt(
+		label: string,
+		validate: (v: string) => string | null,
+		fallback?: string,
+	): Promise<string> {
+		for (;;) {
+			const suffix = fallback ? ` (${fallback})` : "";
+			const answer = (await ask(`${label}${suffix}: `)).trim() || fallback || "";
+			const error = validate(answer);
+			if (!error) return answer;
+			logger.log(`  ↳ ${error}`);
+		}
+	}
+
+	const projectName = await prompt("Project name", projectNameError);
+	const domain = await prompt("Domain", domainError);
+	const apiSubdomain = await prompt("API subdomain", apiSubdomainError, "api");
+	return { projectName, domain, apiSubdomain };
+}
+
+async function runInteractive(root: string): Promise<void> {
+	const readline = await import("node:readline/promises");
+	const rl = readline.createInterface({
+		input: process.stdin,
+		output: process.stdout,
+	});
+	try {
+		console.log("Create a new project from this boilerplate.\n");
+		const inputs = await gatherInputs((q) => rl.question(q));
+		console.log(
+			`\nWorker: ${inputs.projectName}-backend\nAPI:    ${inputs.apiSubdomain}.${inputs.domain} / ${inputs.apiSubdomain}-staging.${inputs.domain}`,
+		);
+		const confirm = (await rl.question("\nProceed? (Y/n) ")).trim().toLowerCase();
+		if (confirm === "n" || confirm === "no") {
+			console.log("Aborted.");
+			return;
+		}
+		initProject({ ...inputs, root });
+	} finally {
+		rl.close();
+	}
+}
+
 export function main(args = process.argv.slice(2), root = defaultRoot()): void {
-	const { projectName, domain, force } = parseArgs(args);
+	const { projectName, domain, apiSubdomain, force } = parseArgs(args);
+
+	// No positional args + a real terminal → interactive wizard (create-app style).
+	if (!projectName && !domain && process.stdin.isTTY) {
+		runInteractive(root).catch((error) => {
+			console.error((error as Error).message);
+			process.exit(1);
+		});
+		return;
+	}
+
 	if (!projectName || !domain) {
-		console.error("Usage: pnpm init-project <project-name> <domain> [options]");
+		console.error(
+			"Usage: pnpm init-project <project-name> <domain> [api-subdomain] [--force]",
+		);
 		console.error("Example: pnpm init-project acme-api acme.dev");
+		console.error("Or run with no arguments in a terminal for the interactive wizard.");
 		process.exit(1);
 	}
 
 	try {
-		initProject({ projectName, domain, force, root });
+		initProject({ projectName, domain, apiSubdomain, force, root });
 	} catch (error) {
 		console.error((error as Error).message);
 		process.exit(1);
