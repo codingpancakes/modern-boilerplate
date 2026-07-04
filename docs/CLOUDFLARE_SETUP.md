@@ -155,36 +155,36 @@ Plain, non-gated deploys: `pnpm deploy:staging:simple` / `:production:simple`
 consumers. Manual rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior
 versions).
 
-### 7c. R2 (media storage) — setup placeholder
+### 7c. Provision resources — `pnpm bootstrap <stage>`
 
-Media routes need both the R2 bucket binding **and** S3-API credentials
-(`lib/media.ts` presigns via `aws4fetch` against R2's S3-compatible endpoint).
-Until configured, media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED`.
-
-1. `npx wrangler r2 bucket create <name>` per environment; make the name match
-   `[[env.<stage>.r2_buckets]].bucket_name` and `IMAGES_BUCKET` in `wrangler.toml`.
-2. Create an R2 API token (Cloudflare dashboard → R2 → Manage API Tokens) and push
-   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` as secrets
-   (they are in `.dev.vars.example`, so `pnpm sync-secrets` covers them).
-3. Set `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
-
-### 7d. Cloudflare Queues (webhook processing) — required before first deploy
-
-The webhook pipeline (`routes/webhooks.ts` → `WEBHOOK_QUEUE` → `src/node/queue.ts`)
-needs its queues to EXIST before `wrangler deploy` will accept the consumer config —
-a deploy against missing queues fails. Per deployed environment:
+One command creates the Cloudflare resources a stage needs before its first
+deploy, reading the exact names from `wrangler.toml` (so there's no drift):
 
 ```bash
-npx wrangler queues create <project>-webhooks-staging
-npx wrangler queues create <project>-webhooks-dlq-staging
-# repeat with -production for production
+pnpm bootstrap staging --dry-run   # preview every command, run nothing
+pnpm bootstrap staging             # create queues + DLQ + R2 bucket (idempotent)
+pnpm bootstrap staging --neon <project-id>   # also create a Neon branch → writes DATABASE_URL
+pnpm bootstrap staging --deploy    # then chain sync-secrets → migrate → deploy
 ```
 
-Names must match the `[[env.<stage>.queues.producers/consumers]]` blocks in
-`wrangler.toml`. Local dev needs nothing — `wrangler dev` simulates queues on disk.
-Operations (DLQ drain, retry semantics): `docs/runbooks/WEBHOOK_DLQ.md`.
+It creates the webhook queue + its dead-letter queue (**deploy fails without
+them**) and the R2 images bucket; re-runs are safe (an "already exists" is
+treated as success). Prereqs: `wrangler login` (or `CLOUDFLARE_API_TOKEN`), and
+for `--neon`, `neonctl` installed + authenticated.
 
-### 7e. Hyperdrive (DB pooling) — setup placeholder
+Two things `bootstrap` deliberately leaves manual (it prints them at the end):
+
+1. **R2 S3 API token** — mint it in the Cloudflare dashboard (R2 → Manage API
+   Tokens; credential-minting is left manual on purpose), then put
+   `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` in `.env.<stage>`
+   (registered in `.dev.vars.example`, so `pnpm sync-secrets` pushes them). Set
+   `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
+2. **WorkOS** app + webhook endpoint/secret, and **DNS** (§7f).
+
+Media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED` until the R2
+credentials are set. Queue operations (DLQ drain, retries): `docs/runbooks/WEBHOOK_DLQ.md`.
+
+### 7d. Hyperdrive (DB pooling) — setup placeholder
 
 Not configured yet. The Worker currently talks to Neon directly via
 `@neondatabase/serverless` (per-request connections, as Workers requires). When
@@ -192,7 +192,7 @@ connection latency or pooling becomes a measured problem, add a `[[hyperdrive]]`
 binding in `wrangler.toml` and point `lib/db.ts` at it — see the North Star's
 target stack table.
 
-### 7f. Rate limiting — no setup needed
+### 7e. Rate limiting — no setup needed
 
 The per-IP rate limiter (`lib/hono/rate-limit.ts`) uses the Cloudflare Workers Rate
 Limiting binding `RATE_LIMITER`, declared as `[[ratelimits]]` (and per-env
@@ -201,7 +201,7 @@ with `simple = { limit = 100, period = 60 }`. It needs **no dashboard resource**
 it's configured entirely in `wrangler.toml`. The binding is absent under `wrangler dev`,
 so the limiter no-ops locally.
 
-### 7g. Custom domain (serve the API on your own hostname)
+### 7f. Custom domain (serve the API on your own hostname)
 
 By default the Worker answers on `*.workers.dev`. To serve the API on a real
 hostname, wire the Cloudflare Workers **Custom Domain** routes into

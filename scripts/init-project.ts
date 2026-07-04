@@ -226,7 +226,7 @@ Next steps:
 
 Custom domains for the API (api.${domain} / api-staging.${domain}) are already
 wired into wrangler.toml. They bind on deploy once the zone is on Cloudflare —
-re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7g.
+re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7f.
 `);
 }
 

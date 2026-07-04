@@ -10,6 +10,7 @@
 		"sync-secrets": "tsx scripts/sync-secrets.ts",
 		"init-project": "tsx scripts/init-project.ts",
 		"set-domain": "tsx scripts/set-domain.ts",
+		"bootstrap": "tsx scripts/bootstrap.ts",
 		"db:drop": "tsx scripts/_nuke-schema.ts",
 		"db:reset": "pnpm db:drop && rm -rf src/node/db/migrations && pnpm db:generate && pnpm migrate",
 		"deploy:staging": "tsx scripts/deploy.ts staging",
