@@ -22,8 +22,23 @@ import type { CronHandler } from "./worker";
  *   curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
  */
 export const cronRegistry: Record<string, CronHandler> = {
-	// Daily idempotency-key cleanup (was JanitorSchedule, rate(1 day)).
-	"0 4 * * *": (_env, _ctx) => runWithDbScope(() => runJanitor()),
-	// Daily 7-year audit-log retention pruning (was AuditRetentionSchedule).
-	"0 5 * * *": (_env, _ctx) => runWithDbScope(() => runAuditRetention()),
+	// Daily maintenance in a SINGLE trigger: idempotency-key cleanup +
+	// 7-year audit-log retention pruning. Cloudflare caps cron triggers per
+	// account, so one trigger per environment (instead of two) keeps
+	// multi-project accounts well under the limit. Both jobs run even if one
+	// fails; failures are aggregated and rethrown so the invocation is recorded
+	// as failed.
+	"0 4 * * *": (_env, _ctx) =>
+		runWithDbScope(async () => {
+			const results = await Promise.allSettled([
+				runJanitor(),
+				runAuditRetention(),
+			]);
+			const failures = results
+				.filter((r): r is PromiseRejectedResult => r.status === "rejected")
+				.map((r) => r.reason);
+			if (failures.length > 0) {
+				throw new AggregateError(failures, "daily maintenance job(s) failed");
+			}
+		}),
 };

@@ -224,8 +224,7 @@ curl http://localhost:8787/v1/health/detailed | jq .    # real DB round-trip
 
 ```bash
 npx wrangler dev --local --test-scheduled
-curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"   # janitor
-curl "http://localhost:8787/__scheduled?cron=0+5+*+*+*"   # audit retention
+curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"   # daily maintenance: janitor + audit-retention
 ```
 
 ---

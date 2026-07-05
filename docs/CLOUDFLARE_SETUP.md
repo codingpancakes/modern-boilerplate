@@ -61,9 +61,9 @@ pnpm dev            # wrangler dev --local → http://localhost:8787
 - Smoke check: `curl http://localhost:8787/v1/health` (and `/v1/health/detailed`
   for a real DB round-trip).
 - GraphQL (GraphQL Yoga) is at `POST http://localhost:8787/v1/graphql` (auth required).
-- Cron triggers: run `npx wrangler dev --local --test-scheduled`, then
-  `curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` (janitor) or
-  `cron=0+5+*+*+*` (audit retention).
+- Cron trigger: run `npx wrangler dev --local --test-scheduled`, then
+  `curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` — the one daily
+  trigger runs both maintenance jobs (janitor + audit-retention).
 
 ## 6. Test
 
