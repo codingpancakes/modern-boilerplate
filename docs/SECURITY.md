@@ -65,6 +65,33 @@ rules remain the place for global/per-path limits.
 - Algorithm confusion — only RS256 accepted
 - Expired tokens — old tokens rejected
 
+**Session revocation (a deliberate trade-off — read this):**
+
+Validation is *stateless*: the backend confirms the token is authentic and
+unexpired, but does **not** check whether the underlying WorkOS session is still
+active. Revoking a session in WorkOS (dashboard, `revokeSession`, or logout)
+invalidates the **refresh** token immediately — but any **access token already
+issued stays valid until it expires**. Therefore:
+
+> **Revocation latency == the access-token duration.** A revoked session keeps
+> working until its current access token expires; the next refresh then fails and
+> the user is out.
+
+- **Set the access-token duration short** in the WorkOS dashboard (Authentication →
+  Sessions → _Access token duration_). That value *is* your worst-case revocation
+  delay — 5 minutes is a sensible default. This is the intended lever.
+- This is standard OAuth/OIDC behaviour, **not a defect**. Every stateless-JWT
+  system works this way. Checking the IdP on every request would trade it for
+  per-request latency, rate-limit exposure, and an availability dependency on
+  WorkOS — a worse deal at any real traffic.
+- **If you need enforced sub-duration revocation** (kill a compromised session
+  within seconds): subscribe to the WorkOS `session.revoked` webhook, record the
+  revoked `sid` in a small denylist (rows expiring after the access-token duration —
+  past that the token is rejected by `exp` anyway), and reject any token whose `sid`
+  is listed. The `sid` is already on `c.get("claims").sid`; the daily janitor cron
+  prunes expired rows. Enforcement stays local (one indexed lookup), with zero
+  per-request calls to WorkOS.
+
 ---
 
 ### 3. Input Validation (Zod)

@@ -94,6 +94,13 @@ export interface VerifyWorkosTokenOptions {
  *
  * `clientId === ""` disables the client binding (local dev without a configured
  * WORKOS_CLIENT_ID); signature + issuer + sub are still enforced.
+ *
+ * Deliberately NOT checked: session revocation. This is stateless validation — a
+ * revoked WorkOS session's access token stays valid here until its `exp`, so
+ * revocation latency equals the access-token duration (keep it short in the WorkOS
+ * dashboard). For enforced sub-duration revocation, add a `sid` denylist fed by the
+ * `session.revoked` webhook — the `sid` claim is already returned below. See
+ * docs/SECURITY.md § "JWT Authentication (WorkOS) → Session revocation".
  */
 export async function verifyWorkosToken(
 	token: string,
