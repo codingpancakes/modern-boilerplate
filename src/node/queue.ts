@@ -10,8 +10,15 @@ import {
 import { runWithDbScope } from "./lib/db";
 import { errorMessage } from "./lib/error-utils";
 import { createLogger } from "./lib/logger";
-import { captureException } from "./lib/sentry";
-import { processWorkosEvent } from "./lib/services/webhook-processor";
+import {
+	captureException,
+	flush as flushSentry,
+	runWithSentryScope,
+} from "./lib/sentry";
+import {
+	processWorkosEvent,
+	WebhookInProgressError,
+} from "./lib/services/webhook-processor";
 import type { WorkOSWebhookEvent } from "./lib/validation/webhooks";
 import type { WorkerEnv } from "./worker";
 
@@ -60,6 +67,18 @@ export async function handleQueueBatch(
 			}
 			message.ack();
 		} catch (error) {
+			// Lock held by another (possibly crashed) attempt: redeliver AFTER the
+			// staleness window so the retry can reclaim it. Retrying immediately
+			// would find the same non-stale lock and burn the retry budget.
+			if (error instanceof WebhookInProgressError) {
+				logger.warn("Webhook lock held; delaying redelivery", {
+					eventId: message.body?.id,
+					eventType: message.body?.event,
+					attempts: message.attempts,
+				});
+				message.retry({ delaySeconds: error.retryDelaySeconds });
+				continue;
+			}
 			// Do NOT ack — let Queues redeliver. For the main queue this leads to
 			// the DLQ after max_retries; for the DLQ itself it retries until the
 			// audit/alert write succeeds (so a DB blip can't drop the record).
@@ -89,9 +108,15 @@ async function handleDeadLetter(event: WorkOSWebhookEvent): Promise<void> {
 		eventType: event?.event,
 	});
 
-	captureException(new Error("Webhook permanently failed"), {
-		eventId: event?.id,
-		eventType: event?.event,
+	// Buffer + flush inside a Sentry scope: outside one, the send is a detached
+	// fetch that Workers may cancel when the invocation settles — the page for
+	// a permanently-lost webhook would silently not go out.
+	await runWithSentryScope(async () => {
+		captureException(new Error("Webhook permanently failed"), {
+			eventId: event?.id,
+			eventType: event?.event,
+		});
+		await flushSentry();
 	});
 
 	// Use the strict audit path: if the DLQ record cannot be persisted, throw

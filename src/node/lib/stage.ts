@@ -13,5 +13,5 @@ export function isLocalDevelopmentStage(stage = process.env.STAGE): boolean {
 }
 
 export function isDevLikeStage(stage = process.env.STAGE): boolean {
-	return !isDeployedStage(stage);
+	return isLocalDevelopmentStage(stage);
 }

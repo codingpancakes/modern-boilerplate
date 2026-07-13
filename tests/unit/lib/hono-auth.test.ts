@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthVerificationUnavailableError } from "@/authorizers/verify-token";
 import { ApiError } from "@/lib/errors";
 import { requireAuth } from "@/lib/hono/auth";
 import type { AppEnv } from "@/lib/hono/types";
@@ -11,7 +12,10 @@ const { createWorkosJwksMock, verifyWorkosTokenMock, logAuditMock } =
 		logAuditMock: vi.fn(),
 	}));
 
-vi.mock("@/authorizers/verify-token", () => ({
+// Keep the real AuthVerificationUnavailableError so the middleware's
+// instanceof classification is exercised; mock only the verifier calls.
+vi.mock("@/authorizers/verify-token", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/authorizers/verify-token")>()),
 	createWorkosJwks: createWorkosJwksMock,
 	verifyWorkosToken: verifyWorkosTokenMock,
 }));
@@ -32,8 +36,14 @@ function createProtectedApp() {
 	app.use("*", requireAuth());
 	app.get("/protected", (c) => c.json({ claims: c.get("claims") }));
 	app.onError((error, c) => {
-		if (error instanceof ApiError && error.statusCode === 401) {
-			return c.json({ message: error.message }, 401);
+		if (error instanceof ApiError) {
+			return new Response(
+				JSON.stringify({ message: error.message, code: error.code }),
+				{
+					status: error.statusCode,
+					headers: { "content-type": "application/json" },
+				},
+			);
 		}
 		return c.json({ message: error.message }, 500);
 	});
@@ -61,6 +71,45 @@ describe("requireAuth", () => {
 		expect(createWorkosJwksMock).not.toHaveBeenCalled();
 		expect(verifyWorkosTokenMock).not.toHaveBeenCalled();
 		expect(logAuditMock).toHaveBeenCalledOnce();
+	});
+
+	it("returns 401 for a token the verifier rejects", async () => {
+		vi.stubEnv("WORKOS_CLIENT_ID", "client_123");
+		vi.stubEnv("STAGE", "production");
+		verifyWorkosTokenMock.mockRejectedValue(new Error("signature mismatch"));
+
+		const response = await createProtectedApp().request("/protected", {
+			headers: { authorization: "Bearer bad-token" },
+		});
+
+		expect(response.status).toBe(401);
+		expect(logAuditMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: expect.objectContaining({ reason: "invalid_token" }),
+			}),
+		);
+	});
+
+	it("returns 503 (never 401) when key fetching fails — an outage is not a bad token", async () => {
+		vi.stubEnv("WORKOS_CLIENT_ID", "client_123");
+		vi.stubEnv("STAGE", "production");
+		verifyWorkosTokenMock.mockRejectedValue(
+			new AuthVerificationUnavailableError("JWKS fetch failed"),
+		);
+
+		const response = await createProtectedApp().request("/protected", {
+			headers: { authorization: "Bearer valid-looking-token" },
+		});
+
+		expect(response.status).toBe(503);
+		await expect(response.json()).resolves.toMatchObject({
+			code: "AUTH_UNAVAILABLE",
+		});
+		expect(logAuditMock).toHaveBeenCalledWith(
+			expect.objectContaining({
+				metadata: expect.objectContaining({ reason: "auth_unavailable" }),
+			}),
+		);
 	});
 
 	it("allows unbound verification only for explicit local stages", async () => {

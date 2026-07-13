@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, or } from "drizzle-orm";
+import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import type { z } from "zod";
 import {
 	organizationMembers,
@@ -13,6 +13,7 @@ import {
 	logAudit,
 } from "../audit";
 import type { DbInstance } from "../db";
+import { isUniqueConstraintViolation } from "../error-utils";
 import { ApiError } from "../errors";
 import { createPaginatedResponse, decodeCursor } from "../pagination";
 import { sanitizeObject } from "../sanitize";
@@ -151,10 +152,7 @@ export async function listMyOrganizations(options: {
 		limit: clampedLimit + 1,
 	});
 
-	return createPaginatedResponse(
-		rows as ((typeof rows)[0] & { createdAt: string })[],
-		clampedLimit,
-	);
+	return createPaginatedResponse(rows, clampedLimit);
 }
 
 export async function getOrganization(options: {
@@ -207,10 +205,7 @@ export async function listOrganizationMembers(options: {
 		limit: clampedLimit + 1,
 	});
 
-	return createPaginatedResponse(
-		rows as ((typeof rows)[0] & { createdAt: string })[],
-		clampedLimit,
-	);
+	return createPaginatedResponse(rows, clampedLimit);
 }
 
 export async function createOrganization(
@@ -220,37 +215,61 @@ export async function createOrganization(
 ) {
 	const sanitized = sanitizeObject(options.input);
 
-	const org = await options.db.transaction(async (tx) => {
-		const ownedOrgs = await tx.query.organizationMembers.findMany({
-			where: and(
-				eq(organizationMembers.userId, options.actorUserId),
-				eq(organizationMembers.role, "OWNER"),
-				eq(organizationMembers.status, "ACTIVE"),
-			),
-		});
+	let org: typeof organizations.$inferSelect;
+	try {
+		org = await options.db.transaction(async (tx) => {
+			// Serialize per-actor creation: under READ COMMITTED the count-then-
+			// insert below is a TOCTOU race (N concurrent creates all count 9 and
+			// all insert). A transaction-scoped advisory lock keyed on the actor
+			// makes the check-and-insert atomic without locking anyone else out.
+			await tx.execute(
+				sql`SELECT pg_advisory_xact_lock(hashtext('org-owner-limit'), hashtext(${options.actorUserId}))`,
+			);
 
-		if (ownedOrgs.length >= 10) {
+			const ownedOrgs = await tx.query.organizationMembers.findMany({
+				where: and(
+					eq(organizationMembers.userId, options.actorUserId),
+					eq(organizationMembers.role, "OWNER"),
+					eq(organizationMembers.status, "ACTIVE"),
+				),
+			});
+
+			if (ownedOrgs.length >= 10) {
+				throw new ApiError(
+					403,
+					"FORBIDDEN",
+					"Organization limit reached (max 10)",
+				);
+			}
+
+			const [created] = await tx
+				.insert(organizations)
+				.values({ ...sanitized })
+				.returning();
+
+			await tx.insert(organizationMembers).values(
+				sanitizeObject({
+					organizationId: created.id,
+					userId: options.actorUserId,
+					role: "OWNER",
+					status: "ACTIVE",
+				}),
+			);
+
+			return created;
+		});
+	} catch (error) {
+		// A duplicate slug is a client-resolvable conflict, not an internal error
+		// (unmapped, the raw driver error would be masked into a 500).
+		if (isUniqueConstraintViolation(error)) {
 			throw new ApiError(
-				403,
-				"FORBIDDEN",
-				"Organization limit reached (max 10)",
+				409,
+				"CONFLICT",
+				"An organization with this slug already exists",
 			);
 		}
-
-		const [created] = await tx
-			.insert(organizations)
-			.values({ ...sanitized })
-			.returning();
-
-		await tx.insert(organizationMembers).values({
-			organizationId: created.id,
-			userId: options.actorUserId,
-			role: "OWNER",
-			status: "ACTIVE",
-		});
-
-		return created;
-	});
+		throw error;
+	}
 
 	void logAudit({
 		userId: options.actorUserId,
@@ -284,24 +303,43 @@ export async function updateOrganization(
 		throw new ApiError(400, "BAD_REQUEST", "No fields to update");
 	}
 
-	const { before, updated } = await options.db.transaction(async (tx) => {
-		const [b] = await tx
-			.select()
-			.from(organizations)
-			.where(eq(organizations.id, options.organizationId))
-			.limit(1);
+	let before: typeof organizations.$inferSelect | undefined;
+	let updated: typeof organizations.$inferSelect | undefined;
+	try {
+		({ before, updated } = await options.db.transaction(async (tx) => {
+			// Lock the row for the read-then-write: without FOR UPDATE, two
+			// concurrent updates can both capture the same `before`, so the audit
+			// trail records a stale prior-state for the second writer.
+			const [b] = await tx
+				.select()
+				.from(organizations)
+				.where(eq(organizations.id, options.organizationId))
+				.limit(1)
+				.for("update");
 
-		const [u] = await tx
-			.update(organizations)
-			.set({
-				...sanitized,
-				updatedAt: new Date().toISOString(),
-			})
-			.where(eq(organizations.id, options.organizationId))
-			.returning();
+			const [u] = await tx
+				.update(organizations)
+				.set({
+					...sanitized,
+					updatedAt: new Date().toISOString(),
+				})
+				.where(eq(organizations.id, options.organizationId))
+				.returning();
 
-		return { before: b, updated: u };
-	});
+			return { before: b, updated: u };
+		}));
+	} catch (error) {
+		// Same contract as createOrganization: a duplicate slug is a
+		// client-resolvable conflict, not a masked 500.
+		if (isUniqueConstraintViolation(error)) {
+			throw new ApiError(
+				409,
+				"CONFLICT",
+				"An organization with this slug already exists",
+			);
+		}
+		throw error;
+	}
 
 	if (!updated) {
 		throw new ApiError(404, "NOT_FOUND", "Organization not found");
@@ -351,10 +389,12 @@ export async function deleteOrganization(
 
 		await tx
 			.update(organizationMembers)
-			.set({
-				status: "INACTIVE",
-				updatedAt: new Date().toISOString(),
-			})
+			.set(
+				sanitizeObject({
+					status: "INACTIVE",
+					updatedAt: new Date().toISOString(),
+				}),
+			)
 			.where(eq(organizationMembers.organizationId, options.organizationId));
 
 		return true;
@@ -384,6 +424,8 @@ export async function inviteMember(
 		input: InviteMemberInput;
 	},
 ) {
+	// Early fast-path gate; the authoritative (locked) role check re-runs
+	// inside the transaction below.
 	const callerMembership = await requireActiveMembership(
 		options.db,
 		options.actorUserId,
@@ -396,45 +438,90 @@ export async function inviteMember(
 	const targetUser = await options.db.query.users.findFirst({
 		where: eq(users.id, options.input.userId),
 	});
-	if (!targetUser) {
+	// A tombstoned user must be indistinguishable from a nonexistent one —
+	// inviting a DELETED husk would create a membership nothing can accept.
+	if (!targetUser || targetUser.status === "DELETED") {
 		throw new ApiError(404, "NOT_FOUND", "User not found");
 	}
 
-	const existing = await options.db.query.organizationMembers.findFirst({
-		where: and(
-			eq(organizationMembers.userId, options.input.userId),
-			eq(organizationMembers.organizationId, options.organizationId),
-			inArray(organizationMembers.status, ["ACTIVE", "PENDING"]),
-		),
+	const membershipValues = sanitizeObject({
+		organizationId: options.organizationId,
+		userId: options.input.userId,
+		role: targetRole,
+		status: "PENDING" as const,
+	});
+	const membershipConflictUpdate = sanitizeObject({
+		role: targetRole,
+		status: "PENDING" as const,
+		updatedAt: new Date().toISOString(),
 	});
 
-	if (existing) {
-		throw new ApiError(
+	const alreadyMemberError = (status: string | null) =>
+		new ApiError(
 			400,
 			"BAD_REQUEST",
-			existing.status === "PENDING"
+			status === "PENDING"
 				? "User already has a pending invitation to this organization"
 				: "User is already a member of this organization",
 		);
-	}
 
-	const [membership] = await options.db
-		.insert(organizationMembers)
-		.values({
-			organizationId: options.organizationId,
-			userId: options.input.userId,
-			role: targetRole,
-			status: "PENDING",
-		})
-		.onConflictDoUpdate({
-			target: [organizationMembers.userId, organizationMembers.organizationId],
-			set: {
-				role: targetRole,
-				status: "PENDING",
-				updatedAt: new Date().toISOString(),
-			},
-		})
-		.returning();
+	const membership = await options.db.transaction(async (tx) => {
+		// Lock the caller's row AND any existing target membership row in one
+		// statement: the caller's pre-transaction role can go stale mid-flight
+		// (see updateMemberRole), and the target row lock serializes concurrent
+		// acceptInvitation / re-invite against the upsert below.
+		const rows = await tx
+			.select()
+			.from(organizationMembers)
+			.where(
+				and(
+					eq(organizationMembers.organizationId, options.organizationId),
+					or(
+						eq(organizationMembers.userId, options.input.userId),
+						eq(organizationMembers.userId, options.actorUserId),
+					),
+				),
+			)
+			.for("update");
+
+		const caller = rows.find(
+			(row) => row.userId === options.actorUserId && row.status === "ACTIVE",
+		);
+		if (!caller || !hasMinRole(caller.role ?? "MEMBER", "ADMIN")) {
+			throw new ApiError(403, "FORBIDDEN", "Requires ADMIN role or higher");
+		}
+		assertCanAssignRole(caller.role ?? "MEMBER", targetRole);
+
+		const existing = rows.find((row) => row.userId === options.input.userId);
+		if (
+			existing &&
+			(existing.status === "ACTIVE" || existing.status === "PENDING")
+		) {
+			throw alreadyMemberError(existing.status);
+		}
+
+		const [row] = await tx
+			.insert(organizationMembers)
+			.values(membershipValues)
+			.onConflictDoUpdate({
+				target: [
+					organizationMembers.userId,
+					organizationMembers.organizationId,
+				],
+				set: membershipConflictUpdate,
+				// Belt-and-braces against a row appearing between the locked read
+				// and this write: an invite may only reactivate an INACTIVE
+				// membership — never demote an ACTIVE one back to PENDING or
+				// overwrite an existing invite's role.
+				setWhere: sql`${organizationMembers.status} = 'INACTIVE'`,
+			})
+			.returning();
+
+		if (!row) {
+			throw alreadyMemberError(null);
+		}
+		return row;
+	});
 
 	void logAudit({
 		userId: options.actorUserId,
@@ -461,7 +548,9 @@ export async function updateMemberRole(
 		input: UpdateMemberRoleInput;
 	},
 ) {
-	const callerMembership = await requireActiveMembership(
+	// Early fast-path gate; the authoritative (locked) role check re-runs
+	// inside the transaction below.
+	await requireActiveMembership(
 		options.db,
 		options.actorUserId,
 		options.organizationId,
@@ -469,35 +558,50 @@ export async function updateMemberRole(
 	);
 
 	const { updated, target } = await options.db.transaction(async (tx) => {
-		const [target] = await tx
+		// Lock the CALLER's row alongside the target's, in one statement (two
+		// sequential locks would deadlock when two admins demote each other).
+		// The pre-transaction requireActiveMembership read is unlocked and can
+		// go stale mid-flight — an admin demoted concurrently must not complete
+		// a privileged action on their old role.
+		const rows = await tx
 			.select()
 			.from(organizationMembers)
 			.where(
 				and(
-					eq(organizationMembers.id, options.input.memberId),
 					eq(organizationMembers.organizationId, options.organizationId),
-					eq(organizationMembers.status, "ACTIVE"),
+					or(
+						eq(organizationMembers.id, options.input.memberId),
+						eq(organizationMembers.userId, options.actorUserId),
+					),
 				),
 			)
-			.limit(1)
 			.for("update");
 
+		const caller = rows.find(
+			(row) => row.userId === options.actorUserId && row.status === "ACTIVE",
+		);
+		if (!caller || !hasMinRole(caller.role ?? "MEMBER", "ADMIN")) {
+			throw new ApiError(403, "FORBIDDEN", "Requires ADMIN role or higher");
+		}
+
+		const target = rows.find(
+			(row) => row.id === options.input.memberId && row.status === "ACTIVE",
+		);
 		if (!target) {
 			throw new ApiError(404, "NOT_FOUND", "Membership not found");
 		}
 
-		assertCanModifyRole(
-			callerMembership.role ?? "MEMBER",
-			target.role ?? "MEMBER",
-		);
-		assertCanAssignRole(callerMembership.role ?? "MEMBER", options.input.role);
+		assertCanModifyRole(caller.role ?? "MEMBER", target.role ?? "MEMBER");
+		assertCanAssignRole(caller.role ?? "MEMBER", options.input.role);
 
 		const [updated] = await tx
 			.update(organizationMembers)
-			.set({
-				role: options.input.role,
-				updatedAt: new Date().toISOString(),
-			})
+			.set(
+				sanitizeObject({
+					role: options.input.role,
+					updatedAt: new Date().toISOString(),
+				}),
+			)
 			.where(eq(organizationMembers.id, options.input.memberId))
 			.returning();
 
@@ -532,7 +636,9 @@ export async function removeMember(
 		memberId: string;
 	},
 ): Promise<boolean> {
-	const callerMembership = await requireActiveMembership(
+	// Early fast-path gate; the authoritative (locked) role check re-runs
+	// inside the transaction below.
+	await requireActiveMembership(
 		options.db,
 		options.actorUserId,
 		options.organizationId,
@@ -540,27 +646,37 @@ export async function removeMember(
 	);
 
 	const target = await options.db.transaction(async (tx) => {
-		const [target] = await tx
+		// Caller + target locked in ONE statement — see updateMemberRole for why
+		// (stale-role TOCTOU; sequential locks would deadlock on mutual removal).
+		const rows = await tx
 			.select()
 			.from(organizationMembers)
 			.where(
 				and(
-					eq(organizationMembers.id, options.memberId),
 					eq(organizationMembers.organizationId, options.organizationId),
-					eq(organizationMembers.status, "ACTIVE"),
+					or(
+						eq(organizationMembers.id, options.memberId),
+						eq(organizationMembers.userId, options.actorUserId),
+					),
 				),
 			)
-			.limit(1)
 			.for("update");
 
+		const caller = rows.find(
+			(row) => row.userId === options.actorUserId && row.status === "ACTIVE",
+		);
+		if (!caller || !hasMinRole(caller.role ?? "MEMBER", "ADMIN")) {
+			throw new ApiError(403, "FORBIDDEN", "Requires ADMIN role or higher");
+		}
+
+		const target = rows.find(
+			(row) => row.id === options.memberId && row.status === "ACTIVE",
+		);
 		if (!target) {
 			throw new ApiError(404, "NOT_FOUND", "Membership not found");
 		}
 
-		assertCanRemoveRole(
-			callerMembership.role ?? "MEMBER",
-			target.role ?? "MEMBER",
-		);
+		assertCanRemoveRole(caller.role ?? "MEMBER", target.role ?? "MEMBER");
 
 		if (target.userId === options.actorUserId) {
 			throw new ApiError(
@@ -572,10 +688,12 @@ export async function removeMember(
 
 		await tx
 			.update(organizationMembers)
-			.set({
-				status: "INACTIVE",
-				updatedAt: new Date().toISOString(),
-			})
+			.set(
+				sanitizeObject({
+					status: "INACTIVE",
+					updatedAt: new Date().toISOString(),
+				}),
+			)
 			.where(eq(organizationMembers.id, options.memberId));
 
 		return target;
@@ -635,10 +753,12 @@ export async function leaveOrganization(
 
 		await tx
 			.update(organizationMembers)
-			.set({
-				status: "INACTIVE",
-				updatedAt: new Date().toISOString(),
-			})
+			.set(
+				sanitizeObject({
+					status: "INACTIVE",
+					updatedAt: new Date().toISOString(),
+				}),
+			)
 			.where(eq(organizationMembers.id, membership.id));
 	});
 
@@ -681,7 +801,12 @@ export async function acceptInvitation(
 
 		return tx
 			.update(organizationMembers)
-			.set({ status: "ACTIVE", updatedAt: new Date().toISOString() })
+			.set(
+				sanitizeObject({
+					status: "ACTIVE",
+					updatedAt: new Date().toISOString(),
+				}),
+			)
 			.where(eq(organizationMembers.id, invite.id))
 			.returning();
 	});
@@ -707,7 +832,12 @@ export async function declineInvitation(
 ): Promise<boolean> {
 	const result = await options.db
 		.update(organizationMembers)
-		.set({ status: "INACTIVE", updatedAt: new Date().toISOString() })
+		.set(
+			sanitizeObject({
+				status: "INACTIVE",
+				updatedAt: new Date().toISOString(),
+			}),
+		)
 		.where(
 			and(
 				eq(organizationMembers.userId, options.actorUserId),

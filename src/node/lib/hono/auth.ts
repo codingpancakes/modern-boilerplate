@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { JWTVerifyGetKey } from "jose";
 import {
+	AuthVerificationUnavailableError,
 	createWorkosJwks,
 	verifyWorkosToken,
 	type WorkosTokenClaims,
@@ -11,7 +12,9 @@ import {
 	AUDIT_STATUS,
 	logAudit,
 } from "../audit";
+import { errorMessage } from "../error-utils";
 import { ApiError } from "../errors";
+import { createLogger } from "../logger";
 import { isLocalDevelopmentStage } from "../stage";
 import type { AppEnv, AuthClaims } from "./types";
 
@@ -34,6 +37,8 @@ import type { AppEnv, AuthClaims } from "./types";
  * required" — clients already depend on the former).
  */
 const unauthorized = () => new ApiError(401, "UNAUTHORIZED", "Unauthorized");
+
+const logger = createLogger({ serviceName: "auth-middleware" });
 
 /**
  * JWKS key sets are cached per client id. Safe to share across requests on
@@ -70,7 +75,26 @@ async function verifyBearerToken(
 	let claims: WorkosTokenClaims;
 	try {
 		claims = await verifyWorkosToken(token, jwksCache.jwks, { clientId });
-	} catch {
+	} catch (error) {
+		// A JWKS outage is NOT an invalid token. Collapsing it into a 401 would
+		// tell every client their session is bad while producing zero operator
+		// signal (Sentry drops routine 401s). Surface a 503 — app.onError
+		// captures 5xx to Sentry.
+		if (error instanceof AuthVerificationUnavailableError) {
+			// Drop the cached key set: it can hold a rejected/poisoned in-flight
+			// fetch (possibly tied to another request's I/O context on Workers);
+			// the next request rebuilds it cleanly.
+			jwksCache = undefined;
+			logger.error("Token verification unavailable (JWKS/infra failure)", {
+				error: errorMessage(error),
+				cause: error.cause ? errorMessage(error.cause) : undefined,
+			});
+			throw new ApiError(
+				503,
+				"AUTH_UNAVAILABLE",
+				"Authentication service temporarily unavailable",
+			);
+		}
 		throw unauthorized();
 	}
 	return toAuthorizerContext(claims);
@@ -121,7 +145,10 @@ export const requireAuth = (): MiddlewareHandler<AppEnv> => async (c, next) => {
 			userAgent: c.req.header("user-agent"),
 			requestId: c.get("requestId"),
 			metadata: {
-				reason: "invalid_token",
+				reason:
+					error instanceof ApiError && error.statusCode === 503
+						? "auth_unavailable"
+						: "invalid_token",
 				path: c.req.path,
 				method: c.req.method,
 			},

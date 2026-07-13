@@ -61,9 +61,9 @@ pnpm dev            # wrangler dev --local → http://localhost:8787
 - Smoke check: `curl http://localhost:8787/v1/health` (and `/v1/health/detailed`
   for a real DB round-trip).
 - GraphQL (GraphQL Yoga) is at `POST http://localhost:8787/v1/graphql` (auth required).
-- Cron triggers: run `npx wrangler dev --local --test-scheduled`, then
-  `curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` (janitor) or
-  `cron=0+5+*+*+*` (audit retention).
+- Cron trigger: run `npx wrangler dev --local --test-scheduled`, then
+  `curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"` — the one daily
+  trigger runs both maintenance jobs (janitor + audit-retention).
 
 ## 6. Test
 
@@ -155,18 +155,34 @@ Plain, non-gated deploys: `pnpm deploy:staging:simple` / `:production:simple`
 consumers. Manual rollback: `npx wrangler rollback --env <stage>` (Workers keeps prior
 versions).
 
-### 7c. R2 (media storage) — setup placeholder
+### 7c. Provision resources — `pnpm bootstrap <stage>`
 
-Media routes need both the R2 bucket binding **and** S3-API credentials
-(`lib/media.ts` presigns via `aws4fetch` against R2's S3-compatible endpoint).
-Until configured, media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED`.
+One command creates the Cloudflare resources a stage needs before its first
+deploy, reading the exact names from `wrangler.toml` (so there's no drift):
 
-1. `npx wrangler r2 bucket create <name>` per environment; make the name match
-   `[[env.<stage>.r2_buckets]].bucket_name` and `IMAGES_BUCKET` in `wrangler.toml`.
-2. Create an R2 API token (Cloudflare dashboard → R2 → Manage API Tokens) and push
-   `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` as secrets
-   (they are in `.dev.vars.example`, so `pnpm sync-secrets` covers them).
-3. Set `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
+```bash
+pnpm bootstrap staging --dry-run   # preview every command, run nothing
+pnpm bootstrap staging             # create queues + DLQ + R2 bucket (idempotent)
+pnpm bootstrap staging --neon <project-id>   # also create a Neon branch → writes DATABASE_URL
+pnpm bootstrap staging --deploy    # then chain sync-secrets → migrate → deploy
+```
+
+It creates the webhook queue + its dead-letter queue (**deploy fails without
+them**) and the R2 images bucket; re-runs are safe (an "already exists" is
+treated as success). Prereqs: `wrangler login` (or `CLOUDFLARE_API_TOKEN`), and
+for `--neon`, `neonctl` installed + authenticated.
+
+Two things `bootstrap` deliberately leaves manual (it prints them at the end):
+
+1. **R2 S3 API token** — mint it in the Cloudflare dashboard (R2 → Manage API
+   Tokens; credential-minting is left manual on purpose), then put
+   `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` in `.env.<stage>`
+   (registered in `.dev.vars.example`, so `pnpm sync-secrets` pushes them). Set
+   `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
+2. **WorkOS** app + webhook endpoint/secret, and **DNS** (§7f).
+
+Media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED` until the R2
+credentials are set. Queue operations (DLQ drain, retries): `docs/runbooks/WEBHOOK_DLQ.md`.
 
 ### 7d. Hyperdrive (DB pooling) — setup placeholder
 
@@ -185,6 +201,34 @@ with `simple = { limit = 100, period = 60 }`. It needs **no dashboard resource**
 it's configured entirely in `wrangler.toml`. The binding is absent under `wrangler dev`,
 so the limiter no-ops locally.
 
+### 7f. Custom domain (serve the API on your own hostname)
+
+By default the Worker answers on `*.workers.dev`. To serve the API on a real
+hostname, wire the Cloudflare Workers **Custom Domain** routes into
+`wrangler.toml` for both deployed envs:
+
+```bash
+pnpm set-domain acme.dev            # → api.acme.dev / api-staging.acme.dev
+pnpm set-domain acme.dev gateway    # → gateway.acme.dev / gateway-staging.acme.dev
+```
+
+This is idempotent — re-run it to change the domain. It writes a
+`[[env.<stage>.routes]]` block (`custom_domain = true`) that binds on the next
+`pnpm deploy:<stage>`. `scripts/deploy.ts` then probes the custom domain for its
+health check automatically (override with `HEALTH_URL`).
+
+**Manual step (not automated — usually a different DNS provider):** Custom
+Domains require the zone to be **on Cloudflare**. Add `acme.dev` as a zone in
+Cloudflare and point your registrar's nameservers (or use Cloudflare's
+partial/CNAME setup) at it. Once the zone is on Cloudflare, wrangler manages the
+in-zone DNS record for the hostnames above. Run `set-domain` when you're ready to
+wire the domain — once these routes exist, `wrangler deploy` expects the zone to
+be reachable on Cloudflare.
+
+Convention: the API lives on `api.<domain>` (prod) / `api-staging.<domain>`
+(staging), distinct from the frontend origin (`<domain>` / `staging.<domain>`)
+in `CORS_EXACT_ORIGINS`. A BFF/frontend proxies to the API host.
+
 ## 8. API docs (optional)
 
 ```bash
@@ -200,15 +244,20 @@ so cloned boilerplates do not keep the source project's name.
 
 ## 9. New project from this boilerplate
 
+For the full walkthrough (scaffold → local → staging → production → domain),
+see **[guides/LAUNCH_NEW_PROJECT.md](./guides/LAUNCH_NEW_PROJECT.md)**. In short:
+
 ```bash
-pnpm init-project <project-name> <domain> [--force]
+pnpm init-project <project-name> <domain> [--force]   # scaffold names/envs/domains
+pnpm bootstrap <stage>                                # create queues + R2 bucket
+pnpm sync-secrets <stage> && pnpm deploy:<stage>      # push secrets + canary deploy
 ```
 
-Generates the `.env.*` files, sets the package name, and rewrites `wrangler.toml`
-resource names: Worker name, `PROJECT_NAME`, CORS exact origins, R2 bucket names,
-image CDN placeholders, and webhook queue/DLQ names. Then create the named R2
-buckets/queues and replace `IMAGES_CDN_URL` with the real R2 public or custom-domain
-URL for each environment.
+`init-project` sets the package name and rewrites `wrangler.toml` (Worker name,
+`PROJECT_NAME`, CORS origins, R2 bucket + webhook queue/DLQ names, image CDN URLs,
+and the API custom-domain routes), and writes the `.env.*` secret templates.
+`bootstrap` then creates the named queues/buckets; replace `IMAGES_CDN_URL` with
+the real R2 public/custom-domain URL per environment.
 
 ---
 

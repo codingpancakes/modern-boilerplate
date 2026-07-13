@@ -20,19 +20,19 @@ compatibility_flags = ["nodejs_compat"]
 enabled = true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cron Triggers — the two daily maintenance jobs (UTC, off-peak):
-#   "0 4 * * *" → src/node/handlers/utils/janitor.ts         (idempotency-key cleanup)
-#   "0 5 * * *" → src/node/handlers/utils/audit-retention.ts (7-year audit-log pruning)
-# These expressions are the DISPATCH KEYS: they must exactly match the keys of
-# `cronRegistry` in src/node/cron.ts (see src/node/worker.ts `scheduled`).
+# Cron Triggers — ONE daily maintenance trigger (UTC, off-peak) that runs both
+# jobs (idempotency-key cleanup + 7-year audit-log pruning) via the merged
+# handler in src/node/cron.ts. Kept to a single trigger because Cloudflare caps
+# cron triggers per account — one per environment keeps multi-project accounts
+# under the limit. The expression is the DISPATCH KEY: it must exactly match a
+# key of `cronRegistry` in src/node/cron.ts (guarded by tests/unit/cron.test.ts).
 # [triggers] IS inherited by [env.*] blocks, so it is declared once here.
 # Test locally: wrangler dev --local --test-scheduled, then
 #   curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"
 # ─────────────────────────────────────────────────────────────────────────────
 [triggers]
 crons = [
-  "0 4 * * *", # janitor — daily idempotency-key cleanup
-  "0 5 * * *", # audit-retention — daily 7-year retention pruning
+  "0 4 * * *", # daily maintenance — janitor + audit-retention (see cron.ts)
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────

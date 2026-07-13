@@ -26,7 +26,6 @@ import {
 	cleanupExpiredKeys,
 	type IdempotentRequest,
 	type StoredResponse,
-	withIdempotency,
 	withTransactionalIdempotency,
 } from "@/lib/idempotency";
 import {
@@ -37,7 +36,21 @@ import {
 } from "./helpers/test-db";
 
 /**
- * Real-database integration tests for withIdempotency (src/node/lib/idempotency.ts).
+ * Adapter driving the claim engine through the transactional wrapper (the only
+ * one the app uses). The handler ignores the tx — these tests exercise the
+ * claim/replay/reclaim state machine, which is shared by both call paths.
+ */
+function withIdempotency(
+	request: IdempotentRequest,
+	handler: () => Promise<StoredResponse>,
+	options?: Parameters<typeof withTransactionalIdempotency>[2],
+): Promise<StoredResponse> {
+	return withTransactionalIdempotency(request, () => handler(), options);
+}
+
+/**
+ * Real-database integration tests for the idempotency claim engine
+ * (src/node/lib/idempotency.ts), driven via withTransactionalIdempotency.
  *
  * Proves the at-most-once guarantees that mocks can't: that the atomic
  * INSERT ... ON CONFLICT DO NOTHING claim, the stored-response replay, the
@@ -185,6 +198,63 @@ describe("withIdempotency (real Postgres)", () => {
 
 		const completedRow = await onlyIdempotencyRow();
 		expect(completedRow?.status).toBe("completed");
+	});
+
+	it("steals a stale processing claim so a crashed request can't lock the key for the whole TTL", async () => {
+		// First attempt claims the key and "crashes": the handler never returns,
+		// so nothing ever marks the row failed or completed.
+		let releaseHandler!: () => void;
+		const gate = new Promise<void>((r) => {
+			releaseHandler = r;
+		});
+		const crashedHandler = vi.fn(async () => {
+			await gate;
+			return okResponse;
+		});
+		const inflight = withIdempotency(baseRequest("key-stale"), crashedHandler);
+		await vi.waitFor(async () => {
+			const row = await onlyIdempotencyRow();
+			expect(row?.status).toBe("processing");
+		});
+
+		// Within the stale window the retry still gets a 409 …
+		await expect(
+			withIdempotency(baseRequest("key-stale"), vi.fn()),
+		).rejects.toMatchObject({ statusCode: 409, code: "REQUEST_IN_PROGRESS" });
+
+		// … but once the claim ages past the window, a retry must reclaim it
+		// instead of answering 409 until the 24h TTL lapses.
+		const backdated = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+		await pool.query("UPDATE idempotency_keys SET created_at = $1", [
+			backdated,
+		]);
+
+		const retryHandler = vi.fn(() => Promise.resolve(okResponse));
+		const result = await withIdempotency(
+			baseRequest("key-stale"),
+			retryHandler,
+		);
+		expect(result).toEqual(okResponse);
+		expect(retryHandler).toHaveBeenCalledOnce();
+
+		releaseHandler();
+		await inflight;
+	});
+
+	it("hashes the same logical request identically regardless of query-param order", async () => {
+		const handler = vi.fn(() => Promise.resolve(okResponse));
+		await withIdempotency(
+			{ ...baseRequest("key-query-order"), query: { b: "2", a: "1" } },
+			handler,
+		);
+
+		// Reordered params are the SAME request: replay, not a 422 hash mismatch.
+		const replay = await withIdempotency(
+			{ ...baseRequest("key-query-order"), query: { a: "1", b: "2" } },
+			handler,
+		);
+		expect(replay).toEqual(okResponse);
+		expect(handler).toHaveBeenCalledOnce();
 	});
 
 	it("scopes the same idempotency key by subject", async () => {

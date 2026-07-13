@@ -18,6 +18,7 @@ vi.mock("@/lib/db", () => ({ getDb: getDbMock }));
 import { organizationMembers, organizations, users } from "@/db/schema/index";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 import { organizationResolvers } from "@/handlers/graphql/resolvers/organizations";
+import { withAuditDrain } from "./helpers/audit-drain";
 import {
 	createTestDb,
 	type TestDb,
@@ -69,8 +70,8 @@ describe("authorization matrix (org resolvers)", () => {
 	let targetMembershipId: string; // an ACTIVE MEMBER row in org A (a valid victim)
 	let ownerMembershipIdA: string; // org A OWNER membership row
 
-	const M = organizationResolvers.Mutation;
-	const Q = organizationResolvers.Query;
+	const M = withAuditDrain(organizationResolvers.Mutation);
+	const Q = withAuditDrain(organizationResolvers.Query);
 
 	beforeAll(async () => {
 		const t = await createTestDb();
@@ -129,8 +130,8 @@ describe("authorization matrix (org resolvers)", () => {
 		await insertMember(orgB, otherOwnerId, "OWNER");
 	});
 	afterEach(async () => {
-		// Let fire-and-forget audit writes drain before truncating (see org-invite).
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Audit writes are drained deterministically inside withAuditDrain(M/Q),
+		// so truncation can't race an in-flight INSERT.
 		await truncateOrganizations(pool);
 		await truncateUserGraph(pool);
 	});

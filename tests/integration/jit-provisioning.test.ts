@@ -139,6 +139,68 @@ describe("getUserIdFromClaims JIT provisioning (real Postgres)", () => {
 		expect(profileRows).toHaveLength(1);
 	});
 
+	it("rejects a tombstoned WorkOS subject without re-provisioning", async () => {
+		const [deletedUser] = await db
+			.insert(users)
+			.values({
+				email: null,
+				firstName: null,
+				lastName: null,
+				status: "DELETED",
+				type: "MEMBER",
+			})
+			.returning({ id: users.id });
+
+		await db.insert(authIdentities).values({
+			userId: deletedUser.id,
+			providerType: "workos",
+			providerSubject: "user_jit_deleted",
+			emailAtProvider: null,
+		});
+
+		await expect(
+			getUserIdFromClaims({
+				sub: "user_jit_deleted",
+				email: "deleted@example.com",
+			}),
+		).rejects.toMatchObject({ statusCode: 401, code: "UNAUTHORIZED" });
+
+		const identities = await rowsForSubject("user_jit_deleted");
+		expect(identities).toHaveLength(1);
+
+		const userRows = await db.select().from(users);
+		expect(userRows).toHaveLength(1);
+		expect(userRows[0]?.status).toBe("DELETED");
+	});
+
+	it("returns a terminal 409 when the email belongs to a DIFFERENT identity (never a permanent 500)", async () => {
+		// An existing user owns the email under another provider subject: the
+		// JIT insert hits ux_users_email, and the retry-by-subject can never
+		// find a row. This must be a clear client-resolvable conflict — before
+		// the fix it rethrew the raw driver error, 500ing this subject forever.
+		const [existing] = await db
+			.insert(users)
+			.values({ email: "taken@example.com", type: "MEMBER" })
+			.returning({ id: users.id });
+		await db.insert(authIdentities).values({
+			userId: existing.id,
+			providerType: "workos",
+			providerSubject: "user_original_identity",
+			emailAtProvider: "taken@example.com",
+		});
+
+		await expect(
+			getUserIdFromClaims({
+				sub: "user_second_identity",
+				email: "taken@example.com",
+			}),
+		).rejects.toMatchObject({ statusCode: 409, code: "CONFLICT" });
+
+		// The colliding subject was not provisioned.
+		const identities = await rowsForSubject("user_second_identity");
+		expect(identities).toHaveLength(0);
+	});
+
 	it("rethrows non-unique provisioning errors instead of retrying as auth races", async () => {
 		await installJitFailureTrigger();
 

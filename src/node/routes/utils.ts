@@ -1,6 +1,6 @@
-import { sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { idempotencyKeys } from "../db/schema/index";
 import { getDb } from "../lib/db";
 import { errorMessage } from "../lib/error-utils";
 import { sendSuccess } from "../lib/hono/respond";
@@ -35,7 +35,10 @@ async function checkDatabase(): Promise<HealthCheck> {
 	try {
 		// Simple query to check database connectivity
 		const db = await getDb();
-		await db.execute(sql`SELECT 1`);
+		await db
+			.select({ key: idempotencyKeys.key })
+			.from(idempotencyKeys)
+			.limit(0);
 		const responseTime = Date.now() - start;
 
 		return {

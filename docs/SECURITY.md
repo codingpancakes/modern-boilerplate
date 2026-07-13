@@ -65,6 +65,33 @@ rules remain the place for global/per-path limits.
 - Algorithm confusion — only RS256 accepted
 - Expired tokens — old tokens rejected
 
+**Session revocation (a deliberate trade-off — read this):**
+
+Validation is *stateless*: the backend confirms the token is authentic and
+unexpired, but does **not** check whether the underlying WorkOS session is still
+active. Revoking a session in WorkOS (dashboard, `revokeSession`, or logout)
+invalidates the **refresh** token immediately — but any **access token already
+issued stays valid until it expires**. Therefore:
+
+> **Revocation latency == the access-token duration.** A revoked session keeps
+> working until its current access token expires; the next refresh then fails and
+> the user is out.
+
+- **Set the access-token duration short** in the WorkOS dashboard (Authentication →
+  Sessions → _Access token duration_). That value *is* your worst-case revocation
+  delay — 5 minutes is a sensible default. This is the intended lever.
+- This is standard OAuth/OIDC behaviour, **not a defect**. Every stateless-JWT
+  system works this way. Checking the IdP on every request would trade it for
+  per-request latency, rate-limit exposure, and an availability dependency on
+  WorkOS — a worse deal at any real traffic.
+- **If you need enforced sub-duration revocation** (kill a compromised session
+  within seconds): subscribe to the WorkOS `session.revoked` webhook, record the
+  revoked `sid` in a small denylist (rows expiring after the access-token duration —
+  past that the token is rejected by `exp` anyway), and reject any token whose `sid`
+  is listed. The `sid` is already on `c.get("claims").sid`; the daily janitor cron
+  prunes expired rows. Enforcement stays local (one indexed lookup), with zero
+  per-request calls to WorkOS.
+
 ---
 
 ### 3. Input Validation (Zod)
@@ -127,7 +154,8 @@ await db.select().from(users).where(eq(users.id, userId));
 - HTTPS enforcement in production (no http origins accepted)
 - Subdomain matching with parent domain min-segment validation
 - No header name leakage in rejection responses
-- Dev/local origins only accepted when `NODE_ENV` is neither production nor staging
+- Dev/local origins only accepted when `STAGE` is explicitly `local`/`development`
+  (`isDevLikeStage()` in `lib/stage.ts`); unknown or missing stages fail closed
 - Answers `OPTIONS` preflight with 204 + the allow headers
 
 **Protection against:**
@@ -179,8 +207,8 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 
 **What it does:**
 - No try-catch in route handlers — the app-level `onError` catches and formats everything
-- REST: generic error messages to clients (5xx masked when `NODE_ENV` is
-  production/staging), details to Sentry
+- REST: generic error messages to clients (5xx masked when `STAGE` is
+  production/staging — `isDeployedStage()` in `lib/stage.ts`), details to Sentry
 - GraphQL: errors serialize as `{ message, extensions: { code } }`; outside dev,
   messages for non-safe codes are masked — only whitelisted codes (`BAD_USER_INPUT`,
   `GRAPHQL_VALIDATION_FAILED`, `GRAPHQL_PARSE_FAILED`, `FORBIDDEN`, `UNAUTHENTICATED`,
@@ -194,8 +222,10 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 **Location:** `src/node/lib/sanitize.ts`
 
 **What it does:**
-- `sanitizeObject()` applies HTML escaping via character whitelist
-- Blocks dangerous URL schemes (javascript:, data:, vbscript:)
+- `sanitizeObject()` strips HTML tags (script/style blocks lose their contents)
+  and control characters; stored data stays plain text exactly as the user wrote
+  it — escaping is a render-time concern (`escapeHtml()` is exported for that)
+- Blocks dangerous URL schemes (javascript:, data:, vbscript:, blob:)
 - Blocks protocol-relative URLs (`//host/path`)
 - Sanitizes filenames (strips path separators, null bytes)
 - Category and string field character validation
@@ -238,7 +268,8 @@ a token is verified
 
 ### 12. Org-Membership Consent (invite flow)
 
-**Location:** `src/node/handlers/graphql/resolvers/organizations.ts` (SDL in
+**Location:** `src/node/lib/services/organizations.ts` (resolvers in
+`src/node/handlers/graphql/resolvers/organizations.ts` delegate to it; SDL in
 `src/node/handlers/graphql/schema/index.ts`); `assignment_status` enum in
 `src/node/db/schema/enums.ts`
 
@@ -286,8 +317,9 @@ POST /v1/media/upload-image
 **Defense:**
 1. API returns JSON, not HTML (XSS doesn't work)
 2. Zod validation rejects invalid filenames
-3. `sanitizeObject` escapes HTML entities
-4. Frontend should sanitize before rendering
+3. `sanitizeObject` strips HTML tags before the value is persisted
+4. Frontend must escape at render time (`escapeHtml()` in `lib/sanitize.ts` for
+   any server-rendered HTML)
 
 **Result:** Attack ineffective (API doesn't render HTML)
 

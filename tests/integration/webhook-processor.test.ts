@@ -27,7 +27,12 @@ import {
 	organizations,
 	users,
 } from "@/db/schema/index";
-import { processWorkosEvent } from "@/lib/services/webhook-processor";
+import { getUserIdFromClaims } from "@/lib/auth";
+import {
+	processWorkosEvent,
+	WEBHOOK_STALE_PROCESSING_MS,
+	WebhookInProgressError,
+} from "@/lib/services/webhook-processor";
 import type { WorkOSWebhookEvent } from "@/lib/validation/webhooks";
 import {
 	createTestDb,
@@ -262,21 +267,21 @@ describe("processWorkosEvent (real Postgres)", () => {
 		]);
 	});
 
-	it("sanitizes WorkOS user and organization fields before DB writes", async () => {
+	it("sanitizes WorkOS user and organization fields before DB writes (tags stripped, text intact)", async () => {
 		await processWorkosEvent({
 			...userCreatedEvent("evt_user_sanitize", "user_workos_sanitize"),
 			data: {
 				id: "user_workos_sanitize",
 				email: "sanitize@example.com",
-				first_name: "<script>alert(1)</script>",
-				last_name: "Lovelace",
+				first_name: "Ada <script>alert(1)</script>",
+				last_name: "O'Brien & Sons",
 			},
 		});
 		await processWorkosEvent({
 			...orgCreatedEvent("evt_org_sanitize", "org_workos_sanitize"),
 			data: {
 				id: "org_workos_sanitize",
-				name: "<img src=x onerror=alert(1)>",
+				name: "Acme <img src=x onerror=alert(1)>Inc",
 			},
 		});
 
@@ -287,40 +292,99 @@ describe("processWorkosEvent (real Postgres)", () => {
 		const userId = identity?.userId;
 		if (!userId) throw new Error("expected user id");
 
+		// Markup is stripped at write; benign text (apostrophes, ampersands) is
+		// stored EXACTLY as sent — escaping is a render-time concern.
 		const [user] = await db.select().from(users).where(eq(users.id, userId));
-		expect(user?.firstName).toBe("&lt;script&gt;alert(1)&lt;&#x2F;script&gt;");
+		expect(user?.firstName).toBe("Ada");
+		expect(user?.lastName).toBe("O'Brien & Sons");
 
 		const [org] = await db
 			.select()
 			.from(organizations)
 			.where(eq(organizations.workosOrgId, "org_workos_sanitize"));
-		expect(org?.name).toBe("&lt;img src=x onerror=alert(1)&gt;");
+		expect(org?.name).toBe("Acme Inc");
 	});
 
-	it("soft-deletes a user and removes its WorkOS identity for user.deleted", async () => {
+	it("soft-deletes a user and keeps its WorkOS subject reserved for user.deleted", async () => {
 		await processWorkosEvent(
 			userCreatedEvent("evt_user_create_delete", "user_workos_delete"),
 		);
+
+		// Give the user an ACTIVE OWNER membership: deletion must deactivate it,
+		// or the tombstone keeps counting in sole-owner checks and member lists.
+		const [identityBefore] = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_delete"));
+		if (!identityBefore?.userId) throw new Error("expected provisioned user");
+		const [org] = await db
+			.insert(organizations)
+			.values({ name: "Doomed Org" })
+			.returning();
+		await db.insert(organizationMembers).values({
+			organizationId: org.id,
+			userId: identityBefore.userId,
+			role: "OWNER",
+			status: "ACTIVE",
+		});
+
 		await processWorkosEvent(
 			userDeletedEvent("evt_user_delete", "user_workos_delete"),
 		);
+
+		const [membership] = await db
+			.select()
+			.from(organizationMembers)
+			.where(eq(organizationMembers.userId, identityBefore.userId));
+		expect(membership?.status).toBe("INACTIVE");
 
 		const identities = await db
 			.select()
 			.from(authIdentities)
 			.where(eq(authIdentities.providerSubject, "user_workos_delete"));
-		expect(identities).toHaveLength(0);
+		expect(identities).toHaveLength(1);
 
 		const [deleted] = await db.select().from(users);
 		expect(deleted?.status).toBe("DELETED");
 		expect(deleted?.email).toBeNull();
 		expect(deleted?.firstName).toBeNull();
 
+		await expect(
+			getUserIdFromClaims({
+				sub: "user_workos_delete",
+				email: "ada.updated@example.com",
+			}),
+		).rejects.toMatchObject({ statusCode: 401, code: "UNAUTHORIZED" });
+
 		const auditRows = await db
 			.select()
 			.from(auditLogs)
 			.where(eq(auditLogs.resourceId, deleted?.id));
 		expect(auditRows.some((row) => row.action === "DELETE")).toBe(true);
+	});
+
+	it("does not repopulate scrubbed data for WorkOS updates after user deletion", async () => {
+		await processWorkosEvent(
+			userCreatedEvent("evt_user_create_tombstone", "user_workos_tombstone"),
+		);
+		await processWorkosEvent(
+			userDeletedEvent("evt_user_delete_tombstone", "user_workos_tombstone"),
+		);
+		await processWorkosEvent(
+			userUpdatedEvent("evt_user_update_tombstone", "user_workos_tombstone"),
+		);
+
+		const [identity] = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_tombstone"));
+		const userId = identity?.userId;
+		if (!userId) throw new Error("expected tombstoned user id");
+
+		const [deleted] = await db.select().from(users).where(eq(users.id, userId));
+		expect(deleted?.status).toBe("DELETED");
+		expect(deleted?.email).toBeNull();
+		expect(deleted?.firstName).toBeNull();
 	});
 
 	it("provisions an organization for organization.created", async () => {
@@ -408,6 +472,143 @@ describe("processWorkosEvent (real Postgres)", () => {
 			.from(organizationMembers)
 			.where(eq(organizationMembers.organizationId, org.id));
 		expect(membership?.status).toBe("INACTIVE");
+	});
+
+	it("throws (never succeeds silently) when another attempt holds a fresh processing lock", async () => {
+		// Simulate a consumer that claimed the lock and crashed mid-flight: the
+		// row is "processing" and NOT yet stale. A redelivery must not be treated
+		// as success — acking it would drop the event permanently.
+		const event = userCreatedEvent("evt_user_inflight", "user_workos_inflight");
+		await db.insert(idempotencyKeys).values({
+			key: "workos-webhook-evt_user_inflight",
+			requestHash: "evt_user_inflight",
+			status: "processing",
+			createdAt: new Date().toISOString(),
+			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+		});
+
+		await expect(processWorkosEvent(event)).rejects.toBeInstanceOf(
+			WebhookInProgressError,
+		);
+
+		// No provisioning happened, and the foreign lock was not released.
+		const identities = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_inflight"));
+		expect(identities).toHaveLength(0);
+		const [lock] = await db
+			.select()
+			.from(idempotencyKeys)
+			.where(eq(idempotencyKeys.key, "workos-webhook-evt_user_inflight"));
+		expect(lock?.status).toBe("processing");
+	});
+
+	it("reclaims a stale processing lock on redelivery and processes the event", async () => {
+		// The crashed attempt's lock has aged past the staleness window: the
+		// redelivery (delayed by the consumer) must steal it and run to completion.
+		const event = userCreatedEvent("evt_user_stale", "user_workos_stale");
+		await db.insert(idempotencyKeys).values({
+			key: "workos-webhook-evt_user_stale",
+			requestHash: "evt_user_stale",
+			status: "processing",
+			createdAt: new Date(
+				Date.now() - WEBHOOK_STALE_PROCESSING_MS - 60_000,
+			).toISOString(),
+			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+		});
+
+		await expect(processWorkosEvent(event)).resolves.toBeUndefined();
+
+		const identities = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_stale"));
+		expect(identities).toHaveLength(1);
+		const [lock] = await db
+			.select()
+			.from(idempotencyKeys)
+			.where(eq(idempotencyKeys.key, "workos-webhook-evt_user_stale"));
+		expect(lock?.status).toBe("completed");
+	});
+
+	it("records an auth event exactly once even when the lock is reclaimed after a crash", async () => {
+		// Simulate a crash that committed the audit row but not the completion:
+		// a stale 'processing' lock left behind. The reclaim re-runs the event.
+		// Because record+complete are now one transaction, the FIRST (crashed)
+		// attempt could only have committed the audit row TOGETHER with the
+		// completion — so either the key is already 'completed' (dedup no-op) or
+		// nothing committed. Here we model "nothing committed": a stale lock with
+		// no prior audit row. The reclaim must produce exactly ONE login row.
+		await db.insert(idempotencyKeys).values({
+			key: "workos-webhook-evt_auth_reclaim",
+			requestHash: "evt_auth_reclaim",
+			status: "processing",
+			createdAt: new Date(
+				Date.now() - WEBHOOK_STALE_PROCESSING_MS - 60_000,
+			).toISOString(),
+			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+		});
+
+		await processWorkosEvent(authEvent("evt_auth_reclaim"));
+		// A duplicate delivery of the now-completed event is a clean no-op.
+		await processWorkosEvent(authEvent("evt_auth_reclaim"));
+
+		const loginRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.action, AUDIT_ACTIONS.LOGIN_FAILED));
+		expect(loginRows).toHaveLength(1);
+
+		const [lock] = await db
+			.select()
+			.from(idempotencyKeys)
+			.where(eq(idempotencyKeys.key, "workos-webhook-evt_auth_reclaim"));
+		expect(lock?.status).toBe("completed");
+	});
+
+	it("treats an email collision as terminal: skips, audits the failure, completes the lock", async () => {
+		// user.created for a DIFFERENT WorkOS subject reusing an existing user's
+		// email can never succeed (ux_users_email). It must NOT throw — throwing
+		// would burn the queue's whole retry budget into the DLQ for an event
+		// that is deterministically unprocessable.
+		await processWorkosEvent(
+			userCreatedEvent("evt_email_owner", "user_workos_email_owner"),
+		);
+		const usersBefore = await db.select().from(users);
+
+		await expect(
+			processWorkosEvent(
+				userCreatedEvent("evt_email_thief", "user_workos_email_thief"),
+			),
+		).resolves.toBeUndefined();
+
+		// No second user, no identity for the colliding subject.
+		const usersAfter = await db.select().from(users);
+		expect(usersAfter).toHaveLength(usersBefore.length);
+		const identities = await db
+			.select()
+			.from(authIdentities)
+			.where(eq(authIdentities.providerSubject, "user_workos_email_thief"));
+		expect(identities).toHaveLength(0);
+
+		// The lock completed (the message acks instead of retrying) and the skip
+		// is durably recorded on the audit trail.
+		const [lock] = await db
+			.select()
+			.from(idempotencyKeys)
+			.where(eq(idempotencyKeys.key, "workos-webhook-evt_email_thief"));
+		expect(lock?.status).toBe("completed");
+
+		const failureRows = await db
+			.select()
+			.from(auditLogs)
+			.where(eq(auditLogs.status, "FAILURE"));
+		expect(failureRows).toHaveLength(1);
+		expect(failureRows[0]?.metadata).toMatchObject({
+			skipped: "email_conflict",
+			providerSubject: "user_workos_email_thief",
+		});
 	});
 
 	it("audits authentication lifecycle events without mutating users or organizations", async () => {

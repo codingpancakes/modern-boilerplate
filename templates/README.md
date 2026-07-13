@@ -16,7 +16,7 @@ fall back to the `.ts.template` when there's no sibling for your shape.
 
 | You're building | Copy from |
 |---|---|
-| User-scoped endpoint (auth'd user's own data) | `src/node/routes/users.ts` (GET/PATCH `/me`; PATCH shows `withIdempotency` + transaction + audit) — or `user-scoped.ts.template` |
+| User-scoped endpoint (auth'd user's own data) | `src/node/routes/users.ts` (GET/PATCH `/me`; PATCH shows `withTransactionalIdempotentJson` + transaction + audit) — or `user-scoped.ts.template` |
 | Media / R2-backed endpoint | `src/node/routes/media.ts` |
 | Public endpoint (health-style) | `src/node/routes/utils.ts` — or `public.ts.template` |
 | Webhook (signature-verified, idempotent) | `src/node/routes/webhooks.ts` — or the webhook variant in `public.ts.template` |
@@ -28,8 +28,9 @@ fall back to the `.ts.template` when there's no sibling for your shape.
 - **`user-scoped.ts.template`** — a protected domain that operates on the
   caller's own data. Resolves the internal user id with `getUserIdFromClaims`,
   scopes every query to that id, and shows a `GET` plus a mutating `POST`
-  wrapped in `withIdempotency` (Zod validation → `sanitizeObject` → transaction
-  → `logAudit`). Modeled on `routes/users.ts`.
+  wrapped in `withTransactionalIdempotentJson` (Zod validation → `sanitizeObject`
+  → transactional write + atomic idempotency completion → `logAudit`). Modeled
+  on `routes/users.ts`.
 - **`org-scoped.ts.template`** — a protected domain whose data is org-owned.
   Includes a `requireMembership` helper (the REST port of the organizations
   GraphQL resolver: ACTIVE-membership filter + role hierarchy), gates reads on
@@ -57,4 +58,4 @@ fall back to the `.ts.template` when there's no sibling for your shape.
 
 - Invariants and Definition of Done: [`AGENTS.md`](../AGENTS.md)
 - Project overview: [`README.md`](../README.md)
-- Pattern files: [`.cursor/rules/`](../.cursor/rules/) (`handlers.mdc` is partly Lambda-era)
+- Pattern files: [`.cursor/rules/`](../.cursor/rules/)

@@ -27,4 +27,11 @@ describe("cors", () => {
 
 		expect(isAllowedOrigin("http://localhost:3000")).toBe(true);
 	});
+
+	it("fails closed for typoed stages", () => {
+		vi.stubEnv("NODE_ENV", "development");
+		vi.stubEnv("STAGE", "prodution");
+
+		expect(isAllowedOrigin("http://localhost:3000")).toBe(false);
+	});
 });

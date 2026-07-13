@@ -2,8 +2,9 @@
 
 > Status: **largely realized (June 2026).** The migration executed: this branch runs the
 > whole backend as one Cloudflare Worker (Hono + Neon), all AWS code deleted. The
-> "Today (AWS)" column below is historical context. Remaining gaps (Hyperdrive, Queues,
-> CI, deploy safety/operational shell) are tracked in [MIGRATION_PLAN.md](./MIGRATION_PLAN.md).
+> "Today (AWS)" column below is historical context. Queues, CI, and the deploy
+> safety/operational shell have since shipped; Hyperdrive remains the one open
+> placeholder, tracked in [MIGRATION_PLAN.md](./MIGRATION_PLAN.md).
 
 ## Goal
 

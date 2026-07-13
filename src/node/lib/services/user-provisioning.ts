@@ -12,7 +12,8 @@ import {
 	AUDIT_STATUS,
 	writeAuditLog,
 } from "../audit";
-import type { DbInstance } from "../db";
+import type { DbClient, DbInstance } from "../db";
+import { uniqueViolationConstraint } from "../error-utils";
 import { createLogger } from "../logger";
 import { sanitizeObject } from "../sanitize";
 import { RECORD_STATUS } from "../status";
@@ -133,10 +134,62 @@ export async function upsertUserFromWorkOS(
 
 	// Entire upsert runs in a single transaction to prevent the race where
 	// two concurrent webhooks both see "no row" and both try to create.
-	const result = await db.transaction(async (tx) => {
+	let result: { action: "created" | "updated" | "ignored"; userId: string };
+	try {
+		result = await runUserUpsertTransaction(db, sanitized, sanitizedEventType);
+	} catch (error) {
+		// A 23505 on ux_users_email is TERMINAL for this event: the email
+		// belongs to a different user row, so redelivery can never succeed —
+		// letting it retry only burns the retry budget into the DLQ. Record the
+		// skip durably and return. Any OTHER unique violation (e.g. a
+		// concurrent-create race on another index) stays retriable: rethrow.
+		if (uniqueViolationConstraint(error) === "ux_users_email") {
+			logger.error("WorkOS user event skipped: email owned by another user", {
+				providerSubject: sanitized.id,
+				eventType: sanitizedEventType,
+			});
+			await writeAuditLog(db, {
+				action: AUDIT_ACTIONS.UPDATE,
+				resourceType: AUDIT_RESOURCE_TYPES.USER,
+				status: AUDIT_STATUS.FAILURE,
+				errorMessage: "Email already belongs to a different user",
+				metadata: {
+					source: "workos_webhook",
+					eventType: sanitizedEventType,
+					providerSubject: sanitized.id,
+					skipped: "email_conflict",
+				},
+			});
+			return;
+		}
+		throw error;
+	}
+
+	if (result.action === "created") {
+		logger.info("User created successfully", {
+			userId: result.userId,
+			providerSubject: sanitized.id,
+		});
+	} else if (result.action === "ignored") {
+		logger.warn("Ignored WorkOS user event for deleted user", {
+			userId: result.userId,
+			providerSubject: sanitized.id,
+		});
+	} else {
+		logger.info("User updated", { userId: result.userId });
+	}
+}
+
+async function runUserUpsertTransaction(
+	db: DbInstance,
+	sanitized: WorkOSUserData,
+	sanitizedEventType: string,
+): Promise<{ action: "created" | "updated" | "ignored"; userId: string }> {
+	return db.transaction(async (tx) => {
 		const [existingAuth] = await tx
-			.select({ userId: authIdentities.userId })
+			.select({ userId: authIdentities.userId, userStatus: users.status })
 			.from(authIdentities)
+			.leftJoin(users, eq(users.id, authIdentities.userId))
 			.where(
 				and(
 					eq(authIdentities.providerType, "workos"),
@@ -145,15 +198,35 @@ export async function upsertUserFromWorkOS(
 			)
 			.limit(1);
 
-		let result: { action: "created" | "updated"; userId: string };
+		let result: { action: "created" | "updated" | "ignored"; userId: string };
 
 		if (existingAuth?.userId) {
+			if (existingAuth.userStatus === RECORD_STATUS.DELETED) {
+				await writeAuditLog(tx, {
+					userId: existingAuth.userId,
+					action: AUDIT_ACTIONS.UPDATE,
+					resourceType: AUDIT_RESOURCE_TYPES.USER,
+					resourceId: existingAuth.userId,
+					status: AUDIT_STATUS.SUCCESS,
+					metadata: {
+						source: "workos_webhook",
+						eventType: sanitizedEventType,
+						providerSubject: sanitized.id,
+						ignored: "deleted_user_tombstone",
+					},
+				});
+				return { action: "ignored", userId: existingAuth.userId };
+			}
+
 			await tx
 				.update(users)
 				.set({
 					email: sanitized.email,
-					firstName: sanitized.first_name,
-					lastName: sanitized.last_name,
+					// `|| null` matches the create branch: absent names are NULL,
+					// never "" — otherwise the same column's empty-value depends on
+					// which webhook arrived first.
+					firstName: sanitized.first_name || null,
+					lastName: sanitized.last_name || null,
 					updatedAt: new Date().toISOString(),
 				})
 				.where(eq(users.id, existingAuth.userId));
@@ -199,15 +272,6 @@ export async function upsertUserFromWorkOS(
 
 		return result;
 	});
-
-	if (result.action === "created") {
-		logger.info("User created successfully", {
-			userId: result.userId,
-			providerSubject: sanitized.id,
-		});
-	} else {
-		logger.info("User updated", { userId: result.userId });
-	}
 }
 
 export async function deleteUserFromWorkOS(
@@ -245,7 +309,17 @@ export async function deleteUserFromWorkOS(
 			})
 			.where(eq(users.id, uid));
 
-		await tx.delete(authIdentities).where(eq(authIdentities.userId, uid));
+		// Deactivate the user's org memberships (mirrors deleteOrgFromWorkOS).
+		// Left ACTIVE, the tombstone keeps showing up in member listings and —
+		// worse — still counts as an OWNER in leaveOrganization's sole-owner
+		// check, permanently trapping the remaining live owner.
+		await tx
+			.update(organizationMembers)
+			.set({
+				status: RECORD_STATUS.INACTIVE,
+				updatedAt: new Date().toISOString(),
+			})
+			.where(eq(organizationMembers.userId, uid));
 
 		await writeAuditLog(tx, {
 			userId: uid,
@@ -358,7 +432,7 @@ export async function deleteOrgFromWorkOS(
  * expected and still logged for security forensics.
  */
 export async function recordAuthEventFromWorkOS(
-	db: DbInstance,
+	db: DbClient,
 	authData: WorkOSAuthData,
 	eventType: string,
 ): Promise<void> {

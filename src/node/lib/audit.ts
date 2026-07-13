@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { asc, inArray, sql } from "drizzle-orm";
+import { asc, inArray, lt } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -21,6 +21,7 @@ import { captureException } from "./sentry";
  */
 export const AUDIT_RETENTION_YEARS = 7;
 const AUDIT_RETENTION_BATCH_SIZE = 1_000;
+const AUDIT_RETENTION_SAFETY_DAYS = 1;
 
 const logger = createLogger({ serviceName: "audit" });
 
@@ -360,130 +361,25 @@ export function auditRequestContext(context: AuditContext) {
 }
 
 /**
- * Audit decorator for GraphQL resolvers
- *
- * @example
- * ```typescript
- * const resolvers = {
- *   Mutation: {
- *     updateMe: auditResolver(
- *       async (parent, args, context) => {
- *         const user = await updateUser(args.input);
- *         return user;
- *       },
- *       {
- *         action: AUDIT_ACTIONS.UPDATE,
- *         resourceType: AUDIT_RESOURCE_TYPES.USER,
- *         getResourceId: (result) => result.id,
- *         getChanges: (result) => ({ after: result }),
- *       }
- *     ),
- *   },
- * };
- * ```
- */
-export function auditResolver<
-	TArgs = unknown,
-	TResult = unknown,
-	TContext extends AuditContext = AuditContext,
->(
-	resolver: (
-		parent: unknown,
-		args: TArgs,
-		context: TContext,
-		info: unknown,
-	) => Promise<TResult>,
-	options: {
-		action: AuditAction;
-		resourceType: AuditResourceType;
-		/**
-		 * Capture the resource's prior state *before* the resolver runs, so a
-		 * before/after diff can be recorded. Must not mutate; failures here are
-		 * swallowed so they can never break the mutation.
-		 */
-		getBefore?: (args: TArgs, context: TContext) => Promise<unknown> | unknown;
-		getResourceId?: (result: TResult, args: TArgs) => string | undefined;
-		getChanges?: (
-			result: TResult,
-			args: TArgs,
-			before: unknown,
-		) => { before?: unknown; after?: unknown } | undefined;
-		getMetadata?: (
-			result: TResult | null,
-			args: TArgs,
-		) => Record<string, unknown> | undefined;
-	},
-) {
-	return async (
-		parent: unknown,
-		args: TArgs,
-		context: TContext,
-		info: unknown,
-	): Promise<TResult> => {
-		let result: TResult;
-
-		let before: unknown;
-		if (options.getBefore) {
-			try {
-				before = await options.getBefore(args, context);
-			} catch {
-				// Before-state capture is best-effort; never block the mutation.
-				before = undefined;
-			}
-		}
-
-		try {
-			result = await resolver(parent, args, context, info);
-		} catch (error) {
-			void logAudit({
-				userId: context.userId,
-				organizationId: context.organizationId,
-				requestId: context.requestId,
-				ipAddress: context.ipAddress,
-				userAgent: context.userAgent,
-				action: options.action,
-				resourceType: options.resourceType,
-				status: AUDIT_STATUS.FAILURE,
-				errorMessage: errorMessage(error),
-				metadata: options.getMetadata?.(null, args),
-			});
-
-			throw error;
-		}
-
-		void logAudit({
-			userId: context.userId,
-			organizationId: context.organizationId,
-			requestId: context.requestId,
-			ipAddress: context.ipAddress,
-			userAgent: context.userAgent,
-			action: options.action,
-			resourceType: options.resourceType,
-			resourceId: options.getResourceId?.(result, args),
-			changes: options.getChanges?.(result, args, before),
-			metadata: options.getMetadata?.(result, args),
-			status: AUDIT_STATUS.SUCCESS,
-		});
-
-		return result;
-	};
-}
-
-/**
  * Delete audit logs older than the retention window. Intended to be invoked by
  * a scheduled job. Returns the number of rows pruned. The DB-level guard trigger
- * is the real enforcement boundary; keep the cutoff server-side so it matches
- * the trigger's `now() - interval '7 years'` boundary.
+ * is the real enforcement boundary. The app-side cutoff is deliberately one
+ * day behind the exact retention window so clock skew cannot make this job try
+ * to delete rows the trigger still considers in-window.
  */
 export async function cleanupExpiredAuditLogs(): Promise<number> {
 	const db = await getDb();
 	let deletedCount = 0;
+	const cutoff = new Date();
+	cutoff.setUTCFullYear(cutoff.getUTCFullYear() - AUDIT_RETENTION_YEARS);
+	cutoff.setUTCDate(cutoff.getUTCDate() - AUDIT_RETENTION_SAFETY_DAYS);
+	const cutoffIso = cutoff.toISOString();
 
 	for (;;) {
 		const expiredRows = await db
 			.select({ id: auditLogs.id })
 			.from(auditLogs)
-			.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`)
+			.where(lt(auditLogs.timestamp, cutoffIso))
 			.orderBy(asc(auditLogs.timestamp))
 			.limit(AUDIT_RETENTION_BATCH_SIZE);
 

@@ -1,9 +1,23 @@
 import { and, eq } from "drizzle-orm";
 import { GraphQLError } from "graphql";
+import { z } from "zod";
 import { organizationMembers, users } from "../../../db/schema/index";
 import { updateMyAccount as updateAccount } from "../../../lib/services/user-account";
+import { validate } from "../../../lib/validation/helpers";
 import type { GraphQLContext } from "../context";
 import { toGraphQLError } from "../errors";
+
+function parseInput<T>(schema: z.ZodSchema<T>, input: unknown): T {
+	try {
+		return validate(schema, input);
+	} catch (error) {
+		throw toGraphQLError(error);
+	}
+}
+
+const userIdArgs = z.object({
+	id: z.string().uuid(),
+});
 
 export const userResolvers = {
 	Query: {
@@ -25,9 +39,11 @@ export const userResolvers = {
 		// Get user by ID (must be in same org)
 		user: async (
 			_parent: unknown,
-			{ id }: { id: string },
+			args: { id: string },
 			context: GraphQLContext,
 		) => {
+			const { id } = parseInput(userIdArgs, args);
+
 			if (!context.organizationId) {
 				throw new GraphQLError(
 					"Organization context required. Ensure your token includes an org_id claim.",

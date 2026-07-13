@@ -24,7 +24,12 @@ const {
 	logAuditStrictMock: vi.fn(() => Promise.resolve()),
 }));
 
-vi.mock("@/lib/services/webhook-processor", () => ({
+// Keep the real WebhookInProgressError so the consumer's instanceof check
+// exercises the actual class; mock only the processing entry point.
+vi.mock("@/lib/services/webhook-processor", async (importOriginal) => ({
+	...(await importOriginal<
+		typeof import("@/lib/services/webhook-processor")
+	>()),
 	processWorkosEvent: processWorkosEventMock,
 }));
 
@@ -34,6 +39,8 @@ vi.mock("@/lib/db", () => ({
 
 vi.mock("@/lib/sentry", () => ({
 	captureException: captureExceptionMock,
+	flush: vi.fn(() => Promise.resolve(true)),
+	runWithSentryScope: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
 
 // The audit module is consumed both for `logAudit` and for the AUDIT_* enums
@@ -57,6 +64,7 @@ vi.mock("@/lib/logger", () => ({
 	}),
 }));
 
+import { WebhookInProgressError } from "@/lib/services/webhook-processor";
 import type { WorkOSWebhookEvent } from "@/lib/validation/webhooks";
 import { handleQueueBatch } from "@/queue";
 
@@ -159,6 +167,25 @@ describe("handleQueueBatch — main webhook queue", () => {
 		await handleQueueBatch(batch, env, ctx);
 
 		expect(message.retry).toHaveBeenCalledOnce();
+		expect(message.ack).not.toHaveBeenCalled();
+	});
+
+	it("delays redelivery past the staleness window when the event lock is held (no ack)", async () => {
+		// A crashed attempt's fresh "processing" lock: acking would drop the
+		// event forever; an immediate retry would find the same non-stale lock.
+		const inProgress = new WebhookInProgressError(
+			"workos-webhook-evt_locked",
+			"in_progress",
+		);
+		processWorkosEventMock.mockRejectedValue(inProgress);
+		const message = fakeMessage(event("evt_locked"));
+		const batch = fakeBatch("sidedoor-webhooks-staging", [message]);
+
+		await handleQueueBatch(batch, env, ctx);
+
+		expect(message.retry).toHaveBeenCalledExactlyOnceWith({
+			delaySeconds: inProgress.retryDelaySeconds,
+		});
 		expect(message.ack).not.toHaveBeenCalled();
 	});
 

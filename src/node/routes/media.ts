@@ -253,15 +253,12 @@ media.post("/upload-image-direct", async (c) => {
 		);
 	}
 
-	// Decode base64 image data
-	let imageBuffer: Buffer;
-	try {
-		// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-		const base64Data = input.imageData.replace(/^data:[^;]*;base64,/, "");
-		imageBuffer = Buffer.from(base64Data, "base64");
-	} catch (_error) {
-		throw Errors.BadRequest("Invalid base64 image data");
-	}
+	// Decode base64 image data. Buffer.from(..., "base64") never throws on
+	// malformed input (it decodes leniently), so there's nothing to catch — the
+	// Zod base64 regex on the way in and the magic-byte check below are the real
+	// guards against non-image / corrupt data.
+	const base64Data = input.imageData.replace(/^data:[^;]*;base64,/, "");
+	const imageBuffer = Buffer.from(base64Data, "base64");
 
 	// Keep the legacy direct-upload cap (was bounded by Lambda's ~6MB payload
 	// limit; base64 adds ~33%, so ~4.5MB decoded). Larger files use presigning.

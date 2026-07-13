@@ -50,9 +50,9 @@ export const MAX_QUERY_DEPTH = 10;
  * Dev-like stages get introspection, GraphiQL, and unmasked error messages;
  * deployed stages (production/staging) get none of them. The Apollo handler
  * keyed this on `STAGE === "development"`; the Workers local stage is
- * `"local"` (wrangler.toml `[vars]`), so this checks "not deployed" instead —
- * identical behavior in staging/production, sane behavior under
- * `wrangler dev --local`. Read per call: on Workers `process.env` is
+ * `"local"` (wrangler.toml `[vars]`), so this accepts only explicit
+ * local/development values. Unknown or typoed stages fail closed like deployed
+ * stages. Read per call: on Workers `process.env` is
  * populated per invocation, so module-init reads could race the first
  * request.
  */
@@ -64,11 +64,29 @@ export function isDevelopmentStage(): boolean {
 const DEFAULT_LIST_MULTIPLIER = 10;
 const MAX_LIST_MULTIPLIER = 100;
 
+/**
+ * List-returning fields that DON'T take a `limit`/`first` bound, so the
+ * argument-based multiplier below can't see their fan-out. Without this they'd
+ * score as cost 1, letting a query nest the member graph
+ * (org.members → user.organizations → org.members → …) under the complexity
+ * ceiling while fanning out multiplicatively at execution. Treating them as
+ * implicit lists makes nested fan-out compound in the score the way it does in
+ * the DB. (Scalar lists like `languages` are leaves and don't fan out.)
+ */
+const IMPLICIT_LIST_FIELDS = new Set(["members", "organizations"]);
+
 function getListMultiplier(
 	field: FieldNode,
 	variables: Readonly<Record<string, unknown>>,
 ): number {
-	if (!field.arguments) return 1;
+	// No explicit limit/first found → known unbounded lists still fan out, so
+	// give them the default multiplier; everything else is cost 1.
+	const fallback = IMPLICIT_LIST_FIELDS.has(field.name.value)
+		? DEFAULT_LIST_MULTIPLIER
+		: 1;
+	if (!field.arguments || field.arguments.length === 0) {
+		return fallback;
+	}
 	for (const arg of field.arguments) {
 		if (arg.name.value === "limit" || arg.name.value === "first") {
 			if (arg.value.kind === Kind.INT) {
@@ -93,13 +111,13 @@ function getListMultiplier(
 			return DEFAULT_LIST_MULTIPLIER;
 		}
 	}
-	return 1;
+	return fallback;
 }
 
 function countSelections(
 	selectionSet: SelectionSetNode | undefined,
 	fragments: Map<string, FragmentDefinitionNode>,
-	seen: Set<string>,
+	activePath: Set<string>,
 	variables: Readonly<Record<string, unknown>>,
 ): number {
 	if (!selectionSet) return 0;
@@ -110,24 +128,36 @@ function countSelections(
 			const subtree = countSelections(
 				sel.selectionSet,
 				fragments,
-				seen,
+				activePath,
 				variables,
 			);
 			total += 1 + subtree * multiplier;
 		} else if (sel.kind === Kind.INLINE_FRAGMENT) {
-			total += countSelections(sel.selectionSet, fragments, seen, variables);
+			total += countSelections(
+				sel.selectionSet,
+				fragments,
+				activePath,
+				variables,
+			);
 		} else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+			// Guard only against CYCLES (a fragment spreading itself, directly or
+			// transitively) via the active recursion path. A fragment spread N
+			// times legitimately must count N times — deduping it globally lets a
+			// query alias hundreds of expensive spreads while scoring the cost of
+			// one, bypassing the complexity ceiling entirely.
 			const name = sel.name.value;
-			if (!seen.has(name)) {
-				seen.add(name);
+			if (!activePath.has(name)) {
 				const frag = fragments.get(name);
-				if (frag)
+				if (frag) {
+					activePath.add(name);
 					total += countSelections(
 						frag.selectionSet,
 						fragments,
-						seen,
+						activePath,
 						variables,
 					);
+					activePath.delete(name);
+				}
 			}
 		}
 	}
@@ -246,11 +276,57 @@ export const complexityPlugin: Plugin<GraphQLContext> = {
 	},
 };
 
+/**
+ * Count the top-level FIELDS of an operation, resolving fragment spreads and
+ * inline fragments (cycle-guarded via the active recursion path). Counting raw
+ * selections would let `mutation { ...m }` smuggle any number of mutation
+ * fields past the limit as a single spread node.
+ */
+function countTopLevelFields(
+	selectionSet: SelectionSetNode,
+	fragments: Map<string, FragmentDefinitionNode>,
+	activePath: Set<string>,
+): number {
+	let count = 0;
+	for (const sel of selectionSet.selections) {
+		if (sel.kind === Kind.FIELD) {
+			count += 1;
+		} else if (sel.kind === Kind.INLINE_FRAGMENT) {
+			count += countTopLevelFields(sel.selectionSet, fragments, activePath);
+		} else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+			const name = sel.name.value;
+			if (!activePath.has(name)) {
+				const frag = fragments.get(name);
+				if (frag) {
+					activePath.add(name);
+					count += countTopLevelFields(
+						frag.selectionSet,
+						fragments,
+						activePath,
+					);
+					activePath.delete(name);
+				}
+			}
+		}
+	}
+	return count;
+}
+
 export const mutationLimitPlugin: Plugin<GraphQLContext> = {
 	onExecute({ args, setResultAndStopExecution }) {
 		const operation = getOperationAST(args.document, args.operationName);
 		if (operation?.operation === "mutation") {
-			const count = operation.selectionSet.selections.length;
+			const fragments = new Map<string, FragmentDefinitionNode>();
+			for (const def of args.document.definitions) {
+				if (def.kind === Kind.FRAGMENT_DEFINITION) {
+					fragments.set(def.name.value, def);
+				}
+			}
+			const count = countTopLevelFields(
+				operation.selectionSet,
+				fragments,
+				new Set(),
+			);
 			if (count > MAX_MUTATIONS_PER_REQUEST) {
 				setResultAndStopExecution({
 					errors: [

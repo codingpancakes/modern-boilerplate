@@ -1,13 +1,25 @@
 /**
  * Input Sanitization Utilities
  *
- * Provides XSS prevention and input sanitization for user-provided data.
+ * Structural sanitization for user-provided data that is about to be
+ * PERSISTED: control-character removal, HTML tag stripping, URL scheme
+ * validation, length caps.
+ *
+ * Deliberately NOT entity-escaping: stored data stays plain text exactly as
+ * the user meant it (`O'Brien` is `O'Brien`, `A & B Co` is `A & B Co`).
+ * Escaping is a RENDER-time concern — escaping at rest corrupts search and
+ * uniqueness semantics and double-escapes on every read-modify-write
+ * round-trip. Use {@link escapeHtml} at the point a value is interpolated
+ * into HTML.
  */
 
 /**
- * Sanitize string input to prevent XSS attacks
+ * Sanitize a plain-text string for persistence.
  *
- * Removes or escapes potentially dangerous characters and HTML tags
+ * Always removes control characters and HTML tags (including script/style
+ * blocks with their contents); with `allowHtml: true` a whitelist of
+ * formatting tags survives instead (for rich-text fields). Never
+ * entity-escapes — see the module docblock.
  *
  * @param input - The string to sanitize
  * @param options - Sanitization options
@@ -27,26 +39,43 @@ export function sanitizeString(
 
 	let sanitized = input;
 
-	// Trim whitespace
-	sanitized = sanitized.trim();
+	// Remove NUL and C0 control characters (keep \t \r \n — ordinary
+	// whitespace, optionally handled below).
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: that's the point
+	sanitized = sanitized.replace(/[\0\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
-	// Enforce max length
-	if (options.maxLength && sanitized.length > options.maxLength) {
-		sanitized = sanitized.substring(0, options.maxLength);
-	}
+	sanitized = options.allowHtml
+		? stripUnsafeTags(sanitized)
+		: stripAllTags(sanitized);
+
+	// Trim whitespace (after tag stripping, which can expose leading/trailing
+	// whitespace that surrounded a removed tag)
+	sanitized = sanitized.trim();
 
 	// Strip newlines if requested
 	if (options.stripNewlines) {
 		sanitized = sanitized.replace(/[\r\n]/g, " ");
 	}
 
-	if (!options.allowHtml) {
-		sanitized = escapeHtml(sanitized);
-	} else {
-		sanitized = stripUnsafeTags(sanitized);
+	// Enforce max length
+	if (options.maxLength && sanitized.length > options.maxLength) {
+		sanitized = sanitized.substring(0, options.maxLength);
 	}
 
 	return sanitized;
+}
+
+/**
+ * Remove every HTML tag; script/style blocks lose their CONTENTS too (the
+ * text inside them is code, not prose). Idempotent — running it twice never
+ * changes the result again, unlike escaping. Non-markup uses of `<` with no
+ * closing `>` ("a < b", "I <3 you") survive untouched.
+ */
+function stripAllTags(input: string): string {
+	return input
+		.replace(/<script[\s>][\s\S]*?<\/script\s*>/gi, "")
+		.replace(/<style[\s>][\s\S]*?<\/style\s*>/gi, "")
+		.replace(/<\/?[a-zA-Z][a-zA-Z0-9]*\b[^>]*>/g, "");
 }
 
 const SAFE_TAG_RE =
@@ -67,12 +96,16 @@ function stripUnsafeTags(input: string): string {
 }
 
 /**
- * Escape HTML special characters to prevent XSS
+ * Escape HTML special characters to prevent XSS.
+ *
+ * RENDER-time utility: call this where a stored value is interpolated into
+ * HTML (emails, server-rendered pages). Data at rest is stored unescaped —
+ * see the module docblock.
  *
  * @param input - The string to escape
  * @returns HTML-escaped string
  */
-function escapeHtml(input: string): string {
+export function escapeHtml(input: string): string {
 	const htmlEscapeMap: Record<string, string> = {
 		"&": "&amp;",
 		"<": "&lt;",
@@ -154,7 +187,8 @@ export function sanitizeFilename(
  * @param options - Sanitization options
  * @returns Sanitized object
  */
-// Keys whose string values should NOT be HTML-escaped (URLs, JSON, etc.)
+// Keys whose string values are treated as URLs (scheme-validated) rather than
+// run through tag/control-char stripping.
 const RAW_STRING_KEYS = new Set([
 	"photoUrl",
 	"photo_url",
@@ -313,19 +347,3 @@ export const ALLOWED_FILE_EXTENSIONS = {
 	VIDEO: ["mp4", "webm", "mov", "avi"],
 	AVATAR: ["jpg", "jpeg", "png", "webp"],
 } as const;
-
-/**
- * Validate file extension
- *
- * @param filename - The filename
- * @param category - File category
- * @returns true if valid, false otherwise
- */
-export function validateFileExtension(
-	filename: string,
-	category: keyof typeof ALLOWED_FILE_EXTENSIONS,
-): boolean {
-	const extension = filename.split(".").pop()?.toLowerCase() || "";
-	const allowed = ALLOWED_FILE_EXTENSIONS[category] as readonly string[];
-	return allowed.includes(extension);
-}

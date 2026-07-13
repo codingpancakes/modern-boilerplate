@@ -36,10 +36,11 @@ src/node/
   lib/               Shared cross-cutting libs (db, errors, audit, sanitize, idempotency, cors).
   lib/hono/          auth (requireAuth), middleware, respond, types (AppEnv).
   lib/validation/    Zod schemas by domain. Export {domain}Schemas, re-export from index.ts.
-  lib/services/      Business logic (user-provisioning.ts). Routes stay thin; logic lives here.
+  lib/services/      Business logic (organizations, user-account, user-provisioning,
+                     webhook-processor, media-upload). Routes/resolvers stay thin; logic lives here.
   db/schema/         Drizzle schema. db/migrations/ holds SQL + journal (drizzle-kit generated).
 wrangler.toml        Worker config: [vars], R2 bindings, [triggers], env.staging/env.production.
-docs/                Human docs. .cursor/rules/ holds per-domain agent patterns (partly Lambda-era).
+docs/                Human docs. .cursor/rules/ holds per-domain agent patterns.
 ```
 
 Layering is strict: `routes → lib/services → lib → db`. Routes orchestrate; they don't hold logic.
@@ -127,9 +128,11 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
 
 ## Scaling patterns (replicate these — they're the quality bar)
 
-- **Idempotency:** wrap non-idempotent REST mutations in `withIdempotency({...}, async () => {...})`
-  (see `routes/users.ts` PATCH /me). Use the atomic-upsert pattern already in `lib/idempotency.ts`;
-  never SELECT-then-INSERT.
+- **Idempotency:** wrap non-idempotent REST mutations in `withTransactionalIdempotentJson(...)`
+  (`lib/hono/idempotent-response.ts` — see `routes/users.ts` PATCH /me): the mutation and the stored
+  response commit in ONE transaction, so a crash can't leave a "processing" key a retry
+  double-executes. Run the write on the `tx` the wrapper passes in. Use the atomic-upsert pattern in
+  `lib/idempotency.ts`; never SELECT-then-INSERT.
 - **N+1 prevention:** in GraphQL field resolvers, use `context.loaders.*` (DataLoader) — never
   query per-row.
 - **Sensitive data:** secrets are redacted by key name from `changes` AND `metadata` before audit
@@ -139,7 +142,7 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
 - **Constant-time comparison** (`lib/constant-time.ts`) for every secret/key check — see
   `routes/test.ts` and the webhook signature verification.
 - **Workers limits:** 128MB isolate memory, CPU-time caps. Heavy media/batch work does not belong
-  in the request path — push it to a cron job or (future) Queues.
+  in the request path — push it to a cron job or the Cloudflare Queue (`src/node/queue.ts`).
 
 ---
 
@@ -195,6 +198,5 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
   `SOC2_READINESS_CHECKLIST`, `ENVIRONMENT_VARIABLES`, `guides/TESTING`).
 - Direction: `docs/direction/` (`NORTH_STAR`, `MIGRATION_PLAN`).
 - Pre-migration AWS docs: `docs/legacy-aws/` (reference only — do not follow them).
-- Per-domain patterns: `.cursor/rules/` — **caution:** `infrastructure.mdc` and the
-  Lambda-specific parts of `handlers.mdc`/`backend-core.mdc` predate the migration; where they
-  conflict with this file, this file wins.
+- Per-domain patterns: `.cursor/rules/` — Cloudflare-native since the migration;
+  where they conflict with this file, this file wins.

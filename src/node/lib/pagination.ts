@@ -1,8 +1,3 @@
-export interface PaginationParams {
-	cursor?: string;
-	limit: number;
-}
-
 export interface PaginatedResponse<T> {
 	items: T[];
 	nextCursor?: string;

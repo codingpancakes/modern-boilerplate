@@ -2,7 +2,28 @@ import { createHash } from "node:crypto";
 import { and, eq, inArray, lt, or, type SQL } from "drizzle-orm";
 import { idempotencyKeys } from "../db/schema/index";
 import { type DbClient, type DbTransaction, getDb } from "./db";
+import { errorMessage } from "./error-utils";
 import { ApiError } from "./errors";
+import { createLogger } from "./logger";
+
+const logger = createLogger({ serviceName: "idempotency" });
+
+/**
+ * Best-effort release of a claim after a handler failure. Never throws: the
+ * handler's error is the one the caller must see — if the release itself
+ * fails (e.g. the same DB outage that failed the handler), the key simply
+ * stays "processing" until the stale-processing window lets a retry steal it.
+ */
+async function releaseFailedClaim(db: DbClient, key: string): Promise<void> {
+	try {
+		await failIdempotencyKey(db, key);
+	} catch (releaseError) {
+		logger.error("Failed to release idempotency claim after handler error", {
+			key,
+			error: errorMessage(releaseError),
+		});
+	}
+}
 
 export interface IdempotencyOptions {
 	ttlSeconds?: number;
@@ -45,6 +66,17 @@ const PROCESSING = "processing";
 const FAILED = "failed";
 const COMPLETED = "completed";
 
+/**
+ * How long an HTTP request's "processing" claim may sit before a retry with
+ * the same Idempotency-Key may steal it. Without this, a Worker evicted
+ * between claiming and committing (deploy, isolate eviction) leaves the key
+ * answering 409 REQUEST_IN_PROGRESS until the 24h TTL lapses — for an
+ * operation that never happened. Kept far above any legitimate handler
+ * runtime (requests are bounded to seconds) so an in-flight request can't be
+ * double-executed by an impatient retry.
+ */
+const HTTP_STALE_PROCESSING_MS = 2 * 60 * 1000;
+
 type IdempotencyDb = Awaited<ReturnType<typeof getDb>>;
 
 type CompletedMode = "return" | "returnStoredResponse" | "reclaim";
@@ -69,46 +101,6 @@ export interface ClaimIdempotencyKeyOptions {
 	staleProcessingMs?: number;
 	resetCreatedAtOnReclaim?: boolean;
 	insertIfMissing?: boolean;
-}
-
-/**
- * Generic idempotency wrapper for non-DB or low-risk handlers.
- *
- * DB mutations whose side effects must commit atomically with the stored
- * idempotency response should use {@link withTransactionalIdempotency}.
- */
-export async function withIdempotency(
-	request: IdempotentRequest,
-	handler: () => Promise<StoredResponse>,
-	options: IdempotencyOptions = {},
-): Promise<StoredResponse> {
-	const idempotencyKey = request.key;
-
-	// If no idempotency key, just execute the handler
-	if (!idempotencyKey) {
-		return handler();
-	}
-
-	const db = await getDb();
-	const claimed = await claimRequestIdempotencyKey(db, request, options);
-	if (claimed.status === "completed") {
-		return claimed.response;
-	}
-
-	try {
-		// Execute the handler
-		const response = await handler();
-
-		// Store successful response
-		await completeIdempotencyKey(db, claimed.key, response);
-
-		return response;
-	} catch (error) {
-		// Mark as failed
-		await failIdempotencyKey(db, claimed.key);
-
-		throw error;
-	}
 }
 
 /**
@@ -143,7 +135,7 @@ export async function withTransactionalIdempotency(
 			return response;
 		});
 	} catch (error) {
-		await failIdempotencyKey(db, claimed.key);
+		await releaseFailedClaim(db, claimed.key);
 		throw error;
 	}
 }
@@ -181,6 +173,8 @@ async function claimRequestIdempotencyKey(
 		reclaimFailed: true,
 		reclaimCompleted: true,
 		reclaimExpiredProcessing: true,
+		staleProcessingMs: HTTP_STALE_PROCESSING_MS,
+		resetCreatedAtOnReclaim: true,
 		insertIfMissing: false,
 	});
 	if (legacyResolution.status === "completed" && legacyResolution.response) {
@@ -206,6 +200,8 @@ async function claimRequestIdempotencyKey(
 			reclaimFailed: true,
 			reclaimCompleted: true,
 			reclaimExpiredProcessing: true,
+			staleProcessingMs: HTTP_STALE_PROCESSING_MS,
+			resetCreatedAtOnReclaim: true,
 		});
 		if (resolution.status === "completed" && resolution.response) {
 			return { status: "completed", response: resolution.response };
@@ -401,14 +397,23 @@ function parseStoredResponse(
 }
 
 function hashRequest(request: IdempotentRequest): string {
-	// Key order and field values are part of the stored-hash contract — see
-	// the IdempotentRequest docblock before changing ANYTHING here.
+	// Top-level key order and field values are part of the stored-hash
+	// contract — see the IdempotentRequest docblock before changing ANYTHING
+	// here. Query-param keys are sorted so the same logical request hashes
+	// identically regardless of the order params appear in the URL (otherwise
+	// a reordered retry gets a spurious 422 IDEMPOTENCY_KEY_REUSED).
 	const data = {
 		sub: request.sub || "anonymous",
 		method: request.method,
 		path: request.path,
 		body: request.body,
-		queryParams: request.query,
+		queryParams: request.query
+			? Object.fromEntries(
+					Object.entries(request.query).sort(([a], [b]) =>
+						a < b ? -1 : a > b ? 1 : 0,
+					),
+				)
+			: undefined,
 	};
 
 	return createHash("sha256").update(JSON.stringify(data)).digest("hex");
@@ -428,14 +433,36 @@ function sha256Hex(value: string): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-// Janitor function to clean up expired keys
+const JANITOR_BATCH_SIZE = 1000;
+
+/**
+ * Janitor: delete expired keys in batches. One unbounded DELETE over a large
+ * backlog (e.g. after the cron failed for a stretch) can exceed the 8s
+ * statement timeout and then fail every night while the table keeps growing —
+ * the same reason the audit-retention job batches its deletes.
+ */
 export async function cleanupExpiredKeys(): Promise<number> {
 	const db = await getDb();
-	const now = new Date().toISOString();
+	let total = 0;
 
-	const result = await db
-		.delete(idempotencyKeys)
-		.where(lt(idempotencyKeys.expiresAt, now));
+	for (;;) {
+		const now = new Date().toISOString();
+		const batch = await db
+			.select({ key: idempotencyKeys.key })
+			.from(idempotencyKeys)
+			.where(lt(idempotencyKeys.expiresAt, now))
+			.limit(JANITOR_BATCH_SIZE);
+		if (batch.length === 0) break;
 
-	return result.rowCount || 0;
+		const result = await db.delete(idempotencyKeys).where(
+			inArray(
+				idempotencyKeys.key,
+				batch.map((row) => row.key),
+			),
+		);
+		total += result.rowCount || 0;
+		if (batch.length < JANITOR_BATCH_SIZE) break;
+	}
+
+	return total;
 }

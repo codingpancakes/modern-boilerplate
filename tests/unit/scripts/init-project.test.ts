@@ -2,7 +2,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { initProject } from "../../../scripts/init-project";
+import {
+	apiSubdomainError,
+	domainError,
+	gatherInputs,
+	initProject,
+	projectNameError,
+} from "../../../scripts/init-project";
 
 const repoRoot = path.resolve(__dirname, "../../..");
 const noopLogger = { log() {} };
@@ -139,5 +145,40 @@ describe("initProject", () => {
 		expect(
 			fs.readFileSync(path.join(root, ".env.production"), "utf-8"),
 		).toContain("WORKOS_CLIENT_ID=client_xxx");
+	});
+});
+
+describe("input validators", () => {
+	it("accepts good values and rejects bad ones", () => {
+		expect(projectNameError("acme-api")).toBeNull();
+		expect(projectNameError("Ab")).not.toBeNull(); // too short / uppercase
+		expect(projectNameError("1abc")).not.toBeNull(); // must start with a letter
+		expect(domainError("acme.dev")).toBeNull();
+		expect(domainError("nope")).not.toBeNull();
+		expect(apiSubdomainError("api")).toBeNull();
+		expect(apiSubdomainError("API")).not.toBeNull();
+	});
+});
+
+describe("gatherInputs (interactive)", () => {
+	it("re-prompts on invalid input and applies the default API subdomain", async () => {
+		// Scripted answers: bad name, then good name; good domain; blank subdomain
+		// (→ default "api").
+		const answers = ["BAD NAME", "acme-api", "acme.dev", ""];
+		const asked: string[] = [];
+		const ask = (q: string) => {
+			asked.push(q);
+			return Promise.resolve(answers.shift() ?? "");
+		};
+
+		const result = await gatherInputs(ask, { log() {} });
+
+		expect(result).toEqual({
+			projectName: "acme-api",
+			domain: "acme.dev",
+			apiSubdomain: "api",
+		});
+		// The project-name question was asked twice (invalid → re-prompt).
+		expect(asked.filter((q) => q.startsWith("Project name"))).toHaveLength(2);
 	});
 });
