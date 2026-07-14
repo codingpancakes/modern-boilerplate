@@ -144,5 +144,4 @@ not secrets. In CI they are GitHub repo variables/secrets; locally you `export` 
 | `ENABLE_WAF`, `ALERT_EMAIL`, SSM parameters | Cloudflare WAF/DDoS is account-level platform config, not deploy-time toggles |
 | `HOSTED_ZONE_ID`, `HOSTED_ZONE_NAME`, `GITHUB_*` (as deploy inputs) | No CDK/CodePipeline/Route53. (`pnpm docs:generate` takes optional `PROJECT_NAME` and `API_BASE_URL_*` overrides via the environment; without `PROJECT_NAME`, the spec title uses `package.json`) |
 
-The AWS-era version of this document is preserved in git history and the surrounding
-setup in [legacy-aws/BOILERPLATE_SETUP.md](./legacy-aws/BOILERPLATE_SETUP.md).
+The AWS-era version of this document is preserved in git history.

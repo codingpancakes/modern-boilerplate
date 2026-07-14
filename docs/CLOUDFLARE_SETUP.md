@@ -89,13 +89,27 @@ GitHub Actions maps branches to environments:
 
 | Branch / trigger | Action |
 |---|---|
-| Pull request into `staging` or `main` | CI gate only |
-| Push/merge to `staging` | CI gate, then `pnpm deploy:staging` |
-| Push/merge to `main` | CI gate, then `pnpm deploy:production` |
-| Manual workflow dispatch | Choose `staging` or `production` |
+| Pull request into `staging` or `main` | CI gate only (no deploy) |
+| Push/merge to `staging` | CI gate → auto-deploy `pnpm deploy:staging` |
+| Push/merge to `main` | CI gate → production deploy **held for manual approval** |
+| Manual workflow dispatch | CI gate → deploy chosen `staging` / `production` |
 
-Configure GitHub Environments named `staging` and `production`. Production should
-require manual approval in GitHub settings before deployment proceeds.
+Configure GitHub Environments named `staging` and `production`. What happens at
+runtime when you merge:
+
+- **Merge to `staging`** → the gate runs, then the Worker auto-deploys to staging.
+- **Merge to `main`** → the gate runs, then the production deploy **parks in a
+  `waiting` state and ships nothing until a required reviewer approves it.** Approve
+  or reject in the repo's **Actions** tab ("Review deployments" → Approve/Reject), or
+  via `gh run view <run-id>` / the `.../actions/runs/<run-id>/pending_deployments`
+  API. Cancelling or rejecting the run leaves production untouched — so merging to
+  `main` is **not** an automatic prod ship.
+- Deploys need `CLOUDFLARE_API_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID`, `DATABASE_URL`) in
+  the GitHub environment. **Staging soft-skips** the deploy with a notice if the
+  token is absent; **production hard-fails**.
+- On the unconfigured boilerplate the Worker is still named `replace-me-backend`, so
+  only approve a production deploy once `wrangler.toml` and secrets are set for a real
+  project.
 
 ### 7a. Push secrets
 

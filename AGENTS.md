@@ -196,7 +196,6 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
 - Setup from zero: `docs/CLOUDFLARE_SETUP.md`.
 - Deep docs: `docs/` (`AUDIT_LOGGING_GUIDE`, `SECURITY`, `DATA_RETENTION_POLICY`,
   `SOC2_READINESS_CHECKLIST`, `ENVIRONMENT_VARIABLES`, `guides/TESTING`).
-- Direction: `docs/direction/` (`NORTH_STAR`, `MIGRATION_PLAN`).
-- Pre-migration AWS docs: `docs/legacy-aws/` (reference only — do not follow them).
+- Architecture & rationale: `docs/ARCHITECTURE.md`.
 - Per-domain patterns: `.cursor/rules/` — Cloudflare-native since the migration;
   where they conflict with this file, this file wins.
