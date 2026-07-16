@@ -3,8 +3,7 @@
 **Last updated:** June 2026
 **Runtime:** Cloudflare Workers, Neon Postgres, Cloudflare R2, Cloudflare Queues
 
-This document describes the current Cloudflare stack. Legacy AWS retention notes live
-under `docs/legacy-aws/` and are not operational guidance for this branch.
+This document describes the current Cloudflare stack.
 
 ## Retention Summary
 

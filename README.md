@@ -2,7 +2,7 @@
 
 Production-grade API running as **one Cloudflare Worker** — Hono + Neon Postgres +
 WorkOS authentication. Built to be owned end-to-end by one person
-(see [docs/direction/NORTH_STAR.md](./docs/direction/NORTH_STAR.md)).
+(see [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)).
 
 All project naming flows from `PROJECT_NAME` — run `pnpm init-project` (interactive
 wizard, or pass `<name> <domain>`) to spin off a new project. Full walkthrough:
@@ -80,7 +80,7 @@ wrangler.toml            Worker config: vars, R2 bindings, cron triggers, stagin
 scripts/                 migrate, sync-secrets, init-project, set-domain, generate-openapi
 templates/               Hono route templates for new domains (see templates/README.md)
 tests/                   Unit (vitest) + integration (vitest + shell scripts)
-docs/                    Human docs (legacy AWS docs under docs/legacy-aws/)
+docs/                    Human docs (setup, security, architecture, testing)
 ```
 
 ## Architecture
@@ -133,9 +133,7 @@ domain — mount it in `routes/index.ts` (with `requireAuth()` if protected). Th
 | [Testing Guide](./docs/guides/TESTING.md) | Unit + integration testing |
 | [Data Retention](./docs/DATA_RETENTION_POLICY.md) | Retention policies per data type |
 | [SOC 2 Checklist](./docs/SOC2_READINESS_CHECKLIST.md) | Compliance readiness tracker |
-| [North Star](./docs/direction/NORTH_STAR.md) | Why this stack; one-person maintainability principles |
-| [Migration Plan](./docs/direction/MIGRATION_PLAN.md) | AWS → Cloudflare migration record + remaining work |
-| [Legacy AWS docs](./docs/legacy-aws/) | Pre-migration stack (kept for decommissioning/reference) |
+| [Architecture & Rationale](./docs/ARCHITECTURE.md) | Why this stack; one-person maintainability principles |
 
 ## AI Coding Rules
 

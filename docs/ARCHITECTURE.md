@@ -1,10 +1,9 @@
-# North Star — The One-Person Backend
+# Architecture & Rationale — The One-Person Backend
 
-> Status: **largely realized (June 2026).** The migration executed: this branch runs the
-> whole backend as one Cloudflare Worker (Hono + Neon), all AWS code deleted. The
-> "Today (AWS)" column below is historical context. Queues, CI, and the deploy
-> safety/operational shell have since shipped; Hyperdrive remains the one open
-> placeholder, tracked in [MIGRATION_PLAN.md](./MIGRATION_PLAN.md).
+The design philosophy behind this boilerplate: run the entire backend as one
+Cloudflare Worker (Hono + Neon) that a single person can own end-to-end. The
+"Today (AWS)" column in the table below is kept as *rationale* — why each piece is
+what it is, framed against the AWS equivalent it replaces.
 
 ## Goal
 
@@ -81,4 +80,4 @@ Not migrated — *deleted*, because the platform makes the problem not exist:
 3. **Boring database.** Postgres + Drizzle + SQL migrations. No exotic storage until a measured need exists.
 4. **Deleting beats configuring.** Every config file, stack, and secret is a thing one person has to remember.
 5. **Security lives in app code.** Validation, authz, audit, idempotency — portable, testable, auditable TypeScript.
-6. **Deploys must be boring.** Seconds-fast, gradual rollout, scripted auto-rollback (see migration plan — this is the one thing we must rebuild deliberately).
+6. **Deploys must be boring.** Seconds-fast, gradual rollout, scripted auto-rollback (`scripts/deploy.ts`).
