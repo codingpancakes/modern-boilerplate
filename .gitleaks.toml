@@ -1,0 +1,5 @@
+[allowlist]
+description = "Known fake API key used by the legacy middleware integration script."
+condition = "AND"
+paths = ['''tests/integration/test-middleware\.sh''']
+regexes = ['''test-api-key-12345''']

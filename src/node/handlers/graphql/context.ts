@@ -145,8 +145,7 @@ export async function createContext(
 		claims,
 		requestId: c.get("requestId"),
 		// CF-Connecting-IP is set by Cloudflare (and simulated by wrangler dev);
-		// fall back to X-Forwarded-For's first hop — replaces the API Gateway
-		// `requestContext.http.sourceIp`.
+		// fall back to X-Forwarded-For's first hop in direct harnesses.
 		ipAddress:
 			c.req.header("cf-connecting-ip") ??
 			c.req.header("x-forwarded-for")?.split(",")[0]?.trim(),

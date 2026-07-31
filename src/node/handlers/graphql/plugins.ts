@@ -19,20 +19,19 @@ import {
 } from "../../lib/graphql-error-codes";
 import { createLogger } from "../../lib/logger";
 import { captureException, flush as flushSentry } from "../../lib/sentry";
+import { isDevLikeStage } from "../../lib/stage";
 import type { GraphQLContext } from "./context";
 
 /**
- * GraphQL Yoga / envelop plugins — the port of the former Apollo Server
- * plugins (same file, same exported limits). Behavior is wire-compatible
- * with the Apollo harness (`handler.ts`, now removed):
+ * GraphQL Yoga / envelop plugins. These limits and response semantics are
+ * part of the public GraphQL contract:
  *
  *   - depth limit 10            → validation error, HTTP 400, GRAPHQL_VALIDATION_FAILED
- *   - complexity limit 150      → BAD_USER_INPUT, HTTP 500 (Apollo's
- *     `didResolveOperation` throw path returned 500 — kept byte-compatible)
- *   - max 5 mutations/request   → BAD_USER_INPUT, HTTP 500 (same reason)
+ *   - complexity limit 150      → BAD_USER_INPUT, HTTP 500
+ *   - max 5 mutations/request   → BAD_USER_INPUT, HTTP 500
  *   - parse failures            → GRAPHQL_PARSE_FAILED, HTTP 400
- *   - error masking             → identical to Apollo `formatError`: errors
- *     serialize as `{ message, extensions: { code } }` (no locations/path);
+ *   - error masking             → errors serialize as
+ *     `{ message, extensions: { code } }` (no locations/path);
  *     outside dev, messages for non-safe codes collapse to
  *     "Internal server error"
  *   - Sentry capture            → non-client-code execution errors, flushed
@@ -47,33 +46,52 @@ export const MAX_QUERY_DEPTH = 10;
 
 /**
  * Dev-like stages get introspection, GraphiQL, and unmasked error messages;
- * deployed stages (production/staging) get none of them. The Apollo handler
- * keyed this on `STAGE === "development"`; the Workers local stage is
- * `"local"` (wrangler.toml `[vars]`), so this checks "not deployed" instead —
- * identical behavior in staging/production, sane behavior under
- * `wrangler dev --local`. Read per call: on Workers `process.env` is
+ * deployed stages (production/staging) get none of them. The Workers local
+ * stage is `"local"` (wrangler.toml `[vars]`), so this accepts only explicit
+ * local/development values. Unknown or typoed stages fail closed like deployed
+ * stages. Read per call: on Workers `process.env` is
  * populated per invocation, so module-init reads could race the first
  * request.
  */
 export function isDevelopmentStage(): boolean {
-	const stage = process.env.STAGE ?? "";
-	return stage !== "production" && stage !== "staging";
+	return isDevLikeStage();
 }
 
 // --- Query complexity (inline — no extra dep) ---
 const DEFAULT_LIST_MULTIPLIER = 10;
 const MAX_LIST_MULTIPLIER = 100;
 
+/**
+ * List-returning fields that DON'T take a `limit`/`first` bound, so the
+ * argument-based multiplier below can't see their fan-out. Without this they'd
+ * score as cost 1, letting a query nest the member graph
+ * (org.members → user.organizations → org.members → …) under the complexity
+ * ceiling while fanning out multiplicatively at execution. Treating them as
+ * implicit lists makes nested fan-out compound in the score the way it does in
+ * the DB. (Scalar lists like `languages` are leaves and don't fan out.)
+ */
+const IMPLICIT_LIST_FIELDS = new Set(["members", "organizations"]);
+
 function getListMultiplier(
 	field: FieldNode,
 	variables: Readonly<Record<string, unknown>>,
 ): number {
-	if (!field.arguments) return 1;
+	// No explicit limit/first found → known unbounded lists still fan out, so
+	// give them the default multiplier; everything else is cost 1.
+	const fallback = IMPLICIT_LIST_FIELDS.has(field.name.value)
+		? DEFAULT_LIST_MULTIPLIER
+		: 1;
+	if (!field.arguments || field.arguments.length === 0) {
+		return fallback;
+	}
 	for (const arg of field.arguments) {
 		if (arg.name.value === "limit" || arg.name.value === "first") {
 			if (arg.value.kind === Kind.INT) {
 				return Math.min(
-					Number.parseInt(arg.value.value, 10) || DEFAULT_LIST_MULTIPLIER,
+					Math.max(
+						1,
+						Number.parseInt(arg.value.value, 10) || DEFAULT_LIST_MULTIPLIER,
+					),
 					MAX_LIST_MULTIPLIER,
 				);
 			}
@@ -90,13 +108,13 @@ function getListMultiplier(
 			return DEFAULT_LIST_MULTIPLIER;
 		}
 	}
-	return 1;
+	return fallback;
 }
 
 function countSelections(
 	selectionSet: SelectionSetNode | undefined,
 	fragments: Map<string, FragmentDefinitionNode>,
-	seen: Set<string>,
+	activePath: Set<string>,
 	variables: Readonly<Record<string, unknown>>,
 ): number {
 	if (!selectionSet) return 0;
@@ -107,24 +125,36 @@ function countSelections(
 			const subtree = countSelections(
 				sel.selectionSet,
 				fragments,
-				seen,
+				activePath,
 				variables,
 			);
 			total += 1 + subtree * multiplier;
 		} else if (sel.kind === Kind.INLINE_FRAGMENT) {
-			total += countSelections(sel.selectionSet, fragments, seen, variables);
+			total += countSelections(
+				sel.selectionSet,
+				fragments,
+				activePath,
+				variables,
+			);
 		} else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+			// Guard only against CYCLES (a fragment spreading itself, directly or
+			// transitively) via the active recursion path. A fragment spread N
+			// times legitimately must count N times — deduping it globally lets a
+			// query alias hundreds of expensive spreads while scoring the cost of
+			// one, bypassing the complexity ceiling entirely.
 			const name = sel.name.value;
-			if (!seen.has(name)) {
-				seen.add(name);
+			if (!activePath.has(name)) {
 				const frag = fragments.get(name);
-				if (frag)
+				if (frag) {
+					activePath.add(name);
 					total += countSelections(
 						frag.selectionSet,
 						fragments,
-						seen,
+						activePath,
 						variables,
 					);
+					activePath.delete(name);
+				}
 			}
 		}
 	}
@@ -162,9 +192,8 @@ function httpStatus(error: GraphQLError): number | undefined {
 
 /**
  * Depth limit + production introspection lockout, applied as validation
- * rules. The after-hook re-tags every validation error exactly like Apollo's
- * `ValidationError` wrapper did: code GRAPHQL_VALIDATION_FAILED (unless the
- * rule set one) and HTTP 400.
+ * rules. The after-hook gives every validation error the stable
+ * GRAPHQL_VALIDATION_FAILED code (unless the rule set one) and HTTP 400.
  */
 export const validationLimitsPlugin: Plugin = {
 	onValidate({ addValidationRule }) {
@@ -193,8 +222,7 @@ export const validationLimitsPlugin: Plugin = {
 };
 
 /**
- * Tag syntax errors like Apollo's `SyntaxError` wrapper:
- * GRAPHQL_PARSE_FAILED with HTTP 400.
+ * Tag syntax errors as GRAPHQL_PARSE_FAILED with HTTP 400.
  */
 export const parseErrorPlugin: Plugin = {
 	onParse() {
@@ -229,8 +257,7 @@ export const complexityPlugin: Plugin<GraphQLContext> = {
 			args.variableValues ?? {},
 		);
 		if (complexity > MAX_QUERY_COMPLEXITY) {
-			// Apollo surfaced this as a thrown didResolveOperation error: body
-			// { errors: [{ message, extensions: { code } }] } with HTTP 500.
+			// Limit failures use the established GraphQL error shape and HTTP 500.
 			setResultAndStopExecution({
 				errors: [
 					new GraphQLError(
@@ -243,11 +270,57 @@ export const complexityPlugin: Plugin<GraphQLContext> = {
 	},
 };
 
+/**
+ * Count the top-level FIELDS of an operation, resolving fragment spreads and
+ * inline fragments (cycle-guarded via the active recursion path). Counting raw
+ * selections would let `mutation { ...m }` smuggle any number of mutation
+ * fields past the limit as a single spread node.
+ */
+function countTopLevelFields(
+	selectionSet: SelectionSetNode,
+	fragments: Map<string, FragmentDefinitionNode>,
+	activePath: Set<string>,
+): number {
+	let count = 0;
+	for (const sel of selectionSet.selections) {
+		if (sel.kind === Kind.FIELD) {
+			count += 1;
+		} else if (sel.kind === Kind.INLINE_FRAGMENT) {
+			count += countTopLevelFields(sel.selectionSet, fragments, activePath);
+		} else if (sel.kind === Kind.FRAGMENT_SPREAD) {
+			const name = sel.name.value;
+			if (!activePath.has(name)) {
+				const frag = fragments.get(name);
+				if (frag) {
+					activePath.add(name);
+					count += countTopLevelFields(
+						frag.selectionSet,
+						fragments,
+						activePath,
+					);
+					activePath.delete(name);
+				}
+			}
+		}
+	}
+	return count;
+}
+
 export const mutationLimitPlugin: Plugin<GraphQLContext> = {
 	onExecute({ args, setResultAndStopExecution }) {
 		const operation = getOperationAST(args.document, args.operationName);
 		if (operation?.operation === "mutation") {
-			const count = operation.selectionSet.selections.length;
+			const fragments = new Map<string, FragmentDefinitionNode>();
+			for (const def of args.document.definitions) {
+				if (def.kind === Kind.FRAGMENT_DEFINITION) {
+					fragments.set(def.name.value, def);
+				}
+			}
+			const count = countTopLevelFields(
+				operation.selectionSet,
+				fragments,
+				new Set(),
+			);
 			if (count > MAX_MUTATIONS_PER_REQUEST) {
 				setResultAndStopExecution({
 					errors: [
@@ -317,8 +390,8 @@ function formatResultError(
 
 	// Preserve the HTTP status the earlier plugins attached (Yoga strips the
 	// `http` extension before serializing). Untagged pre-execution failures
-	// (e.g. context build errors) default to 500 — Apollo's
-	// `sendErrorResponse` fallback; execution errors ride on the default 200.
+	// (e.g. context build errors) default to 500; execution errors ride on the
+	// GraphQL-standard HTTP 200 response.
 	const status = httpStatus(error) ?? (isPreExecution ? 500 : undefined);
 
 	return new GraphQLError(message, {
@@ -340,11 +413,10 @@ function formatExecutionResult(
 }
 
 /**
- * Apollo `formatError` parity: every error serializes as
- * `{ message, extensions: { code } }` — no locations, no path — and non-safe
- * codes are masked outside dev-like stages. Runs last, on the final result,
- * so it sees resolver errors, validation/parse errors, and context-build
- * errors alike.
+ * Stable wire format: every error serializes as
+ * `{ message, extensions: { code } }` — no locations or path — and non-safe
+ * codes are masked outside dev-like stages. This runs last so it sees resolver,
+ * validation, parse, and context-build errors alike.
  */
 export const errorFormattingPlugin: Plugin = {
 	onResultProcess({ result, setResult }) {

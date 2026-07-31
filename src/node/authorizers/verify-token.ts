@@ -2,6 +2,7 @@ import {
 	createRemoteJWKSet,
 	type JWTPayload,
 	type JWTVerifyGetKey,
+	errors as joseErrors,
 	jwtVerify,
 } from "jose";
 
@@ -24,8 +25,34 @@ export type WorkosTokenClaims = JWTPayload & {
 	permissions?: unknown;
 };
 
-const DEFAULT_AUTH_ISSUER =
-	process.env.AUTH_ISSUER ?? "https://api.workos.com/";
+function defaultAuthIssuer(): string {
+	return process.env.AUTH_ISSUER ?? "https://api.workos.com/";
+}
+
+/**
+ * Verification failed because the signing keys could not be fetched or read —
+ * a JWKS-endpoint outage, DNS/network failure, or timeout. This says NOTHING
+ * about the token: callers must surface it as a 5xx (service unavailable),
+ * never as a 401, or an auth outage masquerades as "everyone's token is
+ * invalid" with zero operator signal.
+ */
+export class AuthVerificationUnavailableError extends Error {
+	constructor(message: string, options?: { cause?: unknown }) {
+		super(message, options);
+		this.name = "AuthVerificationUnavailableError";
+	}
+}
+
+/**
+ * jose signals JWKS-endpoint problems with these two; anything that is not a
+ * JOSEError at all escaped from the fetch layer itself (network/DNS/abort).
+ * Every other JOSEError is a verdict on the token and must stay a 401.
+ */
+function isKeyFetchInfraError(error: unknown): boolean {
+	if (error instanceof joseErrors.JWKSTimeout) return true;
+	if (error instanceof joseErrors.JWKSInvalid) return true;
+	return !(error instanceof joseErrors.JOSEError);
+}
 
 /** Build the remote JWKS key set for a WorkOS client. */
 export function createWorkosJwks(clientId: string): JWTVerifyGetKey {
@@ -67,6 +94,13 @@ export interface VerifyWorkosTokenOptions {
  *
  * `clientId === ""` disables the client binding (local dev without a configured
  * WORKOS_CLIENT_ID); signature + issuer + sub are still enforced.
+ *
+ * Deliberately NOT checked: session revocation. This is stateless validation — a
+ * revoked WorkOS session's access token stays valid here until its `exp`, so
+ * revocation latency equals the access-token duration (keep it short in the WorkOS
+ * dashboard). For enforced sub-duration revocation, add a `sid` denylist fed by the
+ * `session.revoked` webhook — the `sid` claim is already returned below. See
+ * docs/SECURITY.md § "JWT Authentication (WorkOS) → Session revocation".
  */
 export async function verifyWorkosToken(
 	token: string,
@@ -75,7 +109,7 @@ export async function verifyWorkosToken(
 ): Promise<WorkosTokenClaims> {
 	const {
 		clientId,
-		authIssuer = DEFAULT_AUTH_ISSUER,
+		authIssuer = defaultAuthIssuer(),
 		// Outer guard against a hung verify. Must sit ABOVE the JWKS fetch
 		// timeout (6s) so it never cuts off a legitimate cold-start fetch.
 		timeoutMs = 10_000,
@@ -90,7 +124,10 @@ export async function verifyWorkosToken(
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const timeoutPromise = new Promise<never>((_, reject) => {
 		timer = setTimeout(
-			() => reject(new Error("JWT verification timeout")),
+			() =>
+				reject(
+					new AuthVerificationUnavailableError("JWT verification timeout"),
+				),
 			timeoutMs,
 		);
 	});
@@ -99,6 +136,15 @@ export async function verifyWorkosToken(
 	try {
 		const result = await Promise.race([verifyPromise, timeoutPromise]);
 		payload = result.payload;
+	} catch (error) {
+		if (error instanceof AuthVerificationUnavailableError) throw error;
+		if (isKeyFetchInfraError(error)) {
+			throw new AuthVerificationUnavailableError(
+				"Unable to fetch or read the JWKS signing keys",
+				{ cause: error },
+			);
+		}
+		throw error;
 	} finally {
 		clearTimeout(timer);
 	}

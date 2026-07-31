@@ -1,8 +1,9 @@
+import type { DbTransaction } from "../db";
 import {
 	type IdempotencyOptions,
 	type IdempotentRequest,
 	type StoredResponse,
-	withIdempotency,
+	withTransactionalIdempotency,
 } from "../idempotency";
 
 function storedJsonResponse<T>(data: T, statusCode = 200): StoredResponse {
@@ -29,14 +30,14 @@ function toResponse(result: StoredResponse): Response {
 	});
 }
 
-export async function withIdempotentJson<T>(
+export async function withTransactionalIdempotentJson<T>(
 	request: IdempotentRequest,
-	handler: () => Promise<T>,
+	handler: (tx: DbTransaction) => Promise<T>,
 	options?: IdempotencyOptions,
 ): Promise<Response> {
-	const result = await withIdempotency(
+	const result = await withTransactionalIdempotency(
 		request,
-		async () => storedJsonResponse(await handler()),
+		async (tx) => storedJsonResponse(await handler(tx)),
 		options,
 	);
 	return toResponse(result);

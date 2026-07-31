@@ -1,7 +1,10 @@
-import { and, eq, lt, or } from "drizzle-orm";
-import { idempotencyKeys } from "../../db/schema/index";
 import { getDb } from "../db";
 import { errorMessage } from "../error-utils";
+import {
+	claimIdempotencyKey,
+	completeIdempotencyKey,
+	failIdempotencyKey,
+} from "../idempotency";
 import { createLogger } from "../logger";
 import {
 	isWorkOSAuthEvent,
@@ -35,6 +38,27 @@ import {
  */
 const logger = createLogger({ serviceName: "webhook-processor" });
 
+/** How long a "processing" claim may sit before a redelivery may steal it. */
+export const WEBHOOK_STALE_PROCESSING_MS = 5 * 60 * 1000;
+
+/**
+ * Thrown when an event's idempotency lock is held by another (possibly
+ * crashed) attempt. The consumer must NOT ack — it retries with a delay of at
+ * least the staleness window so the redelivery can reclaim the lock. Acking
+ * here would permanently drop the event: WorkOS already got its 200 at
+ * ingest, so the queue message is the only copy left.
+ */
+export class WebhookInProgressError extends Error {
+	readonly retryDelaySeconds = Math.ceil(WEBHOOK_STALE_PROCESSING_MS / 1000);
+
+	constructor(idempotencyKey: string, claimStatus: string) {
+		super(
+			`Webhook event lock is held (status: ${claimStatus}) for ${idempotencyKey}; retry after the staleness window`,
+		);
+		this.name = "WebhookInProgressError";
+	}
+}
+
 export async function processWorkosEvent(
 	webhookEvent: WorkOSWebhookEvent,
 ): Promise<void> {
@@ -45,67 +69,34 @@ export async function processWorkosEvent(
 
 	const db = await getDb();
 
-	// Atomic idempotency check using INSERT ON CONFLICT DO NOTHING
 	const idempotencyKey = `workos-webhook-${webhookEvent.id}`;
-	const inserted = await db
-		.insert(idempotencyKeys)
-		.values({
-			key: idempotencyKey,
-			requestHash: webhookEvent.id,
-			status: "processing",
-			expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-		})
-		.onConflictDoNothing({ target: idempotencyKeys.key })
-		.returning({ key: idempotencyKeys.key });
+	const claim = await claimIdempotencyKey(db, {
+		key: idempotencyKey,
+		requestHash: webhookEvent.id,
+		completedMode: "return",
+		reclaimFailed: true,
+		staleProcessingMs: WEBHOOK_STALE_PROCESSING_MS,
+		resetCreatedAtOnReclaim: true,
+		expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+	});
 
-	if (inserted.length === 0) {
-		// Key already exists -- check if completed or reclaimable
-		const [existing] = await db
-			.select()
-			.from(idempotencyKeys)
-			.where(eq(idempotencyKeys.key, idempotencyKey))
-			.limit(1);
-
-		if (existing?.status === "completed") {
-			logger.warn("Duplicate event detected, skipping", { idempotencyKey });
-			return;
-		}
-
-		// Atomically (re)claim the key via UPDATE. Reclaim when either:
-		//  - a previous attempt FAILED (so a queue redelivery can re-run it), or
-		//  - a "processing" lock is stale (>5 min — the original invocation died).
-		// UPDATE-with-predicate (not DELETE+INSERT) keeps this race-free: only one
-		// concurrent attempt can flip the row, the rest get "already processing".
-		const staleThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-		const reclaimed = await db
-			.update(idempotencyKeys)
-			.set({
-				status: "processing",
-				requestHash: webhookEvent.id,
-				createdAt: new Date().toISOString(),
-				expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
-				updatedAt: new Date().toISOString(),
-			})
-			.where(
-				and(
-					eq(idempotencyKeys.key, idempotencyKey),
-					or(
-						eq(idempotencyKeys.status, "failed"),
-						and(
-							eq(idempotencyKeys.status, "processing"),
-							lt(idempotencyKeys.createdAt, staleThreshold),
-						),
-					),
-				),
-			)
-			.returning({ key: idempotencyKeys.key });
-
-		if (reclaimed.length === 0) {
-			// Another attempt is actively processing this event
-			logger.warn("Event is already being processed", { idempotencyKey });
-			return;
-		}
-
+	if (claim.status === "completed") {
+		logger.warn("Duplicate event detected, skipping", { idempotencyKey });
+		return;
+	}
+	if (claim.status !== "claimed") {
+		// Another attempt holds the lock — either it is actively processing or it
+		// crashed mid-flight (isolate eviction, deploy) and its "processing" row
+		// is not yet stale. Do NOT treat this as success: throw so the consumer
+		// retries after the staleness window, at which point the lock is either
+		// completed (dedup no-op) or stale (reclaimed and re-run).
+		logger.warn("Event lock held; deferring to redelivery", {
+			idempotencyKey,
+			claimStatus: claim.status,
+		});
+		throw new WebhookInProgressError(idempotencyKey, claim.status);
+	}
+	if (claim.source === "reclaimed") {
 		logger.warn("Reclaimed idempotency key for retry", { idempotencyKey });
 	}
 	// We now own the lock; a failure past this point must release it (catch).
@@ -113,15 +104,35 @@ export async function processWorkosEvent(
 
 	try {
 		// Authentication-lifecycle events (login / failed login / session) are
-		// audited rather than mutating domain tables.
+		// audited rather than mutating domain tables. Write the audit row AND
+		// mark the key completed in ONE transaction: otherwise a crash between
+		// the audit commit and the (separate) completion would leave the key
+		// "processing", and a post-stale-window reclaim would re-run this and
+		// write a DUPLICATE login row into the append-only, un-dedupable trail.
+		// Atomic completion makes the auth path exactly-once.
 		if (isWorkOSAuthEvent(webhookEvent.event)) {
 			const authData = parseWorkOSAuthData(
 				webhookEvent.data as Record<string, unknown>,
 			);
-			await recordAuthEventFromWorkOS(db, authData, webhookEvent.event);
+			await db.transaction(async (tx) => {
+				await recordAuthEventFromWorkOS(tx, authData, webhookEvent.event);
+				await completeIdempotencyKey(tx, idempotencyKey);
+			});
+			logger.info("Webhook processed successfully", {
+				eventId: webhookEvent.id,
+			});
+			return;
 		}
 
-		// Delegate to service-layer functions for each event type
+		// Delegate to service-layer functions for each event type. NOTE: domain
+		// provisioning is idempotent (upserts converge), but each provisioning
+		// function opens its own transaction and the completion below is a
+		// separate statement — so a crash in that narrow window can, after a
+		// reclaim, write a duplicate CREATE/UPDATE audit row. Domain STATE stays
+		// correct; only the audit trail may gain a duplicate. This is the
+		// accepted at-least-once cost for the domain path (folding completion
+		// into each provisioning tx conflicts with the email-collision escape
+		// hatch in upsertUserFromWorkOS).
 		switch (webhookEvent.event) {
 			case "user.created":
 			case "user.updated": {
@@ -159,13 +170,7 @@ export async function processWorkosEvent(
 		}
 
 		// Mark idempotency key as completed
-		await db
-			.update(idempotencyKeys)
-			.set({
-				status: "completed",
-				completedAt: new Date().toISOString(),
-			})
-			.where(eq(idempotencyKeys.key, idempotencyKey));
+		await completeIdempotencyKey(db, idempotencyKey);
 
 		logger.info("Webhook processed successfully", { eventId: webhookEvent.id });
 	} catch (error) {
@@ -177,10 +182,7 @@ export async function processWorkosEvent(
 		});
 
 		try {
-			await db
-				.update(idempotencyKeys)
-				.set({ status: "failed", updatedAt: new Date().toISOString() })
-				.where(eq(idempotencyKeys.key, idempotencyKey));
+			await failIdempotencyKey(db, idempotencyKey);
 		} catch (releaseError) {
 			logger.error("Failed to release idempotency lock after error", {
 				idempotencyKey,

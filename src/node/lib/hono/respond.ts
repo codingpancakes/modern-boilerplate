@@ -16,7 +16,3 @@ export function sendSuccess<T>(
 ): Response {
 	return c.json({ success: true, data }, status);
 }
-
-export function sendNoContent(c: Context): Response {
-	return c.body(null, 204);
-}

@@ -3,19 +3,31 @@ import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
 	AUDIT_STATUS,
-	logAudit,
+	flushAudits,
+	logAuditStrict,
+	runWithAuditScope,
 } from "./lib/audit";
 import { runWithDbScope } from "./lib/db";
 import { errorMessage } from "./lib/error-utils";
 import { createLogger } from "./lib/logger";
-import { captureException } from "./lib/sentry";
-import { processWorkosEvent } from "./lib/services/webhook-processor";
-import type { WorkOSWebhookEvent } from "./lib/validation/webhooks";
+import {
+	captureException,
+	flush as flushSentry,
+	runWithSentryScope,
+} from "./lib/sentry";
+import {
+	processWorkosEvent,
+	WebhookInProgressError,
+} from "./lib/services/webhook-processor";
+import {
+	type WorkOSWebhookEvent,
+	workosWebhookEvent,
+} from "./lib/validation/webhooks";
 import type { WorkerEnv } from "./worker";
 
 /**
- * Cloudflare Queues consumer — the durable retry path that replaces the
- * webhook DLQ. `worker.queue` (src/node/worker.ts) dispatches every batch here.
+ * Cloudflare Queues consumer for the webhook main queue and its DLQ.
+ * `worker.queue` (src/node/worker.ts) dispatches every batch here.
  *
  * Two queues land in this one handler, distinguished by `batch.queue`:
  *
@@ -46,13 +58,38 @@ export async function handleQueueBatch(
 			if (isDeadLetter) {
 				await handleDeadLetter(message.body);
 			} else {
-				await runWithDbScope(() => processWorkosEvent(message.body));
+				await runWithDbScope(() =>
+					runWithAuditScope(async () => {
+						try {
+							// Treat the queue as a durable trust boundary. The producer
+							// validates before enqueueing, but consumers validate again
+							// before allowing a persisted payload into domain logic.
+							const event = workosWebhookEvent.parse(message.body);
+							await processWorkosEvent(event);
+						} finally {
+							await flushAudits();
+						}
+					}),
+				);
 			}
 			message.ack();
 		} catch (error) {
+			// Lock held by another (possibly crashed) attempt: redeliver AFTER the
+			// staleness window so the retry can reclaim it. Retrying immediately
+			// would find the same non-stale lock and burn the retry budget.
+			if (error instanceof WebhookInProgressError) {
+				logger.warn("Webhook lock held; delaying redelivery", {
+					eventId: message.body?.id,
+					eventType: message.body?.event,
+					attempts: message.attempts,
+				});
+				message.retry({ delaySeconds: error.retryDelaySeconds });
+				continue;
+			}
 			// Do NOT ack — let Queues redeliver. For the main queue this leads to
-			// the DLQ after max_retries; for the DLQ itself it retries until the
-			// audit/alert write succeeds (so a DB blip can't drop the record).
+			// the DLQ after max_retries. The DLQ consumer has its own long but
+			// bounded retry budget; Sentry/Workers alerts must page before that
+			// budget can be exhausted.
 			logger.error(
 				isDeadLetter
 					? "Dead-letter handling failed; will retry"
@@ -79,15 +116,21 @@ async function handleDeadLetter(event: WorkOSWebhookEvent): Promise<void> {
 		eventType: event?.event,
 	});
 
-	captureException(new Error("Webhook permanently failed"), {
-		eventId: event?.id,
-		eventType: event?.event,
+	// Buffer + flush inside a Sentry scope: outside one, the send is a detached
+	// fetch that Workers may cancel when the invocation settles — the page for
+	// a permanently-lost webhook would silently not go out.
+	await runWithSentryScope(async () => {
+		captureException(new Error("Webhook permanently failed"), {
+			eventId: event?.id,
+			eventType: event?.event,
+		});
+		await flushSentry();
 	});
 
-	// Outside a request scope, logAudit awaits its write inline — so this is
-	// durable without an audit-flush middleware around the queue consumer.
+	// Use the strict audit path: if the DLQ record cannot be persisted, throw
+	// so this message is retried instead of acked away.
 	await runWithDbScope(() =>
-		logAudit({
+		logAuditStrict({
 			action: AUDIT_ACTIONS.WEBHOOK_FAILED,
 			resourceType: AUDIT_RESOURCE_TYPES.WEBHOOK,
 			resourceId: event?.id,

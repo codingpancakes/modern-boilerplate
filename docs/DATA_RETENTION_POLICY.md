@@ -1,22 +1,21 @@
 # Data Retention Policy
 
-**Last updated:** June 2026
+**Last updated:** July 2026
 **Runtime:** Cloudflare Workers, Neon Postgres, Cloudflare R2, Cloudflare Queues
 
-This document describes the current Cloudflare stack. Legacy AWS retention notes live
-under `docs/legacy-aws/` and are not operational guidance for this branch.
+This document describes the current production retention model.
 
 ## Retention Summary
 
 | Data | Retention | Enforcement | Status |
 |---|---:|---|---|
 | Application audit logs | 7 years | Postgres trigger blocks updates and in-window deletes; daily cron prunes expired rows | Implemented |
-| Idempotency keys | 7 days | Daily Cloudflare Cron Trigger janitor | Implemented |
-| WorkOS webhook DLQ messages | Cloudflare Queue retention | Cloudflare Queues `max_retries = 5` routes permanent failures to DLQ consumer | Implemented |
+| Idempotency keys | 24 hours (HTTP mutations) / 7 days (webhook events) | Daily Cloudflare Cron Trigger janitor deletes expired rows | Implemented |
+| WorkOS webhook DLQ messages | Normally consumed after durable failure recording; otherwise bounded by the DLQ consumer's retry budget and Cloudflare retention | Main consumer routes after `max_retries = 5`; DLQ consumer retries audit persistence up to 100 times with a 15-minute delay | Implemented, alert-dependent |
 | `WEBHOOK_FAILED` audit rows | 7 years | Same audit-log retention and immutability rules | Implemented |
 | Workers request logs | Cloudflare dashboard retention window | Cloudflare Workers Logs via `[observability] enabled` | Enabled |
 | Cloudflare account audit logs | Cloudflare platform retention | Cloudflare dashboard/API audit log | Built in |
-| R2 media objects | Until deleted by user/application | Application delete path or manual/admin cleanup | Application-owned |
+| R2 media objects | Indefinite until manually/admin deleted | No application delete endpoint exists today | Operational gap |
 | Raw long-term request logs | Not retained by this repo | Optional Logpush to R2/external sink, plan-dependent | Optional |
 
 ## Application Audit Logs
@@ -30,8 +29,9 @@ Controls:
 - Database constraints pin action/resource/status values.
 - A daily Cloudflare Cron Trigger calls the audit-retention job.
 - Failed audit writes emit a structured log line and Sentry exception.
-- Mutations call `logAudit()` and request middleware drains in-flight audit writes before
-  the response completes.
+- Request-path domain mutations call `logAudit()` and middleware drains
+  in-flight writes before the response completes. Transactional provisioning
+  uses `writeAuditLog(tx, ...)`; terminal DLQ handling uses `logAuditStrict()`.
 
 Operational checks:
 
@@ -47,7 +47,9 @@ limit 50;
 ## Idempotency Keys
 
 The `idempotency_keys` table deduplicates critical mutations and webhook processing.
-Expired keys are removed by the daily janitor cron (`src/node/handlers/utils/janitor.ts`).
+HTTP-mutation keys expire after 24 hours (`lib/idempotency.ts` default TTL); webhook
+event keys after 7 days (`lib/services/webhook-processor.ts`). Expired keys are
+removed by the daily janitor cron (`src/node/handlers/utils/janitor.ts`).
 
 The cleanup is intentionally independent from deploys. If the janitor fails, request
 correctness remains intact; storage grows until the job is repaired.
@@ -58,11 +60,19 @@ WorkOS webhooks are verified at `POST /v1/webhooks/workos`, queued, and processe
 Cloudflare Queues. After repeated processing failure, Cloudflare routes the message to
 the dead-letter queue.
 
-The DLQ consumer:
+The configured DLQ consumer normally drains failures immediately. It:
 
 - reports a Sentry exception,
 - writes a durable `WEBHOOK_FAILED` audit row,
 - acknowledges the dead-lettered message only after the audit/alert path succeeds.
+
+If durable audit persistence fails, the DLQ consumer requests retry. The
+deployed configuration allows up to 100 retries with a 15-minute default retry
+delay. That is deliberately long but still bounded: because the DLQ consumer
+has no downstream DLQ, Cloudflare eventually discards a repeatedly failing
+message after its retry/retention limits. Sentry is flushed before the audit
+attempt and Workers Logs record retry failures, so paging and operator response
+are part of this control. Temporary queue storage is not the compliance record.
 
 Runbook: [runbooks/WEBHOOK_DLQ.md](./runbooks/WEBHOOK_DLQ.md).
 
@@ -89,8 +99,10 @@ User data is retained until deleted by the application owner/user workflow. Audi
 may retain user identifiers and forensic context for 7 years, even after operational
 records are deleted.
 
-Media objects in R2 are retained until deleted. If a product requires GDPR/CCPA-grade
-erasure, add a documented anonymization/deletion flow that covers:
+Media objects in R2 are retained indefinitely today: this repository has upload
+and list flows but no application delete endpoint. Manual/admin deletion is the
+only current removal path. If a product requires GDPR/CCPA-grade erasure, add a
+documented anonymization/deletion flow that covers:
 
 - application rows,
 - R2 objects,

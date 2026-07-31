@@ -9,7 +9,7 @@
  * `wrangler secret put`). Local secrets live in .dev.vars.
  *
  * Usage:
- *   pnpm init-project <project-name> <domain> [--force]
+ *   pnpm init-project <project-name> <domain> [api-subdomain] [--force]
  *
  * Example:
  *   pnpm init-project acme-api acme.dev
@@ -23,6 +23,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { applyCustomDomains } from "./set-domain";
 
 type Stage = "local" | "staging" | "production";
 type Logger = Pick<Console, "log">;
@@ -30,6 +31,7 @@ type Logger = Pick<Console, "log">;
 export interface InitProjectOptions {
 	projectName: string;
 	domain: string;
+	apiSubdomain?: string;
 	force?: boolean;
 	root?: string;
 	logger?: Logger;
@@ -42,21 +44,34 @@ function defaultRoot(): string {
 function parseArgs(args: string[]) {
 	const positional = args.filter((a) => !a.startsWith("--"));
 	const hasFlag = (name: string) => args.includes(`--${name}`);
-	const [projectName, domain] = positional;
-	return { projectName, domain, force: hasFlag("force") };
+	const [projectName, domain, apiSubdomain] = positional;
+	return { projectName, domain, apiSubdomain, force: hasFlag("force") };
+}
+
+/** Non-throwing validators (return an error message, or null when valid). */
+export function projectNameError(name: string): string | null {
+	// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
+	// charset that is safe for both.
+	return /^[a-z][a-z0-9-]{2,29}$/.test(name)
+		? null
+		: "Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.";
+}
+
+export function domainError(domain: string): string | null {
+	return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)
+		? null
+		: "Domain doesn't look valid (expected e.g. acme.dev).";
+}
+
+export function apiSubdomainError(sub: string): string | null {
+	return /^[a-z][a-z0-9-]{0,29}$/.test(sub)
+		? null
+		: "API subdomain must be lowercase letters/digits/hyphens, starting with a letter.";
 }
 
 function validateInputs(projectName: string, domain: string): void {
-	// Worker and R2 bucket names are derived from PROJECT_NAME — enforce a
-	// charset that is safe for both.
-	if (!/^[a-z][a-z0-9-]{2,29}$/.test(projectName)) {
-		throw new Error(
-			"❌ Project name must be 3-30 chars, lowercase letters/digits/hyphens, starting with a letter.",
-		);
-	}
-	if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain)) {
-		throw new Error("❌ Domain doesn't look valid (expected e.g. acme.dev)");
-	}
+	const err = projectNameError(projectName) ?? domainError(domain);
+	if (err) throw new Error(`❌ ${err}`);
 }
 
 function stageForSection(section: string): Stage {
@@ -151,7 +166,7 @@ SENTRY_DSN=
 TEST_API_KEY=
 WEBHOOK_SECRET=
 
-# R2 media — Cloudflare R2 Account API token; unset = media returns 503
+# R2 S3 API credentials for presigning/listing; direct upload uses the binding
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -162,6 +177,7 @@ export function initProject(options: InitProjectOptions): void {
 	const {
 		projectName,
 		domain,
+		apiSubdomain = "api",
 		force = false,
 		root = defaultRoot(),
 		logger = console,
@@ -198,12 +214,17 @@ export function initProject(options: InitProjectOptions): void {
 	// Rewrite Cloudflare resource names so a fresh project has no source-project
 	// residue in wrangler.toml.
 	const wranglerPath = path.join(root, "wrangler.toml");
-	const rewrittenWrangler = rewriteWranglerToml(
-		fs.readFileSync(wranglerPath, "utf-8"),
-		{ projectName, domain },
+	const rewrittenWrangler = applyCustomDomains(
+		rewriteWranglerToml(fs.readFileSync(wranglerPath, "utf-8"), {
+			projectName,
+			domain,
+		}),
+		{ domain, apiSubdomain },
 	);
 	fs.writeFileSync(wranglerPath, rewrittenWrangler);
-	logger.log("✅ wrangler.toml resource names updated");
+	logger.log(
+		"✅ wrangler.toml resource names + API custom domains (api[-staging].<domain>) set",
+	);
 
 	logger.log(`
 🎉 Project "${projectName}" initialized for ${domain}.
@@ -212,24 +233,103 @@ Next steps:
   1. cp .dev.vars.example .dev.vars   # local secrets for wrangler dev
   2. Fill real values in .dev.vars and .env.staging / .env.production:
      DATABASE_URL, WORKOS_CLIENT_ID, WORKOS_WEBHOOK_SECRET, and (optional)
-     SENTRY_DSN, TEST_API_KEY, WEBHOOK_SECRET, R2 credentials
+     SENTRY_DSN, TEST_API_KEY, WEBHOOK_SECRET, R2 S3 API credentials
   3. Review wrangler.toml, then create the named R2 buckets and queues
   4. pnpm migrate                     # apply schema to the DB
   5. pnpm dev                         # wrangler dev --local
   6. pnpm sync-secrets staging && pnpm deploy:staging
+
+Custom domains for the API (api.${domain} / api-staging.${domain}) are already
+wired into wrangler.toml. They bind on deploy once the zone is on Cloudflare —
+re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7e.
 `);
 }
 
+export interface GatheredInputs {
+	projectName: string;
+	domain: string;
+	apiSubdomain: string;
+}
+
+/**
+ * Interactively collect the inputs, re-prompting until each is valid. `ask` and
+ * `logger` are injected so this is testable without a real terminal.
+ */
+export async function gatherInputs(
+	ask: (question: string) => Promise<string>,
+	logger: Logger = console,
+): Promise<GatheredInputs> {
+	async function prompt(
+		label: string,
+		validate: (v: string) => string | null,
+		fallback?: string,
+	): Promise<string> {
+		for (;;) {
+			const suffix = fallback ? ` (${fallback})` : "";
+			const answer =
+				(await ask(`${label}${suffix}: `)).trim() || fallback || "";
+			const error = validate(answer);
+			if (!error) return answer;
+			logger.log(`  ↳ ${error}`);
+		}
+	}
+
+	const projectName = await prompt("Project name", projectNameError);
+	const domain = await prompt("Domain", domainError);
+	const apiSubdomain = await prompt("API subdomain", apiSubdomainError, "api");
+	return { projectName, domain, apiSubdomain };
+}
+
+async function runInteractive(root: string): Promise<void> {
+	const readline = await import("node:readline/promises");
+	const rl = readline.createInterface({
+		input: process.stdin,
+		output: process.stdout,
+	});
+	try {
+		console.log("Create a new project from this boilerplate.\n");
+		const inputs = await gatherInputs((q) => rl.question(q));
+		console.log(
+			`\nWorker: ${inputs.projectName}-backend\nAPI:    ${inputs.apiSubdomain}.${inputs.domain} / ${inputs.apiSubdomain}-staging.${inputs.domain}`,
+		);
+		const confirm = (await rl.question("\nProceed? (Y/n) "))
+			.trim()
+			.toLowerCase();
+		if (confirm === "n" || confirm === "no") {
+			console.log("Aborted.");
+			return;
+		}
+		initProject({ ...inputs, root });
+	} finally {
+		rl.close();
+	}
+}
+
 export function main(args = process.argv.slice(2), root = defaultRoot()): void {
-	const { projectName, domain, force } = parseArgs(args);
+	const { projectName, domain, apiSubdomain, force } = parseArgs(args);
+
+	// No positional args + a real terminal → interactive wizard (create-app style).
+	if (!projectName && !domain && process.stdin.isTTY) {
+		runInteractive(root).catch((error) => {
+			console.error((error as Error).message);
+			process.exit(1);
+		});
+		return;
+	}
+
 	if (!projectName || !domain) {
-		console.error("Usage: pnpm init-project <project-name> <domain> [options]");
+		console.error(
+			"Usage: pnpm init-project <project-name> <domain> [api-subdomain] [--force]",
+		);
 		console.error("Example: pnpm init-project acme-api acme.dev");
+		console.error(
+			"Or run with no arguments in a terminal for the interactive wizard.",
+		);
 		process.exit(1);
 	}
 
 	try {
-		initProject({ projectName, domain, force, root });
+		initProject({ projectName, domain, apiSubdomain, force, root });
 	} catch (error) {
 		console.error((error as Error).message);
 		process.exit(1);

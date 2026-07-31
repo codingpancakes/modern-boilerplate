@@ -1,0 +1,6 @@
+export const RECORD_STATUS = {
+	ACTIVE: "ACTIVE",
+	PENDING: "PENDING",
+	INACTIVE: "INACTIVE",
+	DELETED: "DELETED",
+} as const;

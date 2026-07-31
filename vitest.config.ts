@@ -12,6 +12,19 @@ export default defineConfig({
 			provider: "v8",
 			reporter: ["text", "json", "html"],
 			exclude: ["node_modules/", "tests/", "**/*.d.ts", "**/*.config.ts"],
+			// Regression RATCHET, not a quality target. These floors sit just below
+			// current UNIT-only coverage; much of the codebase (services, routes,
+			// idempotency) is exercised by the real-Postgres INTEGRATION suite,
+			// which this run does not count — so true coverage is materially higher.
+			// The point is structural: a PR that drops unit coverage fails CI
+			// (`pnpm test:coverage`) instead of silently eroding it. Ratchet these
+			// UP as coverage improves; never down without a note.
+			thresholds: {
+				statements: 45,
+				branches: 40,
+				functions: 43,
+				lines: 45,
+			},
 		},
 		include: ["tests/unit/**/*.test.ts"],
 	},

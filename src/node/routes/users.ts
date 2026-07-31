@@ -4,11 +4,14 @@ import { profiles, users as usersTable } from "../db/schema/index";
 import { getUserIdFromClaims } from "../lib/auth";
 import { getDb } from "../lib/db";
 import { Errors } from "../lib/errors";
-import { withIdempotentJson } from "../lib/hono/idempotent-response";
+import { withTransactionalIdempotentJson } from "../lib/hono/idempotent-response";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
-import { updateMyAccount } from "../lib/services/user-account";
+import {
+	logAccountUpdateAudit,
+	updateMyAccountInTransaction,
+} from "../lib/services/user-account";
 import { parseJsonBody } from "../lib/validation/helpers";
 
 /**
@@ -96,7 +99,15 @@ users.get("/me", async (c) => {
  *     description: Updates the authenticated user's profile. Only sends fields that need to be updated.
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: header
+ *         name: Idempotency-Key
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: Replays the stored response for an identical retry
  *     requestBody:
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
@@ -122,6 +133,8 @@ users.get("/me", async (c) => {
  *                   ethnicity: { type: string }
  *                   languages: { type: array, items: { type: string } }
  *                   onboardingCompleted: { type: boolean }
+ *                   persona: { type: object, additionalProperties: true }
+ *                   snapshot: { type: object, additionalProperties: true }
  *     responses:
  *       200:
  *         description: User profile updated successfully
@@ -136,22 +149,21 @@ users.patch("/me", async (c) => {
 	const claims = c.get("claims");
 	const rawBody = await c.req.text();
 	const queryParams = c.req.query();
+	const userId = await getUserIdFromClaims(claims);
 
-	return withIdempotentJson(
+	let auditEntry: Parameters<typeof logAccountUpdateAudit>[0] | undefined;
+	const response = await withTransactionalIdempotentJson(
 		{
 			key: c.req.header("idempotency-key"),
 			sub: claims.sub,
 			method: c.req.method,
 			path: c.req.path,
-			// Hash parity with the Lambda-era events: bodyless requests hashed
-			// `undefined` (never ""), and an empty query map hashed `undefined`.
+			// Canonical hashing treats a missing body/query as `undefined`, not
+			// as an empty string or empty object.
 			body: rawBody === "" ? undefined : rawBody,
 			query: Object.keys(queryParams).length > 0 ? queryParams : undefined,
 		},
-		async () => {
-			// Get internal user ID from verified claims (lookup + JIT provisioning)
-			const userId = await getUserIdFromClaims(claims);
-
+		async (tx) => {
 			const updateRequest = parseJsonBody(rawBody);
 
 			updateLogger.info("Updating user profile", {
@@ -176,10 +188,8 @@ users.patch("/me", async (c) => {
 				},
 			});
 
-			const db = await getDb();
-
-			const result = await updateMyAccount({
-				db,
+			const update = await updateMyAccountInTransaction({
+				tx,
 				userId,
 				input: updateRequest,
 				source: "rest",
@@ -190,7 +200,14 @@ users.patch("/me", async (c) => {
 				},
 			});
 
-			return result;
+			auditEntry = update.auditEntry;
+			return update.result;
 		},
 	);
+
+	if (auditEntry) {
+		logAccountUpdateAudit(auditEntry);
+	}
+
+	return response;
 });

@@ -30,12 +30,10 @@ import type { WorkerEnv } from "@/worker";
  *      — `worker.scheduled` dispatches by `controller.cron`, so any drift
  *      means a trigger fires with no handler (a thrown invocation).
  *   2. Each expression maps to a callable job that awaits its cleanup work
- *      and propagates failures (failed-invocation visibility replaces the
- *      old EventBridge/DLQ alarms).
+ *      and propagates failures for platform visibility.
  */
 
-const JANITOR_CRON = "0 4 * * *";
-const AUDIT_RETENTION_CRON = "0 5 * * *";
+const MAINTENANCE_CRON = "0 4 * * *";
 
 const env = {} as WorkerEnv;
 const ctx = {} as ExecutionContext;
@@ -74,39 +72,32 @@ describe("cronRegistry", () => {
 		}
 	});
 
-	it("runs the idempotency janitor for the 4am trigger", async () => {
+	it("runs BOTH maintenance jobs for the daily trigger", async () => {
 		cleanupExpiredKeysMock.mockResolvedValueOnce(7);
-
-		await expect(cronRegistry[JANITOR_CRON](env, ctx)).resolves.toBeUndefined();
-
-		expect(cleanupExpiredKeysMock).toHaveBeenCalledTimes(1);
-		expect(cleanupExpiredAuditLogsMock).not.toHaveBeenCalled();
-	});
-
-	it("runs audit-log retention pruning for the 5am trigger", async () => {
 		cleanupExpiredAuditLogsMock.mockResolvedValueOnce(3);
 
 		await expect(
-			cronRegistry[AUDIT_RETENTION_CRON](env, ctx),
+			cronRegistry[MAINTENANCE_CRON](env, ctx),
 		).resolves.toBeUndefined();
 
+		expect(cleanupExpiredKeysMock).toHaveBeenCalledTimes(1);
 		expect(cleanupExpiredAuditLogsMock).toHaveBeenCalledTimes(1);
-		expect(cleanupExpiredKeysMock).not.toHaveBeenCalled();
 	});
 
-	it("propagates janitor failures so the invocation is recorded as failed", async () => {
-		cleanupExpiredKeysMock.mockRejectedValueOnce(new Error("db down"));
+	it("runs the other job even when one fails, and rethrows the failure", async () => {
+		cleanupExpiredKeysMock.mockRejectedValueOnce(new Error("janitor db down"));
+		cleanupExpiredAuditLogsMock.mockResolvedValueOnce(3);
 
-		await expect(cronRegistry[JANITOR_CRON](env, ctx)).rejects.toThrow(
-			"db down",
-		);
+		await expect(cronRegistry[MAINTENANCE_CRON](env, ctx)).rejects.toThrow();
+		// audit-retention still ran despite the janitor failure (not skipped).
+		expect(cleanupExpiredAuditLogsMock).toHaveBeenCalledTimes(1);
 	});
 
-	it("propagates audit-retention failures so the invocation is recorded as failed", async () => {
-		cleanupExpiredAuditLogsMock.mockRejectedValueOnce(new Error("db down"));
+	it("rethrows when audit-retention fails (janitor still ran)", async () => {
+		cleanupExpiredKeysMock.mockResolvedValueOnce(7);
+		cleanupExpiredAuditLogsMock.mockRejectedValueOnce(new Error("audit db down"));
 
-		await expect(cronRegistry[AUDIT_RETENTION_CRON](env, ctx)).rejects.toThrow(
-			"db down",
-		);
+		await expect(cronRegistry[MAINTENANCE_CRON](env, ctx)).rejects.toThrow();
+		expect(cleanupExpiredKeysMock).toHaveBeenCalledTimes(1);
 	});
 });

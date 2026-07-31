@@ -1,0 +1,27 @@
+# Dependabot — automated dependency + GitHub Actions update PRs.
+# Security updates land regardless of the schedule; the weekly cadence covers
+# routine version bumps. Grouping keeps the PR volume sane for a single-owner
+# boilerplate while still surfacing every advisory.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Patch/minor bumps batched into one PR; majors stay individual so the
+      # breaking-change review isn't buried.
+      production-dependencies:
+        dependency-type: production
+        update-types: ["minor", "patch"]
+      dev-dependencies:
+        dependency-type: development
+        update-types: ["minor", "patch"]
+    labels: ["dependencies"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "ci"]

@@ -10,12 +10,9 @@ import { organizations, orgUnits } from "./organizations";
 import { users } from "./users";
 
 /**
- * Audit Logs table - SOC 2 compliance
- *
- * Tracks all user actions for security, compliance, and forensics.
- * Required for SOC 2 Type II certification.
- *
- * Retention: 7 years (compliance requirement)
+ * Audit logs for security, forensics, and the project's chosen compliance
+ * controls. The seven-year retention period is a project policy; this table by
+ * itself does not confer or guarantee SOC 2 certification.
  */
 export const auditLogs = pgTable(
 	"audit_logs",

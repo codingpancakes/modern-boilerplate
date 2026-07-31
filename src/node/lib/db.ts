@@ -28,6 +28,10 @@ if (typeof WebSocket !== "undefined") {
 neonConfig.poolQueryViaFetch = true;
 
 export type DbInstance = NeonDatabase<typeof schema>;
+export type DbTransaction = Parameters<
+	Parameters<DbInstance["transaction"]>[0]
+>[0];
+export type DbClient = DbInstance | DbTransaction;
 
 // Hard ceiling on a single statement (server-enforced via Postgres
 // `statement_timeout`) so a hung query can't pin an invocation for its whole
@@ -40,8 +44,8 @@ const STATEMENT_TIMEOUT_MS = 8000;
  * Cloudflare Workers FORBIDS reusing I/O objects (sockets, in-flight fetches)
  * across requests: a module-level cached Pool created during request A throws
  * "Cannot perform I/O on behalf of a different request" when request B uses
- * it. So instead of the old warm-Lambda singleton, every request gets its own
- * pool, carried in AsyncLocalStorage so `getDb()` call sites stay unchanged:
+ * it. Every request therefore gets its own pool, carried in AsyncLocalStorage
+ * so `getDb()` call sites stay simple:
  *
  *   - The `dbScope()` Hono middleware (lib/hono/middleware.ts) wraps each
  *     request in {@link runWithDbScope}; every `getDb()` within the request —

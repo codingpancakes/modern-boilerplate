@@ -1,6 +1,6 @@
 const swaggerJsdoc = require("swagger-jsdoc");
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 
 function packageNameFallback() {
 	try {
@@ -170,7 +170,7 @@ const options = {
 							},
 							example: {
 								success: false,
-								error: "Authentication required",
+								error: "Unauthorized",
 								details: {
 									code: "UNAUTHORIZED",
 								},
@@ -229,6 +229,27 @@ const options = {
 						},
 					},
 				},
+				TooManyRequests: {
+					description: "Per-IP application rate limit exceeded",
+					content: {
+						"application/json": {
+							schema: {
+								$ref: "#/components/schemas/ErrorResponse",
+							},
+						},
+					},
+				},
+				ServiceUnavailable: {
+					description:
+						"A required deployed runtime binding or dependency is unavailable",
+					content: {
+						"application/json": {
+							schema: {
+								$ref: "#/components/schemas/ErrorResponse",
+							},
+						},
+					},
+				},
 			},
 		},
 		tags: [
@@ -265,6 +286,23 @@ console.log("📁 Scanning route files in src/node/routes/");
 try {
 	const spec = swaggerJsdoc(options);
 
+	// The rate limiter runs before every route. Keep these cross-cutting
+	// responses synchronized automatically instead of duplicating annotations
+	// in every handler.
+	for (const pathItem of Object.values(spec.paths || {})) {
+		for (const method of ["get", "post", "put", "patch", "delete"]) {
+			const operation = pathItem[method];
+			if (!operation) continue;
+			operation.responses ||= {};
+			operation.responses["429"] ||= {
+				$ref: "#/components/responses/TooManyRequests",
+			};
+			operation.responses["503"] ||= {
+				$ref: "#/components/responses/ServiceUnavailable",
+			};
+		}
+	}
+
 	// Count endpoints
 	const pathCount = Object.keys(spec.paths || {}).length;
 	const operationCount = Object.values(spec.paths || {}).reduce(
@@ -294,7 +332,7 @@ try {
 	console.log(`📄 Output: ${outputPath}`);
 	console.log("");
 	console.log("🚀 Next steps:");
-	console.log("   - View docs: npm run docs:serve");
+	console.log("   - View docs: pnpm docs:serve");
 	console.log("   - Open browser: http://localhost:3111");
 	console.log("");
 } catch (error) {

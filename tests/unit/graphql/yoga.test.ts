@@ -1,6 +1,11 @@
+import { parse } from "graphql";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GraphQLContext } from "@/handlers/graphql/context";
+import {
+	calculateComplexity,
+	MAX_QUERY_COMPLEXITY,
+} from "@/handlers/graphql/plugins";
 import type { AppEnv } from "@/lib/hono/types";
 
 // The route builds its per-request context via createContext, which needs a
@@ -97,7 +102,7 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({
 			code: "GRAPHQL_VALIDATION_FAILED",
 		});
-		// Apollo's formatError dropped locations/path — the shape must not grow.
+		// The public error shape excludes locations/path and must not grow.
 		expect(body.errors[0]).not.toHaveProperty("locations");
 		expect(body.errors[0]).not.toHaveProperty("path");
 		// Validation fails before context creation — no DB touched.
@@ -109,7 +114,7 @@ describe("GraphQL Yoga route", () => {
 		dbError = new Error("connect ECONNREFUSED neon-internal-host:5432");
 
 		const res = await post("query { me { id } }");
-		// Execution errors ride on HTTP 200, exactly like Apollo.
+		// GraphQL execution errors ride on HTTP 200.
 		expect(res.status).toBe(200);
 
 		const body = await res.json();
@@ -155,7 +160,7 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({ code: "NOT_FOUND" });
 	});
 
-	it("rejects queries over the complexity limit (Apollo-parity 500 + BAD_USER_INPUT)", async () => {
+	it("rejects queries over the complexity limit (500 + BAD_USER_INPUT)", async () => {
 		vi.stubEnv("STAGE", "production");
 
 		const res = await post(
@@ -166,6 +171,83 @@ describe("GraphQL Yoga route", () => {
 		const body = await res.json();
 		expect(body.errors[0].message).toMatch(/exceeds maximum 150/);
 		expect(body.errors[0].extensions).toEqual({ code: "BAD_USER_INPUT" });
+	});
+
+	it("counts a fragment's cost once per SPREAD, not once per query (complexity bypass guard)", () => {
+		// A fragment spread N times must cost N× — global dedup would let a query
+		// alias many expensive spreads while scoring only one.
+		const once = parse(`
+			query { a: me { ...UserFields } }
+			fragment UserFields on User { id email firstName lastName }
+		`);
+		const thrice = parse(`
+			query {
+				a: me { ...UserFields }
+				b: me { ...UserFields }
+				c: me { ...UserFields }
+			}
+			fragment UserFields on User { id email firstName lastName }
+		`);
+
+		expect(calculateComplexity(thrice, null)).toBe(
+			3 * calculateComplexity(once, null),
+		);
+	});
+
+	it("counts unbounded list fields (members/organizations) as fan-out, not cost 1", () => {
+		// A shallow, legitimate query stays well under the ceiling...
+		const shallow = parse(
+			"query { organization(id: \"x\") { members { role } } }",
+		);
+		expect(calculateComplexity(shallow, null)).toBeLessThan(
+			MAX_QUERY_COMPLEXITY,
+		);
+
+		// ...but nesting the member graph (members → user → organizations →
+		// organization → members) compounds ×10 per unbounded list and must
+		// exceed the ceiling, so it can't fan out under a cost-1 score.
+		const nested = parse(`
+			query {
+				organization(id: "x") {
+					members {
+						user {
+							organizations {
+								organization {
+									members { role }
+								}
+							}
+						}
+					}
+				}
+			}
+		`);
+		expect(calculateComplexity(nested, null)).toBeGreaterThan(
+			MAX_QUERY_COMPLEXITY,
+		);
+	});
+
+	it("terminates on cyclic fragment spreads instead of recursing forever", () => {
+		// Invalid per the GraphQL spec (NoFragmentCycles), but the counter runs
+		// pre-validation in onExecute paths and must not stack-overflow.
+		const cyclic = parse(`
+			query { me { ...A } }
+			fragment A on User { id ...B }
+			fragment B on User { email ...A }
+		`);
+
+		expect(() => calculateComplexity(cyclic, null)).not.toThrow();
+		expect(calculateComplexity(cyclic, null)).toBeGreaterThan(0);
+	});
+
+	it("clamps non-positive INT literal list multipliers to one", () => {
+		const negative = parse(
+			"query { images(limit: -1) { images { key url size } } }",
+		);
+		const one = parse("query { images(limit: 1) { images { key url size } } }");
+
+		expect(calculateComplexity(negative, null)).toBe(
+			calculateComplexity(one, null),
+		);
 	});
 
 	it("rejects more than 5 mutations per request", async () => {
@@ -185,6 +267,25 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({ code: "BAD_USER_INPUT" });
 	});
 
+	it("counts mutations smuggled through a fragment spread (limit bypass guard)", async () => {
+		vi.stubEnv("STAGE", "production");
+
+		// One spread node hiding 6 mutation fields must still trip the limit.
+		const fields = Array.from(
+			{ length: 6 },
+			(_, i) => `m${i}: updateMe(input: { firstName: "x" }) { id }`,
+		).join("\n");
+		const res = await post(
+			`mutation { ...m }\nfragment m on Mutation { ${fields} }`,
+		);
+		expect(res.status).toBe(500);
+
+		const body = await res.json();
+		expect(body.errors[0].message).toBe(
+			"Too many mutations in one request (max 5)",
+		);
+	});
+
 	it("disables introspection in production but serves it in dev-like stages", async () => {
 		vi.stubEnv("STAGE", "production");
 		const blocked = await post("query { __schema { queryType { name } } }");
@@ -199,6 +300,17 @@ describe("GraphQL Yoga route", () => {
 		expect(allowed.status).toBe(200);
 		const allowedBody = await allowed.json();
 		expect(allowedBody.data.__schema.queryType.name).toBe("Query");
+	});
+
+	it("treats typoed stages as deployed for introspection", async () => {
+		vi.stubEnv("STAGE", "prodution");
+
+		const res = await post("query { __schema { queryType { name } } }");
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.errors[0].extensions).toEqual({
+			code: "GRAPHQL_VALIDATION_FAILED",
+		});
 	});
 
 	it("serves GraphiQL on GET only outside production/staging", async () => {

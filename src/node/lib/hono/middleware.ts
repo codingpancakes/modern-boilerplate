@@ -9,9 +9,8 @@ import type { AppEnv } from "./types";
 /**
  * Hono middleware for the single shared app (`src/node/app.ts`).
  *
- * These port the cross-cutting behavior of the old Lambda wrappers onto Hono
- * while reusing the existing logic in `lib/cors.ts` — nothing here duplicates
- * an origin list or a header policy.
+ * Cross-cutting request behavior stays here; `lib/cors.ts` remains the single
+ * source of origin and header policy.
  */
 
 /**
@@ -62,8 +61,7 @@ export const auditFlush = (): MiddlewareHandler<AppEnv> => (_c, next) =>
  * - OPTIONS preflight is answered here (method/header validation via
  *   `handleOptionsRequest`, no security headers).
  * - All other responses get `securityHeaders(getCorsHeaders(origin))` applied
- *   last, overriding handler-set headers — the exact merge order the old
- *   wrappers used.
+ *   last, overriding handler-set headers.
  */
 export const corsAndSecurityHeaders =
 	(): MiddlewareHandler<AppEnv> => async (c, next) => {

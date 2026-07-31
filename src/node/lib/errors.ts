@@ -1,10 +1,8 @@
 import { errorMessage } from "./error-utils";
 import { createLogger } from "./logger";
+import { isDeployedStage } from "./stage";
 
 const logger = createLogger({ serviceName: "api" });
-
-const isDeployed =
-	process.env.NODE_ENV === "production" || process.env.NODE_ENV === "staging";
 
 export class ApiError extends Error {
 	constructor(
@@ -22,9 +20,10 @@ export function formatError(error: unknown, requestId?: string) {
 	const timestamp = new Date().toISOString();
 
 	if (error instanceof ApiError) {
+		const deployed = isDeployedStage();
 		// In production, mask internal details for server errors
 		const safeMessage =
-			isDeployed && error.statusCode >= 500
+			deployed && error.statusCode >= 500
 				? "Internal server error"
 				: error.message;
 
@@ -38,7 +37,7 @@ export function formatError(error: unknown, requestId?: string) {
 				error: safeMessage,
 				details: {
 					code: error.code,
-					extra: isDeployed ? undefined : error.details,
+					extra: deployed ? undefined : error.details,
 					requestId,
 					timestamp,
 				},

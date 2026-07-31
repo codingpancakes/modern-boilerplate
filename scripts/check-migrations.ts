@@ -13,7 +13,7 @@ import * as dotenv from "dotenv";
 dotenv.config({ path: ".dev.vars" });
 
 type Journal = {
-	entries?: Array<{ tag?: string }>;
+	entries?: Array<{ tag?: string; when?: number }>;
 };
 
 function getDbUrl(): string {
@@ -24,20 +24,19 @@ function getDbUrl(): string {
 	return url;
 }
 
-async function appliedMigrationCount(
-	databaseUrl: string,
-): Promise<number> {
+async function appliedMigrationTimestamps(databaseUrl: string): Promise<Set<string>> {
 	try {
 		const query = neon(databaseUrl);
 		const rows = (await query`
-			SELECT count(*)::int AS count
+			SELECT created_at::text AS created_at
 			FROM drizzle.__drizzle_migrations
-		`) as Array<{ count?: number | string }>;
-		return Number((rows[0] as { count?: number | string } | undefined)?.count ?? 0);
+			ORDER BY created_at
+		`) as Array<{ created_at?: string }>;
+		return new Set(rows.map((row) => String(row.created_at)));
 	} catch (error) {
 		const code = (error as { code?: string }).code;
 		if (code === "42P01" || code === "3F000") {
-			return 0;
+			return new Set();
 		}
 		throw error;
 	}
@@ -49,17 +48,29 @@ async function main(): Promise<void> {
 		"../src/node/db/migrations/meta/_journal.json",
 	);
 	const journal = JSON.parse(readFileSync(journalPath, "utf-8")) as Journal;
-	const expected = journal.entries?.length ?? 0;
-	const applied = await appliedMigrationCount(getDbUrl());
+	const expected = (journal.entries ?? []).map((entry) => {
+		if (!entry.tag || !entry.when) {
+			throw new Error("Migration journal entries must include tag and when");
+		}
+		return {
+			tag: entry.tag,
+			timestamp: String(entry.when),
+		};
+	});
+	const appliedTimestamps = await appliedMigrationTimestamps(getDbUrl());
+	const missing = expected.filter(
+		(entry) => !appliedTimestamps.has(entry.timestamp),
+	);
 
-	if (applied !== expected) {
-		const direction = applied < expected ? "pending" : "unexpected extra";
+	if (missing.length > 0) {
 		throw new Error(
-			`Migration preflight failed: ${applied}/${expected} migrations applied (${direction}). Run pnpm migrate against the target database before deploy.`,
+			`Migration preflight failed: missing ${missing.length}/${expected.length} checked-in migrations (${missing.map((entry) => entry.tag).join(", ")}). Run pnpm migrate against the target database before deploy.`,
 		);
 	}
 
-	console.log(`Migration preflight passed: ${applied}/${expected} applied`);
+	console.log(
+		`Migration preflight passed: ${expected.length}/${expected.length} checked-in migrations present (${appliedTimestamps.size} total applied rows)`,
+	);
 }
 
 main().catch((error) => {

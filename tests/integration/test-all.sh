@@ -15,7 +15,7 @@ if [ -z "$JWT_TOKEN" ]; then
   echo "Get a token by:"
   echo "1. Start dev server: pnpm dev"
   echo "2. Login through frontend"
-  echo "3. Copy token from server logs"
+  echo "3. Copy the bearer token from an authenticated request in browser DevTools"
   exit 1
 fi
 

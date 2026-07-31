@@ -1,13 +1,25 @@
 /**
  * Input Sanitization Utilities
  *
- * Provides XSS prevention and input sanitization for user-provided data.
+ * Structural sanitization for user-provided data that is about to be
+ * PERSISTED: control-character removal, HTML tag stripping, URL scheme
+ * validation, length caps.
+ *
+ * Deliberately NOT entity-escaping: stored data stays plain text exactly as
+ * the user meant it (`O'Brien` is `O'Brien`, `A & B Co` is `A & B Co`).
+ * Escaping is a RENDER-time concern — escaping at rest corrupts search and
+ * uniqueness semantics and double-escapes on every read-modify-write
+ * round-trip. Use {@link escapeHtml} at the point a value is interpolated
+ * into HTML.
  */
 
 /**
- * Sanitize string input to prevent XSS attacks
+ * Sanitize a plain-text string for persistence.
  *
- * Removes or escapes potentially dangerous characters and HTML tags
+ * Always removes control characters and HTML tags (including script/style
+ * blocks with their contents); with `allowHtml: true` a whitelist of
+ * formatting tags survives instead (for rich-text fields). Never
+ * entity-escapes — see the module docblock.
  *
  * @param input - The string to sanitize
  * @param options - Sanitization options
@@ -27,52 +39,170 @@ export function sanitizeString(
 
 	let sanitized = input;
 
-	// Trim whitespace
-	sanitized = sanitized.trim();
+	// Remove NUL and C0 control characters (keep \t \r \n — ordinary
+	// whitespace, optionally handled below).
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: that's the point
+	sanitized = sanitized.replace(/[\0\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 
-	// Enforce max length
-	if (options.maxLength && sanitized.length > options.maxLength) {
-		sanitized = sanitized.substring(0, options.maxLength);
-	}
+	sanitized = options.allowHtml
+		? stripUnsafeTags(sanitized)
+		: stripAllTags(sanitized);
+
+	// Trim whitespace (after tag stripping, which can expose leading/trailing
+	// whitespace that surrounded a removed tag)
+	sanitized = sanitized.trim();
 
 	// Strip newlines if requested
 	if (options.stripNewlines) {
 		sanitized = sanitized.replace(/[\r\n]/g, " ");
 	}
 
-	if (!options.allowHtml) {
-		sanitized = escapeHtml(sanitized);
-	} else {
-		sanitized = stripUnsafeTags(sanitized);
+	// Enforce max length
+	if (options.maxLength && sanitized.length > options.maxLength) {
+		sanitized = sanitized.substring(0, options.maxLength);
 	}
 
 	return sanitized;
 }
 
-const SAFE_TAG_RE =
-	/^\/?(b|i|em|strong|p|br|ul|ol|li|a|span|blockquote|code|pre|h[1-6])$/i;
-
 /**
- * Strip all HTML tags except a safe formatting whitelist.
- * Also strips event-handler attributes (on*) from surviving tags.
+ * Remove every HTML tag; script/style blocks lose their CONTENTS too (the
+ * text inside them is code, not prose). Idempotent — running it twice never
+ * changes the result again, unlike escaping. Non-markup uses of `<` with no
+ * closing `>` ("a < b", "I <3 you") survive untouched.
  */
-function stripUnsafeTags(input: string): string {
-	return input
-		.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (match, tag: string) => {
-			if (!SAFE_TAG_RE.test(tag)) return "";
-			return match.replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/gi, "");
-		})
-		.replace(/<script[\s>][\s\S]*?<\/script>/gi, "")
-		.replace(/<style[\s>][\s\S]*?<\/style>/gi, "");
+function stripAllTags(input: string): string {
+	return filterMarkup(input, false);
+}
+
+const SAFE_TAGS = new Set([
+	"a",
+	"b",
+	"blockquote",
+	"br",
+	"code",
+	"em",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"i",
+	"li",
+	"ol",
+	"p",
+	"pre",
+	"span",
+	"strong",
+	"ul",
+]);
+
+interface MarkupToken {
+	closing: boolean;
+	end: number;
+	name: string;
+}
+
+/** Parse one tag without using regex-based HTML filtering. */
+function markupTokenAt(input: string, start: number): MarkupToken | undefined {
+	if (input[start] !== "<") return undefined;
+	let cursor = start + 1;
+	while (cursor < input.length && /\s/.test(input[cursor] ?? "")) cursor++;
+	const closing = input[cursor] === "/";
+	if (closing) {
+		cursor++;
+		while (cursor < input.length && /\s/.test(input[cursor] ?? "")) cursor++;
+	}
+	const nameStart = cursor;
+	while (cursor < input.length && /[a-zA-Z0-9]/.test(input[cursor] ?? "")) {
+		cursor++;
+	}
+	if (cursor === nameStart || !/[a-zA-Z]/.test(input[nameStart] ?? "")) {
+		return undefined;
+	}
+	const name = input.slice(nameStart, cursor).toLowerCase();
+
+	let quote: '"' | "'" | undefined;
+	for (; cursor < input.length; cursor++) {
+		const char = input[cursor];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === ">") {
+			return {
+				closing,
+				end: cursor + 1,
+				name,
+			};
+		}
+	}
+	return undefined;
 }
 
 /**
- * Escape HTML special characters to prevent XSS
+ * Tokenize markup, discard script/style blocks, and optionally reconstruct a
+ * formatting-only whitelist with every attribute removed.
+ */
+function filterMarkup(input: string, allowSafeTags: boolean): string {
+	let output = "";
+	let suppressed: "script" | "style" | undefined;
+	let cursor = 0;
+
+	while (cursor < input.length) {
+		if (input[cursor] !== "<") {
+			if (!suppressed) output += input[cursor];
+			cursor++;
+			continue;
+		}
+
+		const token = markupTokenAt(input, cursor);
+		if (!token) {
+			if (!suppressed) output += "<";
+			cursor++;
+			continue;
+		}
+		cursor = token.end;
+
+		if (token.name === "script" || token.name === "style") {
+			if (token.closing && suppressed === token.name) suppressed = undefined;
+			else if (!token.closing && !suppressed) suppressed = token.name;
+			continue;
+		}
+		if (suppressed) continue;
+		if (allowSafeTags && SAFE_TAGS.has(token.name)) {
+			output += `<${token.closing ? "/" : ""}${token.name}>`;
+		}
+	}
+
+	return output;
+}
+
+/**
+ * Strip all HTML tags except a safe formatting whitelist.
+ * Reconstruct surviving tags without attributes, so event handlers, styles,
+ * and dangerous URL schemes cannot cross the persistence boundary.
+ */
+function stripUnsafeTags(input: string): string {
+	return filterMarkup(input, true);
+}
+
+/**
+ * Escape HTML special characters to prevent XSS.
+ *
+ * RENDER-time utility: call this where a stored value is interpolated into
+ * HTML (emails, server-rendered pages). Data at rest is stored unescaped —
+ * see the module docblock.
  *
  * @param input - The string to escape
  * @returns HTML-escaped string
  */
-function escapeHtml(input: string): string {
+export function escapeHtml(input: string): string {
 	const htmlEscapeMap: Record<string, string> = {
 		"&": "&amp;",
 		"<": "&lt;",
@@ -154,7 +284,8 @@ export function sanitizeFilename(
  * @param options - Sanitization options
  * @returns Sanitized object
  */
-// Keys whose string values should NOT be HTML-escaped (URLs, JSON, etc.)
+// Keys whose string values are treated as URLs (scheme-validated) rather than
+// run through tag/control-char stripping.
 const RAW_STRING_KEYS = new Set([
 	"photoUrl",
 	"photo_url",
@@ -191,11 +322,13 @@ function sanitizeUrlValue(value: string): string {
 	// Block protocol-relative URLs (//host/path)
 	if (value.startsWith("//")) return "";
 
-	// For absolute URLs, validate they have a proper http(s) scheme
+	// For absolute URLs, require HTTPS. URL-like keys are often later used as
+	// redirects, images, or fetch targets; preserving http:// would create an
+	// unnecessary downgrade/open-redirect footgun.
 	if (value.includes("://")) {
 		try {
 			const parsed = new URL(value);
-			if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+			if (parsed.protocol !== "https:") {
 				return "";
 			}
 		} catch {
@@ -311,19 +444,3 @@ export const ALLOWED_FILE_EXTENSIONS = {
 	VIDEO: ["mp4", "webm", "mov", "avi"],
 	AVATAR: ["jpg", "jpeg", "png", "webp"],
 } as const;
-
-/**
- * Validate file extension
- *
- * @param filename - The filename
- * @param category - File category
- * @returns true if valid, false otherwise
- */
-export function validateFileExtension(
-	filename: string,
-	category: keyof typeof ALLOWED_FILE_EXTENSIONS,
-): boolean {
-	const extension = filename.split(".").pop()?.toLowerCase() || "";
-	const allowed = ALLOWED_FILE_EXTENSIONS[category] as readonly string[];
-	return allowed.includes(extension);
-}

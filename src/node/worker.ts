@@ -13,14 +13,12 @@ import type { WorkOSWebhookEvent } from "./lib/validation/webhooks";
 import { handleQueueBatch } from "./queue";
 
 /**
- * Cloudflare Workers entry point (`main` in wrangler.toml) — the replacement
- * for every Lambda entry file. One Worker serves the whole backend:
+ * Cloudflare Workers entry point (`main` in wrangler.toml). One Worker serves
+ * the whole backend:
  *
  *   - `fetch`     → delegates to the single Hono app (`src/node/app.ts`),
- *                   exactly like `handle(app)` did on Lambda.
  *   - `scheduled` → dispatches Cron Triggers by cron expression to the
- *                   registry in `src/node/cron.ts` (replaces the EventBridge
- *                   rules + scheduled Lambdas).
+ *                   registry in `src/node/cron.ts`.
  *
  * `nodejs_compat` + the 2025+ compatibility_date populate `process.env` from
  * wrangler `[vars]` and secrets, so existing `process.env.X` reads work as-is.
@@ -43,9 +41,10 @@ export type WorkerBindings = {
 	 * wrangler.toml. The HTTP ingest route (routes/webhooks.ts) sends verified
 	 * events here; `worker.queue` consumes them via `handleQueueBatch`.
 	 *
-	 * OPTIONAL because local dev (`wrangler dev --local`) and the Node test
-	 * server run without a real queue binding — the route falls back to inline
-	 * processing when it is absent (see routes/webhooks.ts).
+	 * OPTIONAL in the TypeScript shape because direct app/unit harnesses can run
+	 * without platform bindings. Wrangler supplies a simulated queue locally;
+	 * an explicitly local direct harness falls back to inline processing when
+	 * the binding is absent (see routes/webhooks.ts).
 	 */
 	WEBHOOK_QUEUE?: Queue<WorkOSWebhookEvent>;
 	/**
@@ -73,7 +72,7 @@ export type WorkerEnv = WorkerBindings & {
  * One scheduled job. Registered in `src/node/cron.ts` keyed by the EXACT cron
  * expression from wrangler.toml `[triggers]`. Handlers must finish their own
  * DB work (or hand background tails to `ctx.waitUntil`) and THROW on failure
- * so the platform records a failed invocation (the DLQ-alarm equivalent).
+ * so the platform records a failed invocation.
  */
 export type CronHandler = (
 	env: WorkerEnv,
@@ -114,7 +113,7 @@ const worker = {
 	/**
 	 * Cloudflare Queues consumer entry point. Both the main webhook queue and
 	 * its dead-letter queue route here; `handleQueueBatch` (src/node/queue.ts)
-	 * branches on `batch.queue`. Replaces the old webhook DLQ + alarm.
+	 * branches on `batch.queue`.
 	 */
 	async queue(
 		batch: MessageBatch<WorkOSWebhookEvent>,

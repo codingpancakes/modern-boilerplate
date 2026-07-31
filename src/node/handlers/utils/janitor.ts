@@ -8,7 +8,7 @@ const logger = createLogger({ serviceName: "idempotency-janitor" });
 
 /**
  * Daily janitor job — deletes expired idempotency keys. Throws on failure so
- * the platform records a failed cron invocation (the DLQ-alarm equivalent).
+ * the platform records a failed cron invocation.
  */
 export async function runJanitor(): Promise<void> {
 	try {

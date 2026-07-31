@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { JWTVerifyGetKey } from "jose";
 import {
+	AuthVerificationUnavailableError,
 	createWorkosJwks,
 	verifyWorkosToken,
 	type WorkosTokenClaims,
@@ -11,28 +12,31 @@ import {
 	AUDIT_STATUS,
 	logAudit,
 } from "../audit";
+import { errorMessage } from "../error-utils";
 import { ApiError } from "../errors";
+import { createLogger } from "../logger";
+import { isLocalDevelopmentStage } from "../stage";
 import type { AppEnv, AuthClaims } from "./types";
 
 /**
  * Auth middleware for the shared Hono app.
  *
  * The bearer token is verified directly with the SHARED verifier
- * (`authorizers/verify-token.ts`) — the single source of auth trust, exactly
- * the validation contract the old API Gateway Lambda authorizer enforced
+ * (`authorizers/verify-token.ts`) — the single source of auth trust
  * (RS256 + issuer + sub + client_id binding). There is no other claims path:
  * the Worker IS the edge, so no upstream authorizer context exists.
  *
- * Resulting claims are stringified like the old authorizer context, so
- * handlers see one claim shape everywhere (`AuthClaims` in ./types).
+ * Resulting claims use the normalized string contract described by
+ * `AuthClaims` in `./types`.
  */
 
 /**
- * Byte-compatible with the legacy withAuth 401 body, which says
- * `error: "Unauthorized"` (Errors.Unauthorized() says "Authentication
- * required" — clients already depend on the former).
+ * Stable authentication failure body. Clients depend on the
+ * `error: "Unauthorized"` message.
  */
 const unauthorized = () => new ApiError(401, "UNAUTHORIZED", "Unauthorized");
+
+const logger = createLogger({ serviceName: "auth-middleware" });
 
 /**
  * JWKS key sets are cached per client id. Safe to share across requests on
@@ -53,13 +57,13 @@ async function verifyBearerToken(
 	// Read per request, not at module init: on Workers, env vars/secrets are
 	// populated per invocation by nodejs_compat.
 	const clientId = process.env.WORKOS_CLIENT_ID || "";
-	// Fail CLOSED in deployed environments: an empty client id disables the
-	// `client_id` audience binding (intended only for local dev), which would
-	// accept any WorkOS-signed token. Never run unbound in staging/production.
+	// Fail CLOSED unless the stage is explicitly local/development: an empty
+	// client id disables the `client_id` audience binding, which would accept any
+	// WorkOS-signed token. A missing/typoed STAGE must not silently run unbound.
 	const stage = process.env.STAGE;
-	if (!clientId && (stage === "production" || stage === "staging")) {
+	if (!clientId && !isLocalDevelopmentStage(stage)) {
 		throw new Error(
-			"WORKOS_CLIENT_ID is required in deployed environments (audience binding must not be disabled)",
+			"WORKOS_CLIENT_ID is required unless STAGE is explicitly local/development (audience binding must not be disabled)",
 		);
 	}
 	if (!jwksCache || jwksCache.clientId !== clientId) {
@@ -69,16 +73,34 @@ async function verifyBearerToken(
 	let claims: WorkosTokenClaims;
 	try {
 		claims = await verifyWorkosToken(token, jwksCache.jwks, { clientId });
-	} catch {
+	} catch (error) {
+		// A JWKS outage is NOT an invalid token. Collapsing it into a 401 would
+		// tell every client their session is bad while producing zero operator
+		// signal (Sentry drops routine 401s). Surface a 503 — app.onError
+		// captures 5xx to Sentry.
+		if (error instanceof AuthVerificationUnavailableError) {
+			// Drop the cached key set: it can hold a rejected/poisoned in-flight
+			// fetch (possibly tied to another request's I/O context on Workers);
+			// the next request rebuilds it cleanly.
+			jwksCache = undefined;
+			logger.error("Token verification unavailable (JWKS/infra failure)", {
+				error: errorMessage(error),
+				cause: error.cause ? errorMessage(error.cause) : undefined,
+			});
+			throw new ApiError(
+				503,
+				"AUTH_UNAVAILABLE",
+				"Authentication service temporarily unavailable",
+			);
+		}
 		throw unauthorized();
 	}
 	return toAuthorizerContext(claims);
 }
 
 /**
- * Mirror the string-only context the old deployed Lambda authorizer built,
- * including `urn:*` custom-claim forwarding, so the claim shape handlers see
- * is unchanged by the platform move.
+ * Normalize verified claims to the string-only handler contract, including
+ * forwarding custom `urn:*` claims.
  */
 function toAuthorizerContext(payload: WorkosTokenClaims): AuthClaims {
 	const payloadData: Record<string, unknown> = payload;
@@ -120,7 +142,10 @@ export const requireAuth = (): MiddlewareHandler<AppEnv> => async (c, next) => {
 			userAgent: c.req.header("user-agent"),
 			requestId: c.get("requestId"),
 			metadata: {
-				reason: "invalid_token",
+				reason:
+					error instanceof ApiError && error.statusCode === 503
+						? "auth_unavailable"
+						: "invalid_token",
 				path: c.req.path,
 				method: c.req.method,
 			},

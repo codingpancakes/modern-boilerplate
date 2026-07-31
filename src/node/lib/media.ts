@@ -238,7 +238,7 @@ export async function generatePresignedUploadUrl(
 /**
  * Upload an object through the R2 S3 API. Fallback for the direct-upload
  * route when the R2 binding (`c.env.IMAGES`) is not available (e.g. the
- * local Node server). Metadata keys must already be header-safe.
+ * direct app/test harness). Metadata keys must already be header-safe.
  */
 export async function putImageObject(
 	key: string,

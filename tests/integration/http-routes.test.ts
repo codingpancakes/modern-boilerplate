@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { Pool } from "pg";
 import {
@@ -15,7 +16,7 @@ import {
  * Request-level integration tests for the Hono HTTP routes.
  *
  * Drives the REAL exported `app` via `app.fetch(new Request(...), env, ctx)` —
- * the same entrypoint the Worker/Node server uses — so middleware order, the
+ * the same app entrypoint the Worker uses — so middleware order, the
  * onError/notFound wire shape, CORS + security headers, per-domain auth, Zod
  * validation, and the route handlers are all exercised together. The
  * lib/resolver layer is unit-tested elsewhere; this file covers the wire.
@@ -59,7 +60,12 @@ vi.mock("@/authorizers/verify-token", async () => {
 });
 
 import { app } from "@/app";
-import { authIdentities, profiles, users } from "@/db/schema/index";
+import {
+	authIdentities,
+	idempotencyKeys,
+	profiles,
+	users,
+} from "@/db/schema/index";
 import {
 	createTestDb,
 	type TestDb,
@@ -81,6 +87,7 @@ const SEEDED_SUBJECT = "user_workos_http_routes";
 // not production/staging (vitest runs as "test"), so the CORS assertions stay
 // independent from project-specific CORS env vars.
 const ALLOWED_ORIGIN = "http://localhost:3000";
+const WORKOS_WEBHOOK_SECRET = "whsec_test_http_routes";
 
 // A no-op ExecutionContext — the app's middleware never touches waitUntil in
 // these flows, but app.fetch's third arg is typed, so pass a minimal stub.
@@ -105,6 +112,14 @@ function fetchApp(
 	);
 }
 
+function workosSignatureFor(payload: string): string {
+	const timestamp = Date.now();
+	const signature = createHmac("sha256", WORKOS_WEBHOOK_SECRET)
+		.update(`${timestamp}.${payload}`)
+		.digest("hex");
+	return `t=${timestamp}, v1=${signature}`;
+}
+
 beforeAll(async () => {
 	({ db, pool } = await createTestDb());
 	getDbMock.mockResolvedValue(db);
@@ -117,8 +132,9 @@ beforeAll(async () => {
 	// Routes/middleware read these off process.env (mirrored from Worker vars by
 	// nodejs_compat in prod). Set explicit values so assertions are deterministic
 	// and not dependent on the developer's shell env.
-	process.env.STAGE = "dev";
+	process.env.STAGE = "local";
 	process.env.API_VERSION = "v1";
+	process.env.WORKOS_WEBHOOK_SECRET = WORKOS_WEBHOOK_SECRET;
 	// Ensure media is NOT configured for the 503 assertion. Must DELETE, not set
 	// to undefined: `process.env.X = undefined` stores the truthy string
 	// "undefined", which would make getMediaConfig() pass and the route 500.
@@ -153,6 +169,8 @@ afterEach(() => {
 		iss: "https://api.workos.com/",
 		email: "ada@example.com",
 	});
+	process.env.STAGE = "local";
+	delete process.env.WORKOS_CLIENT_ID;
 	for (const key of ["IMAGES_BUCKET", "IMAGES_CDN_URL"]) {
 		delete process.env[key];
 	}
@@ -215,21 +233,34 @@ describe("HTTP routes — public / unauthenticated", () => {
 		process.env.IMAGES_BUCKET = "images-test";
 		process.env.IMAGES_CDN_URL = "https://cdn.example.test";
 
-		const res = await fetchApp(
-			"/v1/health/detailed",
-			undefined,
-			{
-				IMAGES: {
-					list: vi.fn().mockRejectedValue(new Error("r2 unavailable")),
-				},
-			} as unknown as Parameters<typeof app.fetch>[1],
-		);
+		const res = await fetchApp("/v1/health/detailed", undefined, {
+			IMAGES: {
+				list: vi.fn().mockRejectedValue(new Error("r2 unavailable")),
+			},
+		} as unknown as Parameters<typeof app.fetch>[1]);
 		expect(res.status).toBe(200);
 
 		const body = await res.json();
 		expect(body.success).toBe(true);
 		expect(body.data.status).toBe("degraded");
 		expect(body.data).not.toHaveProperty("checks");
+	});
+
+	it("GET /v1/health/detailed is unhealthy when deployed WorkOS config is incomplete", async () => {
+		process.env.STAGE = "staging";
+		delete process.env.WORKOS_CLIENT_ID;
+
+		const res = await fetchApp("/v1/health/detailed", undefined, {
+			RATE_LIMITER: {
+				limit: vi.fn().mockResolvedValue({ success: true }),
+			},
+			WEBHOOK_QUEUE: {},
+		} as unknown as Parameters<typeof app.fetch>[1]);
+
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.success).toBe(true);
+		expect(body.data.status).toBe("unhealthy");
 	});
 
 	it("unknown path → 404 with the formatError wire shape", async () => {
@@ -306,6 +337,60 @@ describe("HTTP routes — public / unauthenticated", () => {
 		expect(body.success).toBe(false);
 		expect(body.details.code).toBe("UNAUTHORIZED");
 	});
+
+	it("POST /v1/webhooks/workos with signed malformed JSON → 400 BAD_REQUEST", async () => {
+		const payload = '{"id":"evt_bad_json",';
+		const res = await fetchApp("/v1/webhooks/workos", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"workos-signature": workosSignatureFor(payload),
+			},
+			body: payload,
+		});
+
+		expect(res.status).toBe(400);
+		const body = await res.json();
+		expect(body.success).toBe(false);
+		expect(body.details.code).toBe("BAD_REQUEST");
+		expect(body.error).toBe("Malformed JSON payload");
+	});
+
+	it("POST /v1/webhooks/workos fails closed without a deployed queue binding", async () => {
+		process.env.STAGE = "staging";
+		const payload = JSON.stringify({
+			id: "evt_missing_queue",
+			event: "user.created",
+			data: {
+				id: "user_missing_queue",
+				email: "queue@example.com",
+				first_name: "Queue",
+				last_name: "Test",
+			},
+			created_at: "2026-07-24T00:00:00Z",
+		});
+
+		const res = await fetchApp(
+			"/v1/webhooks/workos",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"workos-signature": workosSignatureFor(payload),
+				},
+				body: payload,
+			},
+			{
+				RATE_LIMITER: {
+					limit: vi.fn().mockResolvedValue({ success: true }),
+				},
+			} as unknown as Parameters<typeof app.fetch>[1],
+		);
+
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.details.code).toBe("WEBHOOK_QUEUE_UNAVAILABLE");
+	});
 });
 
 describe("HTTP routes — authenticated", () => {
@@ -343,6 +428,75 @@ describe("HTTP routes — authenticated", () => {
 			.from(profiles)
 			.where(eq(profiles.userId, userId));
 		expect(row?.preferredName).toBe("Ace");
+	});
+
+	it("PATCH /v1/users/me replays the stored response for a repeated Idempotency-Key", async () => {
+		const userId = await seedUser();
+		const headers = {
+			...authHeaders,
+			"Content-Type": "application/json",
+			"Idempotency-Key": "patch-me-key-1",
+		};
+		const send = () =>
+			fetchApp("/v1/users/me", {
+				method: "PATCH",
+				headers,
+				body: JSON.stringify({ profile: { preferredName: "First" } }),
+			});
+
+		const first = await send();
+		expect(first.status).toBe(200);
+
+		// Change what a re-execution WOULD write, then replay the same key: the
+		// stored response comes back and the handler does NOT run again.
+		const second = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers,
+			body: JSON.stringify({ profile: { preferredName: "First" } }),
+		});
+		expect(second.status).toBe(200);
+		expect(await second.json()).toEqual(await first.json());
+
+		// A stored idempotency row exists for this subject+key (proves the header
+		// reached the lib, not just that two identical requests happened to match).
+		const keys = await db.select().from(idempotencyKeys);
+		expect(keys).toHaveLength(1);
+		expect(keys[0]?.status).toBe("completed");
+
+		const [row] = await db
+			.select()
+			.from(profiles)
+			.where(eq(profiles.userId, userId));
+		expect(row?.preferredName).toBe("First");
+	});
+
+	it("PATCH /v1/users/me rejects a reused Idempotency-Key with a different body (422)", async () => {
+		await seedUser();
+		const key = "patch-me-key-reuse";
+
+		const first = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers: {
+				...authHeaders,
+				"Content-Type": "application/json",
+				"Idempotency-Key": key,
+			},
+			body: JSON.stringify({ profile: { preferredName: "Alpha" } }),
+		});
+		expect(first.status).toBe(200);
+
+		const conflicting = await fetchApp("/v1/users/me", {
+			method: "PATCH",
+			headers: {
+				...authHeaders,
+				"Content-Type": "application/json",
+				"Idempotency-Key": key,
+			},
+			body: JSON.stringify({ profile: { preferredName: "Beta" } }),
+		});
+		expect(conflicting.status).toBe(422);
+		const body = await conflicting.json();
+		expect(body.details.code).toBe("IDEMPOTENCY_KEY_REUSED");
 	});
 
 	it("PATCH /v1/users/me with a malformed FLAT body → 400 VALIDATION_ERROR", async () => {

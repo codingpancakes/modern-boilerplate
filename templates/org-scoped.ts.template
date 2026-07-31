@@ -5,9 +5,9 @@
  *
  * Use this when the resource is owned by an org and access depends on the
  * caller's ACTIVE membership + role. There is no REST sibling for this yet —
- * the canonical implementation of the membership/role check lives in the
- * GraphQL resolvers (`src/node/handlers/graphql/resolvers/organizations.ts`);
- * the `requireMembership` / role-hierarchy logic below is the REST port of it.
+ * the canonical implementation of the membership/role check lives in
+ * `src/node/lib/services/organizations.ts`; reuse that service guard so REST
+ * and GraphQL cannot drift.
  *
  * ── How to wire it up ─────────────────────────────────────────────────────
  * 1. Save as `src/node/routes/<domain>.ts` (imports are relative to
@@ -23,17 +23,19 @@
  * 4. KEEP the `@swagger` JSDoc blocks — `pnpm docs:generate` reads them.
  *
  * ── Invariants this template observes (see AGENTS.md) ─────────────────────
- *  - `ACTIVE` filter on EVERY membership query (#6) — see `requireMembership`.
+ *  - `ACTIVE` filter on EVERY membership query (#6) — enforced by the shared
+ *    `requireActiveMembership` service guard.
  *  - No try-catch in handlers (#1); Zod-validate input (#2); `sanitizeObject()`
  *    before writes (#3); `logAudit()` on mutations (#4); transactions for
  *    multi-step writes (#8); `getDb()` per request (#9).
  *  - Throw via `Errors.*`; respond via `sendSuccess` (#7). No `any`.
  */
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-// `organizationMembers` is the membership table; replace `orgWidgets` with yours.
-import { organizationMembers, orgWidgets } from "../db/schema/index";
+import { z } from "zod";
+// Replace `orgWidgets` with your table.
+import { orgWidgets } from "../db/schema/index";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -43,82 +45,19 @@ import {
 import { getUserIdFromClaims } from "../lib/auth";
 import { getDb } from "../lib/db";
 import { Errors } from "../lib/errors";
+import { withTransactionalIdempotentJson } from "../lib/hono/idempotent-response";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
 import { sanitizeObject } from "../lib/sanitize";
-import { parseBody } from "../lib/validation/helpers";
+import { requireActiveMembership } from "../lib/services/organizations";
+import { parseBody, validate } from "../lib/validation/helpers";
 // import * as schemas from "../lib/validation/<domain>";
 
 export const orgWidgetRoutes = new Hono<AppEnv>();
 
 const listLogger = createLogger({ serviceName: "org-widgets-list" });
 const createLog = createLogger({ serviceName: "org-widgets-create" });
-
-/**
- * Role hierarchy — ported verbatim from the organizations GraphQL resolver so
- * the two surfaces authorize identically. Higher number = more privilege.
- */
-const ROLE_HIERARCHY: Record<string, number> = {
-	VIEWER: 0,
-	MEMBER: 1,
-	MANAGER: 2,
-	ADMIN: 3,
-	OWNER: 4,
-};
-
-function roleLevel(role: string): number {
-	const level = ROLE_HIERARCHY[role];
-	if (level === undefined) {
-		// Misconfiguration, not a client error.
-		throw Errors.InternalServerError(`Unknown role: ${role}`);
-	}
-	return level;
-}
-
-function hasMinRole(userRole: string, requiredRole: string): boolean {
-	return roleLevel(userRole) >= roleLevel(requiredRole);
-}
-
-/**
- * Assert the caller has an ACTIVE membership in `organizationId` (and, if
- * `minRole` is given, at least that role). Returns the membership row so the
- * caller can read `membership.role` for further checks. REST port of
- * `requireMembership` in the organizations GraphQL resolver.
- *
- * NOTE the `eq(organizationMembers.status, "ACTIVE")` filter — invariant #6,
- * required on every membership query. A missing/inactive membership is a 403
- * (deliberately indistinguishable from "org does not exist" — don't leak it).
- */
-async function requireMembership(
-	userId: string,
-	organizationId: string,
-	minRole?: string,
-) {
-	const db = await getDb();
-
-	const [membership] = await db
-		.select()
-		.from(organizationMembers)
-		.where(
-			and(
-				eq(organizationMembers.userId, userId),
-				eq(organizationMembers.organizationId, organizationId),
-				eq(organizationMembers.status, "ACTIVE"),
-			),
-		)
-		.limit(1);
-
-	if (!membership) {
-		throw Errors.Forbidden();
-	}
-
-	if (minRole && !hasMinRole(membership.role ?? "MEMBER", minRole)) {
-		throw Errors.Forbidden();
-	}
-
-	return membership;
-}
 
 /**
  * @swagger
@@ -144,14 +83,16 @@ async function requireMembership(
  */
 orgWidgetRoutes.get("/:organizationId", async (c) => {
 	const userId = await getUserIdFromClaims(c.get("claims"));
-	const organizationId = c.req.param("organizationId");
+	const organizationId = validate(
+		z.string().uuid(),
+		c.req.param("organizationId"),
+	);
+	const db = await getDb();
 
 	// Any ACTIVE member may read.
-	await requireMembership(userId, organizationId);
+	await requireActiveMembership(db, userId, organizationId);
 
 	listLogger.info("Listing org widgets", { userId, organizationId });
-
-	const db = await getDb();
 
 	// Scope the query to the org — never return another org's rows.
 	const rows = await db
@@ -196,53 +137,67 @@ orgWidgetRoutes.get("/:organizationId", async (c) => {
  *         description: Forbidden - insufficient role
  */
 orgWidgetRoutes.post("/:organizationId", async (c) => {
-	const userId = await getUserIdFromClaims(c.get("claims"));
-	const organizationId = c.req.param("organizationId");
+	const claims = c.get("claims");
+	const userId = await getUserIdFromClaims(claims);
+	const organizationId = validate(
+		z.string().uuid(),
+		c.req.param("organizationId"),
+	);
+	const rawBody = await c.req.text();
+	const query = c.req.query();
+	let auditEntry: Parameters<typeof logAudit>[0] | undefined;
 
-	// Mutations require a minimum role — mirrors updateOrganization ("ADMIN").
-	await requireMembership(userId, organizationId, "ADMIN");
+	const response = await withTransactionalIdempotentJson(
+		{
+			key: c.req.header("idempotency-key"),
+			sub: claims.sub,
+			method: c.req.method,
+			path: c.req.path,
+			body: rawBody === "" ? undefined : rawBody,
+			query: Object.keys(query).length > 0 ? query : undefined,
+		},
+		async (tx) => {
+			// 1. Validate and sanitize caller-controlled input.
+			const input = parseBody(rawBody, schemas.create);
+			const clean = sanitizeObject(input as Record<string, unknown>);
 
-	// 1. Validate the raw body with Zod.
-	const input = parseBody(await c.req.text(), schemas.create);
+			createLog.info("Creating org widget", {
+				userId,
+				organizationId,
+				fields: Object.keys(input),
+			});
 
-	createLog.info("Creating org widget", {
-		userId,
-		organizationId,
-		fields: Object.keys(input),
-	});
+			// 2. Re-check ACTIVE membership + role on the SAME transaction that
+			//    performs the mutation and stores the idempotent response.
+			await requireActiveMembership(tx, userId, organizationId, "ADMIN");
 
-	const db = await getDb();
+			const [created] = await tx
+				.insert(orgWidgets)
+				.values({ ...clean, organizationId, createdByUserId: userId })
+				.returning();
 
-	// 2. Sanitize before the write.
-	const clean = sanitizeObject(input as Record<string, unknown>);
+			if (!created) {
+				throw Errors.InternalServerError("Widget creation failed");
+			}
 
-	// 3. Multi-step / multi-table writes → transaction.
-	const created = await db.transaction(async (tx) => {
-		const [row] = await tx
-			.insert(orgWidgets)
-			.values({ ...clean, organizationId, createdByUserId: userId })
-			.returning();
-		return row;
-	});
+			// Stage audit data; start the detached audit only after commit.
+			auditEntry = {
+				userId,
+				organizationId,
+				action: AUDIT_ACTIONS.CREATE,
+				resourceType: AUDIT_RESOURCE_TYPES.SETTINGS, // pick the right type
+				resourceId: created.id,
+				changes: { after: created },
+				ipAddress: c.req.header("cf-connecting-ip"),
+				userAgent: c.req.header("user-agent"),
+				requestId: c.get("requestId"),
+				status: AUDIT_STATUS.SUCCESS,
+			};
 
-	// 4. Null-guard before use.
-	if (!created) {
-		throw Errors.InternalServerError("Widget creation failed");
-	}
+			return { widget: created };
+		},
+	);
 
-	// 5. Audit the mutation, fire-and-forget, with org + request context.
-	void logAudit({
-		userId,
-		organizationId,
-		action: AUDIT_ACTIONS.CREATE,
-		resourceType: AUDIT_RESOURCE_TYPES.SETTINGS, // pick the right type
-		resourceId: created.id,
-		changes: { after: created },
-		ipAddress: c.req.header("cf-connecting-ip"),
-		userAgent: c.req.header("user-agent"),
-		requestId: c.get("requestId"),
-		status: AUDIT_STATUS.SUCCESS,
-	});
-
-	return sendSuccess(c, { widget: created });
+	if (auditEntry) void logAudit(auditEntry);
+	return response;
 });

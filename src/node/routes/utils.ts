@@ -1,11 +1,12 @@
-import { sql } from "drizzle-orm";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { idempotencyKeys } from "../db/schema/index";
 import { getDb } from "../lib/db";
 import { errorMessage } from "../lib/error-utils";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
+import { isDeployedStage } from "../lib/stage";
 
 /**
  * Utility routes (public). Mounted at `/v1` by the barrel in
@@ -15,9 +16,9 @@ import { createLogger } from "../lib/logger";
  *   GET /health/detailed  — DB health + configured external-service checks
  *
  * OPTIONS preflight is answered globally by the CORS middleware in
- * `lib/hono/middleware.ts` (documented below as /v1/utils/options for
- * OpenAPI parity); the janitor and audit-retention jobs are Cron Triggers
- * (`src/node/cron.ts`), not HTTP routes.
+ * `lib/hono/middleware.ts`; it is not a standalone API endpoint. The janitor
+ * and audit-retention jobs are Cron Triggers (`src/node/cron.ts`), not HTTP
+ * routes.
  */
 export const utils = new Hono<AppEnv>();
 
@@ -35,7 +36,10 @@ async function checkDatabase(): Promise<HealthCheck> {
 	try {
 		// Simple query to check database connectivity
 		const db = await getDb();
-		await db.execute(sql`SELECT 1`);
+		await db
+			.select({ key: idempotencyKeys.key })
+			.from(idempotencyKeys)
+			.limit(0);
 		const responseTime = Date.now() - start;
 
 		return {
@@ -58,12 +62,13 @@ async function checkDatabase(): Promise<HealthCheck> {
 
 async function checkWorkOSConfig(): Promise<HealthCheck> {
 	const clientId = process.env.WORKOS_CLIENT_ID;
+	const webhookSecret = process.env.WORKOS_WEBHOOK_SECRET;
 
-	if (!clientId) {
+	if (!clientId || !webhookSecret) {
 		return {
-			status: "skipped",
+			status: isDeployedStage() ? "error" : "skipped",
 			configured: false,
-			message: "WorkOS not configured",
+			message: "WorkOS authentication or webhook configuration is incomplete",
 		};
 	}
 
@@ -73,6 +78,26 @@ async function checkWorkOSConfig(): Promise<HealthCheck> {
 		status: "ok",
 		configured: true,
 		message: "WorkOS configuration present",
+	};
+}
+
+async function checkRuntimeBindings(c: Context<AppEnv>): Promise<HealthCheck> {
+	const missing: string[] = [];
+	if (!c.env?.WEBHOOK_QUEUE) missing.push("WEBHOOK_QUEUE");
+	if (!c.env?.RATE_LIMITER) missing.push("RATE_LIMITER");
+
+	if (missing.length > 0) {
+		return {
+			status: isDeployedStage() ? "error" : "skipped",
+			configured: false,
+			message: `Runtime bindings unavailable: ${missing.join(", ")}`,
+		};
+	}
+
+	return {
+		status: "ok",
+		configured: true,
+		message: "Required runtime bindings present",
 	};
 }
 
@@ -118,19 +143,6 @@ async function checkMediaStorage(c: Context<AppEnv>): Promise<HealthCheck> {
 		};
 	}
 }
-
-/**
- * @swagger
- * /v1/utils/options:
- *   options:
- *     tags: [Utils]
- *     summary: CORS preflight handler
- *     description: Handles OPTIONS preflight requests for CORS. Returns 204 No Content with proper CORS headers.
- *     security: []
- *     responses:
- *       204:
- *         description: No content - CORS preflight successful
- */
 
 /**
  * @swagger
@@ -183,7 +195,7 @@ utils.get("/health", (c) => {
  *   get:
  *     tags: [Utils]
  *     summary: Detailed health check endpoint
- *     description: Returns comprehensive health status including database connectivity and external service checks. No authentication required.
+ *     description: Runs database, WorkOS configuration, required-binding, and R2 checks. Returns only the aggregate status; detailed check results stay in structured server logs.
  *     security: []
  *     responses:
  *       200:
@@ -209,45 +221,15 @@ utils.get("/health", (c) => {
  *                     version:
  *                       type: string
  *                       example: v1
- *                     stage:
- *                       type: string
- *                       example: production
- *                     checks:
- *                       type: object
- *                       properties:
- *                         database:
- *                           type: object
- *                           properties:
- *                             status:
- *                               type: string
- *                               enum: [ok, error]
- *                             responseTime:
- *                               type: number
- *                               description: Response time in milliseconds
- *                             message:
- *                               type: string
- *                         workos:
- *                           type: object
- *                           properties:
- *                             status:
- *                               type: string
- *                               enum: [ok, error, skipped]
- *                             configured:
- *                               type: boolean
- *                         s3:
- *                           type: object
- *                           properties:
- *                             status:
- *                               type: string
- *                               enum: [ok, error, skipped]
- *                             configured:
- *                               type: boolean
+ *       503:
+ *         description: A critical database, WorkOS configuration, or runtime-binding check failed
  */
 utils.get("/health/detailed", async (c) => {
 	// Run all health checks in parallel
-	const [database, workos, storage] = await Promise.all([
+	const [database, workos, runtimeBindings, storage] = await Promise.all([
 		checkDatabase(),
 		checkWorkOSConfig(),
+		checkRuntimeBindings(c),
 		checkMediaStorage(c),
 	]);
 
@@ -255,19 +237,23 @@ utils.get("/health/detailed", async (c) => {
 	let overallStatus: "healthy" | "degraded" | "unhealthy" = "healthy";
 
 	// Critical: Database must be ok
-	if (database.status === "error") {
+	if (
+		database.status === "error" ||
+		workos.status === "error" ||
+		runtimeBindings.status === "error"
+	) {
 		overallStatus = "unhealthy";
 	}
 
 	// Degraded: External services have issues but not critical
-	else if (workos.status === "error" || storage.status === "error") {
+	else if (storage.status === "error") {
 		overallStatus = "degraded";
 	}
 
 	// Log full details for internal debugging; public response is minimal
 	logger.info("Health check completed", {
 		status: overallStatus,
-		checks: { database, workos, storage },
+		checks: { database, workos, runtimeBindings, storage },
 	});
 
 	const httpStatus = overallStatus === "unhealthy" ? 503 : 200;

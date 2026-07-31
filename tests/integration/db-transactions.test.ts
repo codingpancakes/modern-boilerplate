@@ -2,7 +2,8 @@ import { eq } from "drizzle-orm";
 import type { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { authIdentities, profiles, users } from "@/db/schema/index";
-import type { DbInstance } from "@/lib/db";
+import type { DbInstance, DbTransaction } from "@/lib/db";
+import { updateMyAccountInTransaction } from "@/lib/services/user-account";
 import { createUserWithIdentity } from "@/lib/services/user-provisioning";
 import {
 	createTestDb,
@@ -99,5 +100,46 @@ describe("db transactions (real Postgres)", () => {
 
 		const after = await db.select().from(users);
 		expect(after).toHaveLength(before.length);
+	});
+
+	it("serializes concurrent account updates so audit before-state is accurate", async () => {
+		const userId = await createUserWithIdentity(db as unknown as DbInstance, {
+			providerSubject: "concurrent_audit_subject",
+			email: "concurrent-audit@example.com",
+			firstName: "Initial",
+		});
+		const nextNames = ["One", "Two", "Three", "Four", "Five"];
+
+		const updates = await Promise.all(
+			nextNames.map((firstName) =>
+				db.transaction((tx) =>
+					updateMyAccountInTransaction({
+						tx: tx as unknown as DbTransaction,
+						userId,
+						input: { user: { firstName } },
+						source: "graphql",
+						auditContext: {},
+					}),
+				),
+			),
+		);
+
+		const beforeNames = updates.map((update) => {
+			const before = update.auditEntry.changes?.before as {
+				user?: { firstName?: string | null };
+			};
+			return before.user?.firstName;
+		});
+
+		// One transaction observes the initial value; every later transaction must
+		// observe a distinct committed predecessor. Without FOR UPDATE, concurrent
+		// readers can all record "Initial" and permanently falsify the audit trail.
+		expect(beforeNames.filter((name) => name === "Initial")).toHaveLength(1);
+		expect(new Set(beforeNames).size).toBe(nextNames.length);
+		expect(
+			beforeNames.every(
+				(name) => name === "Initial" || nextNames.includes(name ?? ""),
+			),
+		).toBe(true);
 	});
 });

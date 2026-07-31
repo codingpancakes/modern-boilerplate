@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 API_URL="http://localhost:8787"
-API_KEY="test-api-key-12345"
+TEST_HEADER_VALUE="test-api-key-12345"
 
 echo -e "${YELLOW}🧪 Testing Middleware Variants${NC}"
 echo "API URL: $API_URL"
@@ -89,7 +89,7 @@ test_endpoint \
   "GET /v1/test/api-key (valid key)" \
   "GET" \
   "/v1/test/api-key" \
-  "X-API-Key: $API_KEY" \
+  "X-API-Key: $TEST_HEADER_VALUE" \
   "" \
   "200"
 

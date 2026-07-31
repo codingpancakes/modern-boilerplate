@@ -1,16 +1,23 @@
 import { and, eq } from "drizzle-orm";
 import { GraphQLError } from "graphql";
-import { organizationMembers, profiles, users } from "../../../db/schema/index";
-import {
-	AUDIT_ACTIONS,
-	AUDIT_RESOURCE_TYPES,
-	auditResolver,
-} from "../../../lib/audit";
-import { sanitizeObject } from "../../../lib/sanitize";
+import { z } from "zod";
+import { organizationMembers, users } from "../../../db/schema/index";
 import { updateMyAccount as updateAccount } from "../../../lib/services/user-account";
-import { userSchemas } from "../../../lib/validation";
+import { validate } from "../../../lib/validation/helpers";
 import type { GraphQLContext } from "../context";
 import { toGraphQLError } from "../errors";
+
+function parseInput<T>(schema: z.ZodSchema<T>, input: unknown): T {
+	try {
+		return validate(schema, input);
+	} catch (error) {
+		throw toGraphQLError(error);
+	}
+}
+
+const userIdArgs = z.object({
+	id: z.string().uuid(),
+});
 
 export const userResolvers = {
 	Query: {
@@ -32,9 +39,11 @@ export const userResolvers = {
 		// Get user by ID (must be in same org)
 		user: async (
 			_parent: unknown,
-			{ id }: { id: string },
+			args: { id: string },
 			context: GraphQLContext,
 		) => {
+			const { id } = parseInput(userIdArgs, args);
+
 			if (!context.organizationId) {
 				throw new GraphQLError(
 					"Organization context required. Ensure your token includes an org_id claim.",
@@ -90,92 +99,43 @@ export const userResolvers = {
 	},
 
 	Mutation: {
-		// Update current user (with audit logging)
-		updateMe: auditResolver(
-			async (
-				_parent: unknown,
-				{ input }: { input: Record<string, unknown> },
-				context: GraphQLContext,
-			) => {
-				const validated = userSchemas.update.parse(input);
-				const sanitized = sanitizeObject(validated);
+		updateMe: async (
+			_parent: unknown,
+			{ input }: { input: Record<string, unknown> },
+			context: GraphQLContext,
+		) => {
+			try {
+				const result = await updateAccount({
+					db: context.db,
+					userId: context.userId,
+					input: { user: input },
+					source: "graphql",
+					auditContext: context,
+				});
+				return result.user;
+			} catch (error) {
+				throw toGraphQLError(error);
+			}
+		},
 
-				const [updated] = await context.db
-					.update(users)
-					.set({
-						...sanitized,
-						updatedAt: new Date().toISOString(),
-					})
-					.where(eq(users.id, context.userId))
-					.returning();
-
-				if (!updated) {
-					throw new GraphQLError("User not found", {
-						extensions: { code: "NOT_FOUND" },
-					});
-				}
-
-				return updated;
-			},
-			{
-				action: AUDIT_ACTIONS.UPDATE,
-				resourceType: AUDIT_RESOURCE_TYPES.USER,
-				getBefore: (_args, context) =>
-					context.db.query.users.findFirst({
-						where: eq(users.id, context.userId),
-					}),
-				getResourceId: (result) => result.id,
-				getChanges: (result, _args, before) => ({ before, after: result }),
-				getMetadata: (_result, args) => ({
-					updatedFields: Object.keys(args.input),
-				}),
-			},
-		),
-
-		// Update profile (with audit logging)
-		updateProfile: auditResolver(
-			async (
-				_parent: unknown,
-				{ input }: { input: Record<string, unknown> },
-				context: GraphQLContext,
-			) => {
-				const validated = userSchemas.updateProfileInput.parse(input);
-				const sanitized = sanitizeObject(validated);
-
-				const [updated] = await context.db
-					.update(profiles)
-					.set({
-						...sanitized,
-						updatedAt: new Date().toISOString(),
-					})
-					.where(eq(profiles.userId, context.userId))
-					.returning();
-
-				if (!updated) {
-					throw new GraphQLError("Profile not found", {
-						extensions: { code: "NOT_FOUND" },
-					});
-				}
-
-				return updated;
-			},
-			{
-				action: AUDIT_ACTIONS.UPDATE,
-				resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
-				getBefore: (_args, context) =>
-					context.db.query.profiles.findFirst({
-						where: eq(profiles.userId, context.userId),
-					}),
-				getResourceId: (result) => result.userId,
-				getChanges: (result, _args, before) => ({ before, after: result }),
-				getMetadata: (_result, args) => ({
-					updatedFields: Object.keys(args.input),
-					...(args.input.onboardingCompleted !== undefined && {
-						onboardingCompleted: args.input.onboardingCompleted,
-					}),
-				}),
-			},
-		),
+		updateProfile: async (
+			_parent: unknown,
+			{ input }: { input: Record<string, unknown> },
+			context: GraphQLContext,
+		) => {
+			try {
+				const result = await updateAccount({
+					db: context.db,
+					userId: context.userId,
+					input: { profile: input },
+					source: "graphql",
+					auditContext: context,
+				});
+				return result.profile;
+			} catch (error) {
+				throw toGraphQLError(error);
+			}
+		},
 
 		// Update both user and profile in one mutation
 		updateMyAccount: async (

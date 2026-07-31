@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from "hono";
-import { Errors } from "../errors";
+import { ApiError, Errors } from "../errors";
+import { isDeployedStage } from "../stage";
 import type { AppEnv } from "./types";
 
 /**
@@ -16,6 +17,13 @@ import type { AppEnv } from "./types";
  */
 export const rateLimit = (): MiddlewareHandler<AppEnv> => async (c, next) => {
 	const limiter = c.env?.RATE_LIMITER;
+	if (!limiter && isDeployedStage()) {
+		throw new ApiError(
+			503,
+			"RATE_LIMITER_UNAVAILABLE",
+			"Rate limiting is not configured",
+		);
+	}
 	if (limiter) {
 		const key = c.req.header("cf-connecting-ip") ?? "unknown";
 		const { success } = await limiter.limit({ key });

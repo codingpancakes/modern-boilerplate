@@ -20,6 +20,7 @@ import { organizationMembers, organizations, users } from "@/db/schema/index";
 import type { GraphQLContext } from "@/handlers/graphql/context";
 import { organizationResolvers } from "@/handlers/graphql/resolvers/organizations";
 import { userResolvers } from "@/handlers/graphql/resolvers/users";
+import { withAuditDrain } from "./helpers/audit-drain";
 import {
 	createTestDb,
 	type TestDb,
@@ -81,17 +82,18 @@ describe("organization invitation consent flow", () => {
 		});
 	});
 	afterEach(async () => {
-		// The mutations fire `void logAudit(...)` writes that settle after the
-		// resolver returns. Let them drain before truncating, otherwise an
-		// in-flight audit INSERT can deadlock against the TRUNCATE ... CASCADE.
-		await new Promise((resolve) => setTimeout(resolve, 50));
+		// Audit writes are drained deterministically inside withAuditDrain(...)
+		// below, so truncation can't race an in-flight INSERT.
 		await truncateOrganizations(pool);
 		await truncateUserGraph(pool);
 	});
 
-	const invite = organizationResolvers.Mutation.inviteMember;
-	const accept = organizationResolvers.Mutation.acceptInvitation;
-	const decline = organizationResolvers.Mutation.declineInvitation;
+	// The invite/accept/decline mutations emit fire-and-forget logAudit() writes;
+	// wrapping drains them inside an audit scope before each call returns.
+	const orgMutation = withAuditDrain(organizationResolvers.Mutation);
+	const invite = orgMutation.inviteMember;
+	const accept = orgMutation.acceptInvitation;
+	const decline = orgMutation.declineInvitation;
 	const listMembers = organizationResolvers.Query.organizationMembers;
 	const resolveMembershipUser = userResolvers.OrganizationMembership.user;
 

@@ -1,24 +1,18 @@
 /**
- * Thin structured JSON logger — the Workers replacement for
- * `@aws-lambda-powertools/logger`.
+ * Thin structured JSON logger for Workers Logs / Logpush.
  *
- * Drop-in surface for how Powertools is used in this codebase:
+ * Usage:
  *
- *   // before: const logger = new Logger({ serviceName: "media" });
  *   import { createLogger } from "../lib/logger";
  *   const logger = createLogger({ serviceName: "media" });
  *   logger.info("Upload created", { key, size });
  *
  * Each call emits ONE JSON line to the console (picked up by Workers Logs /
- * Logpush): `{ level, message, service, timestamp, ...extra }` — the same
- * field names Powertools emits, so log queries keep working.
+ * Logpush): `{ level, message, service, timestamp, ...extra }`.
  *
- * Level threshold honors `POWERTOOLS_LOG_LEVEL` then `LOG_LEVEL` (default
- * INFO), read per call: on Workers, `process.env` is populated per invocation
- * by nodejs_compat, so module-init reads could race the first request.
- *
- * Not ported from Powertools (unused or Lambda-only here): `addContext`,
- * `appendKeys`, child loggers, log sampling.
+ * Level threshold honors `LOG_LEVEL` (default INFO), read per call: on Workers,
+ * `process.env` is populated per invocation by nodejs_compat, so module-init
+ * reads could race the first request.
  */
 
 const LOG_LEVELS = {
@@ -52,11 +46,7 @@ function isLogLevel(value: string): value is LogLevel {
 }
 
 function threshold(): number {
-	const raw = (
-		process.env.POWERTOOLS_LOG_LEVEL ||
-		process.env.LOG_LEVEL ||
-		"INFO"
-	).toUpperCase();
+	const raw = (process.env.LOG_LEVEL || "INFO").toUpperCase();
 	return isLogLevel(raw) ? LOG_LEVELS[raw] : LOG_LEVELS.INFO;
 }
 

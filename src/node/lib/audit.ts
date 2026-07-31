@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sql } from "drizzle-orm";
+import { asc, inArray, lt } from "drizzle-orm";
 import {
 	AUDIT_ACTIONS,
 	AUDIT_RESOURCE_TYPES,
@@ -15,11 +15,14 @@ import { createLogger } from "./logger";
 import { captureException } from "./sentry";
 
 /**
- * SOC 2 retention window for audit logs. Mirrored by the `audit_logs_guard`
- * DB trigger, which rejects deletes of any row newer than this — so logs are
- * tamper-proof within the window and only the retention job can prune beyond it.
+ * Project-policy retention window for audit logs. Mirrored by the
+ * `audit_logs_guard` DB trigger, which rejects deletes of any row newer than
+ * this — so logs are tamper-proof within the window and only the retention job
+ * can prune beyond it.
  */
 export const AUDIT_RETENTION_YEARS = 7;
+const AUDIT_RETENTION_BATCH_SIZE = 1_000;
+const AUDIT_RETENTION_SAFETY_DAYS = 1;
 
 const logger = createLogger({ serviceName: "audit" });
 
@@ -29,8 +32,8 @@ const logger = createLogger({ serviceName: "audit" });
  *   - this structured `logger.error` (event: "audit_write_failure") — queryable
  *     in Workers Logs / Logpush, the field to build a count alert on; and
  *   - `captureException` → Sentry (set a Sentry alert rule for the page).
- * (No fake CloudWatch EMF: nothing on Cloudflare would aggregate it. To graph a
- * real count, add an Analytics Engine binding and write a data point here.)
+ * To graph a durable count, add an Analytics Engine binding and write a data
+ * point here.
  */
 const AUDIT_WRITE_FAILURE_EVENT = "audit_write_failure";
 
@@ -67,6 +70,14 @@ export interface AuditLogEntry {
 	errorMessage?: string;
 }
 
+type AuditInsertValues = typeof auditLogs.$inferInsert;
+
+interface AuditWriteTarget {
+	insert(table: typeof auditLogs): {
+		values(values: AuditInsertValues): Promise<unknown>;
+	};
+}
+
 /**
  * Keys whose values must never be persisted to the audit trail. Matched
  * case-insensitively as a substring of the field name, so `passwordHash`,
@@ -90,6 +101,8 @@ const SENSITIVE_KEY_PATTERNS = [
 ];
 
 const REDACTED = "[REDACTED]";
+const TRUNCATED = "[TRUNCATED]";
+const MAX_REDACTION_DEPTH = 8;
 
 function isSensitiveKey(key: string): boolean {
 	const normalized = key.toLowerCase();
@@ -103,20 +116,24 @@ function isSensitiveKey(key: string): boolean {
  * avoid pathological/circular structures.
  */
 function redactSensitive(value: unknown, depth = 0): unknown {
-	if (depth > 8 || value === null || typeof value !== "object") {
+	if (value === null || typeof value !== "object") {
 		return value;
 	}
+	// Fail closed at the recursion boundary. Returning the original container here
+	// would preserve every nested credential below it and write those secrets into
+	// the immutable seven-year audit trail.
+	if (depth >= MAX_REDACTION_DEPTH) return TRUNCATED;
 
 	if (Array.isArray(value)) {
 		return value.map((item) => redactSensitive(item, depth + 1));
 	}
 
 	// Only recurse into plain objects. Class instances (Date, Buffer, Map, etc.)
-	// are returned untouched so JSON serialization preserves their real shape
-	// instead of collapsing to `{}`.
+	// cannot bypass key-based redaction via custom enumerable properties. Audit
+	// entries are JSON data; a non-plain object is not a supported input shape.
 	const proto = Object.getPrototypeOf(value);
 	if (proto !== null && proto !== Object.prototype) {
-		return value;
+		return TRUNCATED;
 	}
 
 	const result: Record<string, unknown> = {};
@@ -214,7 +231,7 @@ export async function flushAudits(): Promise<void> {
  * ```
  */
 export async function logAudit(entry: AuditLogEntry): Promise<void> {
-	const write = persistAudit(entry);
+	const write = persistAuditBestEffort(entry);
 	const pending = auditScopeStorage.getStore();
 	// Outside a request scope (cron/scripts): no buffer to drain later, so
 	// await inline to guarantee the write completes.
@@ -230,24 +247,45 @@ export async function logAudit(entry: AuditLogEntry): Promise<void> {
 	}
 }
 
-async function persistAudit(entry: AuditLogEntry): Promise<void> {
+function auditInsertValues(entry: AuditLogEntry): AuditInsertValues {
+	return {
+		userId: entry.userId,
+		organizationId: entry.organizationId,
+		orgUnitId: entry.orgUnitId,
+		action: entry.action,
+		resourceType: entry.resourceType,
+		resourceId: entry.resourceId,
+		changes: redactChanges(entry.changes),
+		ipAddress: entry.ipAddress,
+		userAgent: entry.userAgent,
+		requestId: entry.requestId,
+		metadata: redactMetadata(entry.metadata),
+		status: entry.status || AUDIT_STATUS.SUCCESS,
+		errorMessage: entry.errorMessage,
+	};
+}
+
+/**
+ * Strict audit write for durable background paths. Unlike logAudit(), this
+ * propagates persistence failures so queue consumers can retry instead of acking
+ * a message whose compliance record was not written.
+ */
+export async function writeAuditLog(
+	target: AuditWriteTarget,
+	entry: AuditLogEntry,
+): Promise<void> {
+	await target.insert(auditLogs).values(auditInsertValues(entry));
+}
+
+export async function logAuditStrict(entry: AuditLogEntry): Promise<void> {
+	const db = await getDb();
+	await writeAuditLog(db, entry);
+}
+
+async function persistAuditBestEffort(entry: AuditLogEntry): Promise<void> {
 	try {
 		const db = await getDb();
-		await db.insert(auditLogs).values({
-			userId: entry.userId,
-			organizationId: entry.organizationId,
-			orgUnitId: entry.orgUnitId,
-			action: entry.action,
-			resourceType: entry.resourceType,
-			resourceId: entry.resourceId,
-			changes: redactChanges(entry.changes),
-			ipAddress: entry.ipAddress,
-			userAgent: entry.userAgent,
-			requestId: entry.requestId,
-			metadata: redactMetadata(entry.metadata),
-			status: entry.status || AUDIT_STATUS.SUCCESS,
-			errorMessage: entry.errorMessage,
-		});
+		await writeAuditLog(db, entry);
 	} catch (error) {
 		// Don't throw — audit logging should never break the main flow.
 		// Log the full entry as fallback so it can be backfilled from logs.
@@ -330,128 +368,41 @@ export function auditRequestContext(context: AuditContext) {
 }
 
 /**
- * Audit decorator for GraphQL resolvers
- *
- * @example
- * ```typescript
- * const resolvers = {
- *   Mutation: {
- *     updateMe: auditResolver(
- *       async (parent, args, context) => {
- *         const user = await updateUser(args.input);
- *         return user;
- *       },
- *       {
- *         action: AUDIT_ACTIONS.UPDATE,
- *         resourceType: AUDIT_RESOURCE_TYPES.USER,
- *         getResourceId: (result) => result.id,
- *         getChanges: (result) => ({ after: result }),
- *       }
- *     ),
- *   },
- * };
- * ```
- */
-export function auditResolver<
-	TArgs = unknown,
-	TResult = unknown,
-	TContext extends AuditContext = AuditContext,
->(
-	resolver: (
-		parent: unknown,
-		args: TArgs,
-		context: TContext,
-		info: unknown,
-	) => Promise<TResult>,
-	options: {
-		action: AuditAction;
-		resourceType: AuditResourceType;
-		/**
-		 * Capture the resource's prior state *before* the resolver runs, so a
-		 * before/after diff can be recorded. Must not mutate; failures here are
-		 * swallowed so they can never break the mutation.
-		 */
-		getBefore?: (args: TArgs, context: TContext) => Promise<unknown> | unknown;
-		getResourceId?: (result: TResult, args: TArgs) => string | undefined;
-		getChanges?: (
-			result: TResult,
-			args: TArgs,
-			before: unknown,
-		) => { before?: unknown; after?: unknown } | undefined;
-		getMetadata?: (
-			result: TResult | null,
-			args: TArgs,
-		) => Record<string, unknown> | undefined;
-	},
-) {
-	return async (
-		parent: unknown,
-		args: TArgs,
-		context: TContext,
-		info: unknown,
-	): Promise<TResult> => {
-		let result: TResult;
-
-		let before: unknown;
-		if (options.getBefore) {
-			try {
-				before = await options.getBefore(args, context);
-			} catch {
-				// Before-state capture is best-effort; never block the mutation.
-				before = undefined;
-			}
-		}
-
-		try {
-			result = await resolver(parent, args, context, info);
-		} catch (error) {
-			void logAudit({
-				userId: context.userId,
-				organizationId: context.organizationId,
-				requestId: context.requestId,
-				ipAddress: context.ipAddress,
-				userAgent: context.userAgent,
-				action: options.action,
-				resourceType: options.resourceType,
-				status: AUDIT_STATUS.FAILURE,
-				errorMessage: errorMessage(error),
-				metadata: options.getMetadata?.(null, args),
-			});
-
-			throw error;
-		}
-
-		void logAudit({
-			userId: context.userId,
-			organizationId: context.organizationId,
-			requestId: context.requestId,
-			ipAddress: context.ipAddress,
-			userAgent: context.userAgent,
-			action: options.action,
-			resourceType: options.resourceType,
-			resourceId: options.getResourceId?.(result, args),
-			changes: options.getChanges?.(result, args, before),
-			metadata: options.getMetadata?.(result, args),
-			status: AUDIT_STATUS.SUCCESS,
-		});
-
-		return result;
-	};
-}
-
-/**
  * Delete audit logs older than the retention window. Intended to be invoked by
  * a scheduled job. Returns the number of rows pruned. The DB-level guard trigger
- * is the real enforcement boundary; keep the cutoff server-side so it matches
- * the trigger's `now() - interval '7 years'` boundary.
+ * is the real enforcement boundary. The app-side cutoff is deliberately one
+ * day behind the exact retention window so clock skew cannot make this job try
+ * to delete rows the trigger still considers in-window.
  */
 export async function cleanupExpiredAuditLogs(): Promise<number> {
 	const db = await getDb();
-	const result = await db
-		.delete(auditLogs)
-		.where(sql`${auditLogs.timestamp} < now() - interval '7 years'`);
+	let deletedCount = 0;
+	const cutoff = new Date();
+	cutoff.setUTCFullYear(cutoff.getUTCFullYear() - AUDIT_RETENTION_YEARS);
+	cutoff.setUTCDate(cutoff.getUTCDate() - AUDIT_RETENTION_SAFETY_DAYS);
+	const cutoffIso = cutoff.toISOString();
 
-	return result.rowCount ?? 0;
+	for (;;) {
+		const expiredRows = await db
+			.select({ id: auditLogs.id })
+			.from(auditLogs)
+			.where(lt(auditLogs.timestamp, cutoffIso))
+			.orderBy(asc(auditLogs.timestamp))
+			.limit(AUDIT_RETENTION_BATCH_SIZE);
+
+		if (expiredRows.length === 0) break;
+
+		const result = await db.delete(auditLogs).where(
+			inArray(
+				auditLogs.id,
+				expiredRows.map((row) => row.id),
+			),
+		);
+
+		deletedCount += result.rowCount ?? expiredRows.length;
+	}
+
+	return deletedCount;
 }
 
 // Re-export constants for convenience

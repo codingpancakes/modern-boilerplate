@@ -1,0 +1,15 @@
+---
+description: Route every code change through the canonical repository instructions
+alwaysApply: true
+---
+
+# Project Instructions
+
+Read root `AGENTS.md` before changing code. It is the canonical contract.
+
+Then use the task matrix in `docs/agents/README.md` and read every linked
+playbook that applies. Copy implementation shapes only from
+`docs/agents/CANONICAL_CODE_PATTERNS.md` and its linked source files.
+
+Do not create a second pattern in this file. When the architecture changes,
+update `AGENTS.md`, the applicable playbook, code, and tests in the same patch.

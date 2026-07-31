@@ -2,11 +2,12 @@ import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { constantTimeEqual } from "../lib/constant-time";
 import { runWithDbScope } from "../lib/db";
-import { Errors } from "../lib/errors";
+import { ApiError, Errors } from "../lib/errors";
 import { sendSuccess } from "../lib/hono/respond";
 import type { AppEnv } from "../lib/hono/types";
 import { createLogger } from "../lib/logger";
 import { processWorkosEvent } from "../lib/services/webhook-processor";
+import { isDeployedStage } from "../lib/stage";
 import { validate, webhookSchemas } from "../lib/validation";
 
 /**
@@ -22,9 +23,9 @@ import { validate, webhookSchemas } from "../lib/validation";
  * (lib/services/webhook-processor.ts via src/node/queue.ts), so retries and the
  * dead-letter queue give durability that a synchronous handler could not.
  *
- * Local dev / the Node test server have no queue binding; there the route falls
- * back to processing the event inline (inside a DB scope) so behaviour is
- * unchanged without a real queue.
+ * Wrangler supplies a simulated queue locally. Direct app/unit harnesses can
+ * omit bindings; under an explicit local/development stage the route then
+ * processes inline inside a DB scope.
  *
  * Signature verification MUST run against the raw request body string
  * (`c.req.text()`) — never a re-serialized JSON.parse/stringify round-trip,
@@ -47,6 +48,14 @@ function getWebhookSecret(): string {
 		throw new Error("WORKOS_WEBHOOK_SECRET is not configured");
 	}
 	return secret;
+}
+
+function parseWebhookPayload(payload: string): unknown {
+	try {
+		return JSON.parse(payload);
+	} catch {
+		throw Errors.BadRequest("Malformed JSON payload");
+	}
 }
 
 // Reject webhook payloads older than 5 minutes to prevent replay attacks
@@ -80,7 +89,7 @@ export function verifyWorkosSignature(
 	// WorkOS signature format: "t=1766861788175, v1=7ade2a063dc936d978bcbc8732ddc7d34f670339953d90c5fce0357841aa763e"
 	const parsed = parseWorkosSignatureHeader(signatureHeader);
 	if (!parsed) {
-		logger.error("Invalid signature format", { signatureHeader });
+		logger.error("Invalid webhook signature format");
 		return false;
 	}
 
@@ -130,6 +139,8 @@ export function verifyWorkosSignature(
  *       - `organization.created` - Creates new organization
  *       - `organization.updated` - Updates organization data
  *       - `organization.deleted` - Removes organization
+ *       - `authentication.*` and `session.created` - Writes auth audit events
+ *       - other signed event names are accepted and ignored
  *
  *       **Security:** Requires valid WorkOS webhook signature in headers.
  *     security: []
@@ -139,6 +150,7 @@ export function verifyWorkosSignature(
  *         application/json:
  *           schema:
  *             type: object
+ *             required: [id, event, data, created_at]
  *             properties:
  *               id:
  *                 type: string
@@ -146,15 +158,17 @@ export function verifyWorkosSignature(
  *                 example: "evt_01H1234567890ABCDEFGHIJK"
  *               event:
  *                 type: string
- *                 description: Event type
- *                 enum: [user.created, user.updated, user.deleted, organization.created, organization.updated, organization.deleted]
+ *                 description: WorkOS event type; unsupported signed events are ignored
  *                 example: "user.created"
  *               data:
  *                 type: object
  *                 description: Event payload (varies by event type)
+ *               created_at:
+ *                 type: string
+ *                 format: date-time
  *     responses:
  *       200:
- *         description: Webhook processed successfully
+ *         description: Verified event accepted into the queue (or processed inline in local direct harnesses)
  *         content:
  *           application/json:
  *             schema:
@@ -170,24 +184,32 @@ export function verifyWorkosSignature(
  *                       type: string
  *                       enum: [queued]
  *       401:
- *         $ref: '#/components/responses/Unauthorized'
+ *         description: WorkOS signature is missing, invalid, or outside the replay window
+ *       400:
+ *         description: Malformed, oversized, or schema-invalid payload
  *       500:
  *         $ref: '#/components/responses/ServerError'
+ *       503:
+ *         description: Webhook queue is unavailable in a deployed environment
  */
 webhooks.post("/workos", async (c) => {
 	// Raw body string — this exact byte sequence is what WorkOS signed.
 	const payload = await c.req.text();
 	const signature = c.req.header("workos-signature");
 
+	// Measure BYTES, not string length — .length counts UTF-16 code units, so
+	// a multi-byte payload could weigh ~3× the intended cap.
+	const payloadBytes = Buffer.byteLength(payload, "utf8");
+
 	logger.info("Webhook received", {
 		hasSignature: !!signature,
-		bodyLength: payload.length,
+		bodyLength: payloadBytes,
 	});
 
 	// Reject oversized payloads before any parsing (DoS protection)
 	const MAX_PAYLOAD_BYTES = 1 * 1024 * 1024; // 1 MB
-	if (payload.length > MAX_PAYLOAD_BYTES) {
-		logger.error("Webhook payload too large", { size: payload.length });
+	if (payloadBytes > MAX_PAYLOAD_BYTES) {
+		logger.error("Webhook payload too large", { size: payloadBytes });
 		throw Errors.BadRequest("Payload too large");
 	}
 
@@ -206,7 +228,10 @@ webhooks.post("/workos", async (c) => {
 	logger.info("Signature verified");
 
 	// Parse and validate webhook event
-	const webhookEvent = validate(webhookSchemas.workos, JSON.parse(payload));
+	const webhookEvent = validate(
+		webhookSchemas.workos,
+		parseWebhookPayload(payload),
+	);
 
 	if (c.env.WEBHOOK_QUEUE) {
 		// Durable path: hand the verified event to Cloudflare Queues. Retries +
@@ -218,9 +243,16 @@ webhooks.post("/workos", async (c) => {
 			eventType: webhookEvent.event,
 		});
 	} else {
-		// Local dev / Node test server: no queue binding. Process inline inside a
-		// DB scope so behaviour is unchanged without a real queue. A failure here
-		// throws and surfaces as a 500 (WorkOS will retry the delivery).
+		if (isDeployedStage()) {
+			throw new ApiError(
+				503,
+				"WEBHOOK_QUEUE_UNAVAILABLE",
+				"Webhook queue is not configured",
+			);
+		}
+		// Explicit local/development direct harness with no queue binding:
+		// process inline inside a DB scope. A failure throws as 500 so WorkOS
+		// retries the delivery.
 		logger.info("No WEBHOOK_QUEUE binding; processing inline", {
 			eventId: webhookEvent.id,
 			eventType: webhookEvent.event,

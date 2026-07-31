@@ -2,8 +2,7 @@
 /**
  * Health-gated gradual deploy with automatic rollback for Cloudflare Workers.
  *
- * Replaces the old AWS CodeDeploy blue-green canary (the one piece of deploy
- * safety the platform doesn't give us out of the box). Flow:
+ * Flow:
  *
  *   1. Record the currently-active version  (the rollback target)
  *   2. Upload the new version at 0% traffic  (`wrangler versions upload`)
@@ -17,7 +16,7 @@
  * Wired:  pnpm deploy:staging | pnpm deploy:production
  *
  * Env overrides:
- *   HEALTH_URL        full health-check URL (default: derived per stage below)
+ *   HEALTH_URL        public HTTPS origin override (default: derived per stage)
  *   SMOKE_CORS_ORIGIN allowed origin to verify CORS preflight (optional)
  *   SMOKE_CORS_ORIGIN_STAGING / _PRODUCTION stage-specific CORS smoke origins
  *   CHECK_PENDING_MIGRATIONS run a blocking DB migration drift preflight
@@ -28,46 +27,67 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync as readFile } from "node:fs";
+import {
+	customDomainForStage,
+	type DeployStage,
+	normalizePublicHttpsBase,
+} from "./lib/deploy-url";
+import { parseActiveVersionId } from "./lib/deploy-version";
 
-const stage = process.argv[2];
-if (stage !== "staging" && stage !== "production") {
+const stageArgument = process.argv[2];
+if (stageArgument !== "staging" && stageArgument !== "production") {
 	console.error("Usage: tsx scripts/deploy.ts <staging|production>");
 	process.exit(1);
 }
+const stage: DeployStage = stageArgument;
 
 /**
  * Health-check base URL, project-agnostic so the boilerplate needs no edits:
- *   1. HEALTH_URL env (explicit; use for custom domains), else
- *   2. derived from the Worker `name` in wrangler.toml + WORKERS_SUBDOMAIN env
+ *   1. HEALTH_URL env (explicit override), else
+ *   2. the stage's custom-domain route in wrangler.toml (set by `pnpm
+ *      set-domain`) → https://<host>, else
+ *   3. derived from the Worker `name` + WORKERS_SUBDOMAIN env
  *      → https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev
- * Fails fast if neither is available.
+ * Fails fast if none is available.
  */
 function resolveHealthBase(): string {
-	if (process.env.HEALTH_URL) return process.env.HEALTH_URL;
+	if (process.env.HEALTH_URL) {
+		return normalizePublicHttpsBase(process.env.HEALTH_URL);
+	}
+
+	const toml = readFile("wrangler.toml", "utf-8");
+	const customDomain = customDomainForStage(toml, stage);
+	if (customDomain) {
+		return normalizePublicHttpsBase(`https://${customDomain}`);
+	}
+
 	const subdomain = process.env.WORKERS_SUBDOMAIN;
 	if (!subdomain) {
 		console.error(
-			"Set HEALTH_URL, or WORKERS_SUBDOMAIN (your *.workers.dev subdomain) so the health URL can be derived.",
+			"Set HEALTH_URL, or WORKERS_SUBDOMAIN (your *.workers.dev subdomain), or wire a custom domain with `pnpm set-domain` so the health URL can be derived.",
 		);
 		process.exit(1);
 	}
-	const toml = readFile("wrangler.toml", "utf-8");
 	const name = toml.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
 	if (!name) {
 		console.error("Could not read Worker `name` from wrangler.toml.");
 		process.exit(1);
 	}
-	return `https://${name}-${stage}.${subdomain}.workers.dev`;
+	return normalizePublicHttpsBase(
+		`https://${name}-${stage}.${subdomain}.workers.dev`,
+	);
 }
 
-const deployBaseUrl = resolveHealthBase().replace(/\/$/, "");
+const deployBaseUrl = resolveHealthBase();
 const healthUrl = `${deployBaseUrl}/v1/health/detailed`;
 const canaryPercent = Number(process.env.CANARY_PERCENT || 10);
 const soakSeconds = Number(process.env.SOAK_SECONDS || 20);
 const healthAttempts = Number(process.env.HEALTH_ATTEMPTS || 5);
 const smokeCorsOrigin =
 	process.env[`SMOKE_CORS_ORIGIN_${stage.toUpperCase()}`] ||
-	process.env.SMOKE_CORS_ORIGIN || process.env.CORS_TEST_ORIGIN || "";
+	process.env.SMOKE_CORS_ORIGIN ||
+	process.env.CORS_TEST_ORIGIN ||
+	"";
 
 function wrangler(args: string[], capture = true): string {
 	return execFileSync("npx", ["wrangler", ...args, "--env", stage], {
@@ -78,18 +98,9 @@ function wrangler(args: string[], capture = true): string {
 
 /** Version ID currently serving 100% (or the first active split), or null on first deploy. */
 function activeVersionId(): string | null {
-	try {
-		const out = wrangler(["deployments", "status", "--json"]);
-		const json = JSON.parse(out);
-		const versions: Array<{ version_id: string; percentage: number }> =
-			json.versions ?? [];
-		if (versions.length === 0) return null;
-		// Prefer the highest-traffic version as the rollback target.
-		versions.sort((a, b) => b.percentage - a.percentage);
-		return versions[0].version_id;
-	} catch {
-		return null; // no prior deployment
-	}
+	const out = wrangler(["deployments", "status", "--json"]);
+	const json: unknown = JSON.parse(out);
+	return parseActiveVersionId(json);
 }
 
 /**
@@ -111,7 +122,9 @@ function deploySplit(specs: string[]): void {
 
 function checkPendingMigrations(): void {
 	if (process.env.CHECK_PENDING_MIGRATIONS !== "true") {
-		console.log("   migration preflight skipped (set CHECK_PENDING_MIGRATIONS=true)");
+		console.log(
+			"   migration preflight skipped (set CHECK_PENDING_MIGRATIONS=true)",
+		);
 		return;
 	}
 
@@ -310,7 +323,9 @@ async function main() {
 	try {
 		await smokeChecks();
 	} catch (err) {
-		console.error(`❌ Smoke checks failed — rolling back: ${(err as Error).message}`);
+		console.error(
+			`❌ Smoke checks failed — rolling back: ${(err as Error).message}`,
+		);
 		deploySplit([`${oldVersion}@100`]);
 		console.error(`↩️  Rolled back to ${oldVersion}.`);
 		process.exit(1);

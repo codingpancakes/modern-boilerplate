@@ -16,24 +16,25 @@ fall back to the `.ts.template` when there's no sibling for your shape.
 
 | You're building | Copy from |
 |---|---|
-| User-scoped endpoint (auth'd user's own data) | `src/node/routes/users.ts` (GET/PATCH `/me`; PATCH shows `withIdempotency` + transaction + audit) — or `user-scoped.ts.template` |
+| User-scoped endpoint (auth'd user's own data) | `src/node/routes/users.ts` (GET/PATCH `/me`; PATCH shows `withTransactionalIdempotentJson` + transaction + audit) — or `user-scoped.ts.template` |
 | Media / R2-backed endpoint | `src/node/routes/media.ts` |
 | Public endpoint (health-style) | `src/node/routes/utils.ts` — or `public.ts.template` |
 | Webhook (signature-verified, idempotent) | `src/node/routes/webhooks.ts` — or the webhook variant in `public.ts.template` |
 | Dev-only diagnostic | `src/node/routes/test.ts` |
-| Org-scoped endpoint | GraphQL org resolvers (`src/node/handlers/graphql/resolvers/organizations.ts`) show the membership/`ACTIVE` + role checks; `org-scoped.ts.template` is the REST port (no REST sibling exists yet) |
+| Org-scoped endpoint | `src/node/lib/services/organizations.ts` is the shared authorization source; GraphQL org resolvers show delegation, and `org-scoped.ts.template` is the REST shape |
 
 ## The templates
 
 - **`user-scoped.ts.template`** — a protected domain that operates on the
   caller's own data. Resolves the internal user id with `getUserIdFromClaims`,
   scopes every query to that id, and shows a `GET` plus a mutating `POST`
-  wrapped in `withIdempotency` (Zod validation → `sanitizeObject` → transaction
-  → `logAudit`). Modeled on `routes/users.ts`.
+  wrapped in `withTransactionalIdempotentJson` (Zod validation → `sanitizeObject`
+  → transactional write + atomic idempotency completion → `logAudit`). Modeled
+  on `routes/users.ts`.
 - **`org-scoped.ts.template`** — a protected domain whose data is org-owned.
-  Includes a `requireMembership` helper (the REST port of the organizations
-  GraphQL resolver: ACTIVE-membership filter + role hierarchy), gates reads on
-  membership and mutations on a minimum role, and validates/sanitizes/audits.
+  Reuses the shared `requireActiveMembership` service guard, gates reads on
+  membership, and rechecks mutation authorization on the transaction handle
+  before validating/sanitizing/auditing the write.
 - **`public.ts.template`** — a public route (mounted **without**
   `requireAuth()`), plus a signature-verified webhook variant that verifies an
   HMAC over the raw body with `constantTimeEqual`. References `routes/webhooks.ts`
@@ -57,4 +58,6 @@ fall back to the `.ts.template` when there's no sibling for your shape.
 
 - Invariants and Definition of Done: [`AGENTS.md`](../AGENTS.md)
 - Project overview: [`README.md`](../README.md)
-- Pattern files: [`.cursor/rules/`](../.cursor/rules/) (`handlers.mdc` is partly Lambda-era)
+- Cursor instruction router: [`.cursor/rules/project.mdc`](../.cursor/rules/project.mdc)
+- Canonical WorkOS and code patterns:
+  [`docs/agents/CANONICAL_CODE_PATTERNS.md`](../docs/agents/CANONICAL_CODE_PATTERNS.md)

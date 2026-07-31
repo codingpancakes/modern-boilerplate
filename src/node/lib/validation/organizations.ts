@@ -48,6 +48,9 @@ export const updateMemberRole = z.object({
 	role: z.enum(orgRoles),
 });
 
+// Input contract for the org-units feature. No endpoint wires this up yet — it
+// is intentional scaffolding paired with the `org_units` table (kept as a
+// conceptual-flexibility extension point). Not dead code: leave it in place.
 export const createOrgUnit = z.object({
 	organizationId: z.string().uuid(),
 	parentId: z.string().uuid().optional(),
