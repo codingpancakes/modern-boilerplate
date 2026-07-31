@@ -4,24 +4,25 @@
 #   npx wrangler dev --local
 #
 # `wrangler dev` loads .dev.vars as secrets and merges them over wrangler.toml
-# [vars]; with nodejs_compat they all land on process.env, same as Lambda.
+# [vars]; with nodejs_compat they all land on process.env.
 # For deployed envs, set each SECRET below once per environment:
 #   npx wrangler secret put <NAME> --env staging|production
 # Non-secret config lives in wrangler.toml [vars] — override here only for
 # local experiments.
 
-# ── Secrets (required) ───────────────────────────────────────────────────────
+# ── Secrets (required for deployed health) ──────────────────────────────────
 
-# Neon Postgres connection string (was Secrets Manager /{project}/{stage}/database)
+# Neon Postgres connection string
 DATABASE_URL="postgresql://USER:PASSWORD@YOUR-NEON-HOST/DB?sslmode=require"
 
-# WorkOS client id — JWT audience binding (was Secrets Manager /{project}/{stage}/workos)
+# WorkOS client id — binds accepted access tokens by their client_id claim
 WORKOS_CLIENT_ID="client_REPLACE_ME"
 
-# ── Secrets (feature-dependent) ──────────────────────────────────────────────
-
-# WorkOS webhook signature secret (required for POST /v1/webhooks/workos)
+# WorkOS webhook signature secret (may be empty only for local work that does
+# not exercise webhooks; staging/production detailed health requires it)
 WORKOS_WEBHOOK_SECRET="REPLACE_ME"
+
+# ── Secrets (feature-dependent) ──────────────────────────────────────────────
 
 # Sentry error reporting; leave empty to disable locally
 SENTRY_DSN=""
@@ -34,7 +35,8 @@ TEST_API_KEY=""
 WEBHOOK_SECRET=""
 
 # R2 S3-API credentials (lib/media.ts presigning/listing via aws4fetch).
-# Unset → media endpoints return a clear 503 MEDIA_STORAGE_NOT_CONFIGURED.
+# Unset → presigning/listing and the direct-upload fallback return a clear 503.
+# Direct upload still works when Wrangler provides the IMAGES_BUCKET binding.
 # R2_BUCKET falls back to IMAGES_BUCKET (wrangler.toml [vars]).
 R2_ACCOUNT_ID=""
 R2_ACCESS_KEY_ID=""
@@ -47,9 +49,4 @@ R2_SECRET_ACCESS_KEY=""
 # AUTH_ISSUER=""
 
 # Log threshold for src/node/lib/logger.ts: DEBUG | INFO | WARN | ERROR (default INFO).
-# POWERTOOLS_LOG_LEVEL is honored first for Lambda-era parity, then LOG_LEVEL.
 # LOG_LEVEL="DEBUG"
-
-# ── Not carried over from AWS (do not add) ──────────────────────────────────
-# ORIGIN_VERIFY_SECRET — deleted by construction: the Worker IS the edge, no origin to protect
-# WORKOS_SECRET_ARN / DB_SECRET_ARN / AWS_REGION — Secrets Manager is gone

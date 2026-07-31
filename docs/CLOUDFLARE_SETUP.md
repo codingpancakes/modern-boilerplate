@@ -29,8 +29,9 @@ cp .dev.vars.example .dev.vars
 
 `.dev.vars.example` is the **single checked-in registry of every secret the Worker
 reads** — `scripts/sync-secrets.ts` also uses it as the list of names to push to
-deployed environments. Required to boot meaningfully: `DATABASE_URL`,
-`WORKOS_CLIENT_ID`. Everything else is feature-dependent (see comments in the file).
+deployed environments. Required for ordinary local auth/database work:
+`DATABASE_URL` and `WORKOS_CLIENT_ID`. Deployed detailed health additionally
+requires `WORKOS_WEBHOOK_SECRET`; other entries are feature-dependent.
 
 Non-secret config (STAGE, CORS lists, `IMAGES_BUCKET`, …) lives in `wrangler.toml`
 `[vars]` — edit the `PLACEHOLDER` values there for your project.
@@ -70,7 +71,7 @@ pnpm dev            # wrangler dev --local → http://localhost:8787
 ```bash
 pnpm check                    # lint + typecheck + unit tests (no DB needed)
 pnpm test                     # unit tests, watch mode
-pnpm test:integration:local   # starts docker postgres-test, runs real-DB transaction tests
+pnpm test:integration:local   # starts docker postgres-test, runs the full real-DB suite
 pnpm load:smoke staging       # light deployed-environment load smoke
 ```
 
@@ -119,8 +120,7 @@ npx wrangler deploy --dry-run --env staging   # build-only sanity check, no acco
 ```
 
 **Automated canary + auto-rollback** is wired into `pnpm deploy:<stage>`
-(`scripts/deploy.ts`), replacing the old AWS CodeDeploy blue-green machinery. Each
-deploy:
+(`scripts/deploy.ts`). Each deploy:
 
 1. records the currently-active Worker version (the rollback target),
 2. uploads the new version at 0% traffic (`wrangler versions upload`),
@@ -144,11 +144,12 @@ manual expand/contract step so Worker rollback stays meaningful. This preflight 
 every migration in the current repo journal to be present in the target DB; older
 applied migration rows from a reused database do not fail it.
 
-The health-check URL is derived from the Worker `name` + `WORKERS_SUBDOMAIN` (your
-`*.workers.dev` subdomain) as `https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`,
-unless `HEALTH_URL` overrides it (use that for custom domains). Set `WORKERS_SUBDOMAIN`
-in your shell for local deploys; in CI it's a GitHub repo variable
-(`vars.WORKERS_SUBDOMAIN`). See `docs/ENVIRONMENT_VARIABLES.md`.
+The health-check URL priority is: `HEALTH_URL`, then the stage custom-domain
+route in `wrangler.toml`, then Worker `name` + `WORKERS_SUBDOMAIN` as
+`https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`. Set
+`WORKERS_SUBDOMAIN` only when neither of the first two is available. In CI it
+is a GitHub repo variable (`vars.WORKERS_SUBDOMAIN`). See
+`docs/ENVIRONMENT_VARIABLES.md`.
 
 Plain, non-gated deploys: `pnpm deploy:staging:simple` / `:production:simple`
 (`wrangler deploy --env <stage>`) — also the one-time path for registering new Queue
@@ -158,7 +159,7 @@ versions).
 ### 7c. Provision resources — `pnpm bootstrap <stage>`
 
 One command creates the Cloudflare resources a stage needs before its first
-deploy, reading the exact names from `wrangler.toml` (so there's no drift):
+deploy, reading the exact names from `wrangler.toml`:
 
 ```bash
 pnpm bootstrap staging --dry-run   # preview every command, run nothing
@@ -167,9 +168,15 @@ pnpm bootstrap staging --neon <project-id>   # also create a Neon branch → wri
 pnpm bootstrap staging --deploy    # then chain sync-secrets → migrate → deploy
 ```
 
+With `--deploy`, migration runs only when `.env.<stage>` contains
+`DATABASE_URL`; otherwise the script warns, skips migration, and continues to
+deploy. Prefer supplying the stage URL (or `--neon`) so this one-shot path does
+not leave schema state implicit.
+
 It creates the webhook queue + its dead-letter queue (**deploy fails without
 them**) and the R2 images bucket; re-runs are safe (an "already exists" is
-treated as success). Prereqs: `wrangler login` (or `CLOUDFLARE_API_TOKEN`), and
+treated as success). Prereqs: `npx wrangler login` (or
+`CLOUDFLARE_API_TOKEN`), and
 for `--neon`, `neonctl` installed + authenticated.
 
 Two things `bootstrap` deliberately leaves manual (it prints them at the end):
@@ -179,29 +186,25 @@ Two things `bootstrap` deliberately leaves manual (it prints them at the end):
    `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` in `.env.<stage>`
    (registered in `.dev.vars.example`, so `pnpm sync-secrets` pushes them). Set
    `IMAGES_CDN_URL` in `wrangler.toml` to the bucket's public/custom-domain URL.
-2. **WorkOS** app + webhook endpoint/secret, and **DNS** (§7f).
+2. **WorkOS** app + webhook endpoint/secret, and **DNS** (§7e).
 
-Media endpoints return a clear 503 `MEDIA_STORAGE_NOT_CONFIGURED` until the R2
-credentials are set. Queue operations (DLQ drain, retries): `docs/runbooks/WEBHOOK_DLQ.md`.
+Presigning/listing and the direct-upload fallback return a clear 503
+`MEDIA_STORAGE_NOT_CONFIGURED` until the R2 S3 API credentials are set. Direct
+upload still works through the `IMAGES_BUCKET` binding. Queue operations (DLQ
+drain, retries): `docs/runbooks/WEBHOOK_DLQ.md`.
 
-### 7d. Hyperdrive (DB pooling) — setup placeholder
-
-Not configured yet. The Worker currently talks to Neon directly via
-`@neondatabase/serverless` (per-request connections, as Workers requires). When
-connection latency or pooling becomes a measured problem, add a `[[hyperdrive]]`
-binding in `wrangler.toml` and point `lib/db.ts` at it — see the North Star's
-target stack table.
-
-### 7e. Rate limiting — no setup needed
+### 7d. Rate limiting — no setup needed
 
 The per-IP rate limiter (`lib/hono/rate-limit.ts`) uses the Cloudflare Workers Rate
 Limiting binding `RATE_LIMITER`, declared as `[[ratelimits]]` (and per-env
 `[[env.staging.ratelimits]]` / `[[env.production.ratelimits]]`) in `wrangler.toml`
 with `simple = { limit = 100, period = 60 }`. It needs **no dashboard resource** —
-it's configured entirely in `wrangler.toml`. The binding is absent under `wrangler dev`,
-so the limiter no-ops locally.
+it's configured entirely in `wrangler.toml`. Wrangler simulates the binding
+locally. Direct unit/app harnesses may omit it and no-op only under an explicit
+local/development stage. A missing binding in staging or production fails
+closed with `503 RATE_LIMITER_UNAVAILABLE`.
 
-### 7f. Custom domain (serve the API on your own hostname)
+### 7e. Custom domain (serve the API on your own hostname)
 
 By default the Worker answers on `*.workers.dev`. To serve the API on a real
 hostname, wire the Cloudflare Workers **Custom Domain** routes into
@@ -282,7 +285,8 @@ the real R2 public/custom-domain URL per environment.
   or the JWT is for a different WorkOS client.
 - **`/v1/health/detailed` fails** — `DATABASE_URL` in `.dev.vars` is wrong or the
   database is unreachable.
-- **Media routes return 503** — R2 credentials not set; see 7c.
+- **Media presign/list routes return 503** — R2 S3 API credentials are not set;
+  direct upload can still use the `IMAGES_BUCKET` binding. See 7c.
 - **`/v1/test/*` returns 404** — by design when `STAGE=production`; these are
   dev/staging-only diagnostics (`src/node/routes/test.ts`).
 - **Port already in use** — a stale `workerd` process from a previous `wrangler dev`;

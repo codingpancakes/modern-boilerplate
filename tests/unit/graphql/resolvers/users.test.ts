@@ -140,10 +140,12 @@ describe("User Resolvers", () => {
 			const selectChain = {
 				from: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
-						limit: vi
-							.fn()
-							.mockResolvedValueOnce([existingUser])
-							.mockResolvedValueOnce([existingProfile]),
+						limit: vi.fn().mockReturnValue({
+							for: vi
+								.fn()
+								.mockResolvedValueOnce([existingUser])
+								.mockResolvedValueOnce([existingProfile]),
+						}),
 					}),
 				}),
 			};
@@ -190,10 +192,12 @@ describe("User Resolvers", () => {
 			const selectChain = {
 				from: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
-						limit: vi
-							.fn()
-							.mockResolvedValueOnce([existingUser])
-							.mockResolvedValueOnce([existingProfile]),
+						limit: vi.fn().mockReturnValue({
+							for: vi
+								.fn()
+								.mockResolvedValueOnce([existingUser])
+								.mockResolvedValueOnce([existingProfile]),
+						}),
 					}),
 				}),
 			};
@@ -231,10 +235,12 @@ describe("User Resolvers", () => {
 			const selectChain = {
 				from: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
-						limit: vi
-							.fn()
-							.mockResolvedValueOnce([existingUser])
-							.mockResolvedValueOnce([existingProfile]),
+						limit: vi.fn().mockReturnValue({
+							for: vi
+								.fn()
+								.mockResolvedValueOnce([existingUser])
+								.mockResolvedValueOnce([existingProfile]),
+						}),
 					}),
 				}),
 			};
@@ -284,10 +290,12 @@ describe("User Resolvers", () => {
 			const selectChain = {
 				from: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
-						limit: vi
-							.fn()
-							.mockResolvedValueOnce([existingUser])
-							.mockResolvedValueOnce([existingProfile]),
+						limit: vi.fn().mockReturnValue({
+							for: vi
+								.fn()
+								.mockResolvedValueOnce([existingUser])
+								.mockResolvedValueOnce([existingProfile]),
+						}),
 					}),
 				}),
 			};
@@ -347,10 +355,12 @@ describe("User Resolvers", () => {
 			const selectChain = {
 				from: vi.fn().mockReturnValue({
 					where: vi.fn().mockReturnValue({
-						limit: vi
-							.fn()
-							.mockResolvedValueOnce([existingUser])
-							.mockResolvedValueOnce([existingProfile]),
+						limit: vi.fn().mockReturnValue({
+							for: vi
+								.fn()
+								.mockResolvedValueOnce([existingUser])
+								.mockResolvedValueOnce([existingProfile]),
+						}),
 					}),
 				}),
 			};

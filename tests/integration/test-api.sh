@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # API Testing Script
-# Usage: ./scripts/test-api.sh [staging|production]
+# Usage: ./tests/integration/test-api.sh [staging|production]
 
 # Load environment helper
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,14 +50,12 @@ curl -s $API_URL/v1/users/me \
   -H "Authorization: Bearer fake-token-12345" | jq .
 echo ""
 
-echo "✅ API tests completed!"
+echo "ℹ️  Manual API observations completed (this script does not assert statuses)."
 echo ""
 echo "📋 Summary:"
 echo "  - API URL: $API_URL"
 echo "  - Stage: $STAGE"
-echo "  - Custom Domain: ✅ Working"
-echo "  - CORS: ✅ Configured"
-echo "  - Auth: ✅ Protected endpoints require valid JWT"
+echo "  - Review the responses above; use pnpm load:smoke for a blocking gate."
 echo ""
 echo "🔑 To test with real authentication:"
 echo "  1. Get a valid WorkOS JWT token"

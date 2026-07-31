@@ -1,11 +1,12 @@
 # Serverless Backend Boilerplate
 
 Production-grade API running as **one Cloudflare Worker** — Hono + Neon Postgres +
-WorkOS authentication. Built to be owned end-to-end by one person
-(see [docs/direction/NORTH_STAR.md](./docs/direction/NORTH_STAR.md)).
+WorkOS authentication. Built to be owned end-to-end by one person; see the
+[North Star](./docs/direction/NORTH_STAR.md).
 
-All project naming flows from `PROJECT_NAME` — run `pnpm init-project` (interactive
-wizard, or pass `<name> <domain>`) to spin off a new project. Full walkthrough:
+Run `pnpm init-project` (interactive wizard, or pass `<name> <domain>`) to
+rewrite the package, Worker, resource names, and `PROJECT_NAME` label together.
+Full walkthrough:
 [docs/guides/LAUNCH_NEW_PROJECT.md](./docs/guides/LAUNCH_NEW_PROJECT.md).
 
 ## Stack
@@ -17,7 +18,7 @@ wizard, or pass `<name> <domain>`) to spin off a new project. Full walkthrough:
 - **Media:** Cloudflare R2 (S3-compatible API via `aws4fetch` presigning)
 - **Jobs:** Cloudflare Cron Triggers (`src/node/cron.ts`)
 - **Queues:** Cloudflare Queues for durable webhook processing + DLQ (`src/node/queue.ts`)
-- **Edge:** Cloudflare WAF/DDoS/CDN (included — the Worker *is* the edge)
+- **Edge:** Cloudflare TLS/DDoS; WAF/rate rules are zone configuration outside the repo
 - **Validation:** Zod | **Linter:** Biome | **Tests:** Vitest
 
 ## Quick Start
@@ -39,7 +40,7 @@ No Cloudflare account needed for local dev. Full guide: [docs/CLOUDFLARE_SETUP.m
 | `pnpm dev` | Run the Worker locally (`wrangler dev --local`, port 8787) |
 | `pnpm check` | Lint + typecheck + unit tests |
 | `pnpm test:run` | Unit tests only |
-| `pnpm test:integration:local` | Real-DB transaction tests (starts docker `postgres-test`) |
+| `pnpm test:integration:local` | Full real-Postgres integration suite (starts docker `postgres-test`) |
 | `pnpm lint:fix` | Auto-fix lint issues |
 | `pnpm typecheck` | TypeScript check |
 | `pnpm migrate` | Run Drizzle migrations |
@@ -79,14 +80,14 @@ wrangler.toml            Worker config: vars, R2 bindings, cron triggers, stagin
 .dev.vars.example        Registry of every secret the Worker reads (copy to .dev.vars)
 scripts/                 migrate, sync-secrets, init-project, set-domain, generate-openapi
 templates/               Hono route templates for new domains (see templates/README.md)
-tests/                   Unit (vitest) + integration (vitest + shell scripts)
-docs/                    Human docs (legacy AWS docs under docs/legacy-aws/)
+tests/                   Unit Vitest, real-Postgres Vitest, and live-API shell smoke suites
+docs/                    Current architecture, security, setup, operations, and agent playbooks
 ```
 
 ## Architecture
 
 ```
-Client → Cloudflare edge (WAF/DDoS/CDN) → Worker
+Client → Cloudflare edge (TLS/DDoS; configured WAF rules) → Worker
            fetch     → Hono app → routes → Neon Postgres (Drizzle)
                                          → R2 (presigned URLs)
                                          → Queue producer (verified webhooks)
@@ -95,7 +96,7 @@ Client → Cloudflare edge (WAF/DDoS/CDN) → Worker
 ```
 
 - **Auth:** `requireAuth()` Hono middleware verifies the WorkOS JWT (RS256, JWKS,
-  `client_id` audience binding) and puts claims on `c.get("claims")`. No gateway,
+  `client_id` application binding) and puts claims on `c.get("claims")`. No gateway,
   no separate authorizer.
 - **REST:** route modules under `src/node/routes/`; app-level middleware handles
   request IDs, per-IP rate limiting (`RATE_LIMITER` binding), per-request DB lifecycle,
@@ -133,12 +134,13 @@ domain — mount it in `routes/index.ts` (with `requireAuth()` if protected). Th
 | [Testing Guide](./docs/guides/TESTING.md) | Unit + integration testing |
 | [Data Retention](./docs/DATA_RETENTION_POLICY.md) | Retention policies per data type |
 | [SOC 2 Checklist](./docs/SOC2_READINESS_CHECKLIST.md) | Compliance readiness tracker |
-| [North Star](./docs/direction/NORTH_STAR.md) | Why this stack; one-person maintainability principles |
-| [Migration Plan](./docs/direction/MIGRATION_PLAN.md) | AWS → Cloudflare migration record + remaining work |
-| [Legacy AWS docs](./docs/legacy-aws/) | Pre-migration stack (kept for decommissioning/reference) |
+| [North Star](./docs/direction/NORTH_STAR.md) | Current architecture and one-person maintainability principles |
 
 ## AI Coding Rules
 
 [AGENTS.md](./AGENTS.md) is the canonical guide (invariants, Definition of Done).
-`.cursor/rules/` holds per-domain pattern files (Cloudflare-native since the
-migration); where they conflict with AGENTS.md, AGENTS.md wins.
+The [agent handbook](./docs/agents/README.md) routes changes to task-specific
+playbooks, and [canonical code patterns](./docs/agents/CANONICAL_CODE_PATTERNS.md)
+contains the current WorkOS auth and implementation shapes. `.cursor/rules/`
+is supplementary; where guidance conflicts, follow the precedence in the
+handbook.

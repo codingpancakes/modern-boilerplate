@@ -23,9 +23,9 @@
  *
  * ── Invariants this template observes (see AGENTS.md) ─────────────────────
  *  - No try-catch in handlers; `app.ts` onError owns error formatting (#1).
- *  - Zod-validate every input via `parseBody` (#2).
- *  - `sanitizeObject()` before every DB write (#3).
- *  - `logAudit()` fire-and-forget on every mutation, with request context (#4).
+ *  - Zod-validate untrusted domain input via `parseBody` (#2).
+ *  - `sanitizeObject()` before persisting caller-controlled values (#3).
+ *  - Audit every domain mutation with request context (#4).
  *  - Multi-step writes wrapped in `db.transaction()` (#8) — or run them on the
  *    `tx` from `withTransactionalIdempotentJson` so the mutation and the stored
  *    idempotency response commit atomically.
@@ -146,7 +146,8 @@ widgetRoutes.post("/", async (c) => {
 	// a "processing" key that a retry double-executes. The handler returns plain
 	// data; the wrapper shapes `{ success, data }` and the Response, and replays
 	// the identical body on a repeat with the same Idempotency-Key.
-	return withTransactionalIdempotentJson(
+	let auditEntry: Parameters<typeof logAudit>[0] | undefined;
+	const response = await withTransactionalIdempotentJson(
 		{
 			key: c.req.header("idempotency-key"),
 			sub: claims.sub,
@@ -167,7 +168,7 @@ widgetRoutes.post("/", async (c) => {
 				fields: Object.keys(input),
 			});
 
-			// 2. Sanitize all string fields (XSS prevention) BEFORE the write.
+			// 2. Strip unsafe persisted markup/control characters BEFORE the write.
 			const clean = sanitizeObject(input as Record<string, unknown>);
 
 			// 3. Write on the SAME `tx` the wrapper passed in, so the mutation and
@@ -183,8 +184,8 @@ widgetRoutes.post("/", async (c) => {
 				throw Errors.InternalServerError("Widget creation failed");
 			}
 
-			// 5. Audit the mutation, fire-and-forget, with request context.
-			void logAudit({
+			// 5. Stage the audit data; start it only after this transaction commits.
+			auditEntry = {
 				userId,
 				action: AUDIT_ACTIONS.CREATE,
 				resourceType: AUDIT_RESOURCE_TYPES.SETTINGS, // pick the right type
@@ -194,10 +195,13 @@ widgetRoutes.post("/", async (c) => {
 				userAgent: c.req.header("user-agent"),
 				requestId: c.get("requestId"),
 				status: AUDIT_STATUS.SUCCESS,
-			});
+			};
 
 			// 6. Return plain data — the wrapper persists + shapes the response.
 			return { widget: created };
 		},
 	);
+
+	if (auditEntry) void logAudit(auditEntry);
+	return response;
 });

@@ -15,9 +15,10 @@ import { createLogger } from "./logger";
 import { captureException } from "./sentry";
 
 /**
- * SOC 2 retention window for audit logs. Mirrored by the `audit_logs_guard`
- * DB trigger, which rejects deletes of any row newer than this — so logs are
- * tamper-proof within the window and only the retention job can prune beyond it.
+ * Project-policy retention window for audit logs. Mirrored by the
+ * `audit_logs_guard` DB trigger, which rejects deletes of any row newer than
+ * this — so logs are tamper-proof within the window and only the retention job
+ * can prune beyond it.
  */
 export const AUDIT_RETENTION_YEARS = 7;
 const AUDIT_RETENTION_BATCH_SIZE = 1_000;
@@ -31,8 +32,8 @@ const logger = createLogger({ serviceName: "audit" });
  *   - this structured `logger.error` (event: "audit_write_failure") — queryable
  *     in Workers Logs / Logpush, the field to build a count alert on; and
  *   - `captureException` → Sentry (set a Sentry alert rule for the page).
- * (No fake CloudWatch EMF: nothing on Cloudflare would aggregate it. To graph a
- * real count, add an Analytics Engine binding and write a data point here.)
+ * To graph a durable count, add an Analytics Engine binding and write a data
+ * point here.
  */
 const AUDIT_WRITE_FAILURE_EVENT = "audit_write_failure";
 
@@ -100,6 +101,8 @@ const SENSITIVE_KEY_PATTERNS = [
 ];
 
 const REDACTED = "[REDACTED]";
+const TRUNCATED = "[TRUNCATED]";
+const MAX_REDACTION_DEPTH = 8;
 
 function isSensitiveKey(key: string): boolean {
 	const normalized = key.toLowerCase();
@@ -113,20 +116,24 @@ function isSensitiveKey(key: string): boolean {
  * avoid pathological/circular structures.
  */
 function redactSensitive(value: unknown, depth = 0): unknown {
-	if (depth > 8 || value === null || typeof value !== "object") {
+	if (value === null || typeof value !== "object") {
 		return value;
 	}
+	// Fail closed at the recursion boundary. Returning the original container here
+	// would preserve every nested credential below it and write those secrets into
+	// the immutable seven-year audit trail.
+	if (depth >= MAX_REDACTION_DEPTH) return TRUNCATED;
 
 	if (Array.isArray(value)) {
 		return value.map((item) => redactSensitive(item, depth + 1));
 	}
 
 	// Only recurse into plain objects. Class instances (Date, Buffer, Map, etc.)
-	// are returned untouched so JSON serialization preserves their real shape
-	// instead of collapsing to `{}`.
+	// cannot bypass key-based redaction via custom enumerable properties. Audit
+	// entries are JSON data; a non-plain object is not a supported input shape.
 	const proto = Object.getPrototypeOf(value);
 	if (proto !== null && proto !== Object.prototype) {
-		return value;
+		return TRUNCATED;
 	}
 
 	const result: Record<string, unknown> = {};

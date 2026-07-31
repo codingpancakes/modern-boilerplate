@@ -10,9 +10,8 @@ import type { CronHandler } from "./worker";
  * has no entry, so keys must stay byte-identical to wrangler.toml. The
  * key↔toml correspondence is guarded by tests/unit/cron.test.ts.
  *
- * Jobs replace the EventBridge-scheduled Lambdas: they await their own DB
- * work and THROW on failure so the platform records a failed invocation
- * (failed-invocation visibility replaces the old DLQ alarms).
+ * Jobs await their own DB work and THROW on failure so the platform records
+ * a failed invocation.
  *
  * Each job runs inside {@link runWithDbScope} so its `getDb()` calls share one
  * pool that is drained when the job finishes — cron runs outside the HTTP

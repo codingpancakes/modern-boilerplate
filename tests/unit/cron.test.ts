@@ -30,8 +30,7 @@ import type { WorkerEnv } from "@/worker";
  *      — `worker.scheduled` dispatches by `controller.cron`, so any drift
  *      means a trigger fires with no handler (a thrown invocation).
  *   2. Each expression maps to a callable job that awaits its cleanup work
- *      and propagates failures (failed-invocation visibility replaces the
- *      old EventBridge/DLQ alarms).
+ *      and propagates failures for platform visibility.
  */
 
 const MAINTENANCE_CRON = "0 4 * * *";

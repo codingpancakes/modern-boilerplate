@@ -124,12 +124,14 @@ async function updateMyAccountOnClient(
 		.select()
 		.from(users)
 		.where(eq(users.id, options.userId))
-		.limit(1);
+		.limit(1)
+		.for("update");
 	const curProfileRows = await db
 		.select()
 		.from(profiles)
 		.where(eq(profiles.userId, options.userId))
-		.limit(1);
+		.limit(1)
+		.for("update");
 	const currentUser = curUserRows[0];
 	const currentProfile = curProfileRows[0];
 

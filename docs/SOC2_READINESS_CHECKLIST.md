@@ -1,6 +1,6 @@
 # SOC 2 Readiness Checklist
 
-**Last updated:** June 2026
+**Last updated:** July 2026
 **Runtime:** Cloudflare Workers, Neon Postgres, Cloudflare R2, Cloudflare Queues,
 WorkOS, Sentry
 
@@ -14,8 +14,8 @@ Overall readiness: **high for an engineering boilerplate, not audit-ready by its
 
 Code-backed controls are largely present:
 
-- WorkOS JWT authentication with RS256 pinning and deployed-environment fail-closed
-  audience binding.
+- WorkOS JWT authentication with RS256 pinning and deployed-environment
+  fail-closed `client_id` application binding.
 - Route-level auth for protected REST and GraphQL surfaces.
 - Zod validation and bounded sanitization before writes.
 - Drizzle parameterized queries.
@@ -27,18 +27,19 @@ Code-backed controls are largely present:
 - Health-gated gradual deploy with auto-rollback.
 - GitHub Actions gate with runtime dependency audit, lint, typecheck, OpenAPI drift
   check, unit tests, and real-Postgres integration tests.
-- `staging` and `main` branch/environment mapping with protected deploy branches.
+- `staging` and `main` workflow/environment mapping. Branch protection and
+  production approval remain GitHub settings that must be verified externally.
 
 ## Control Map
 
 | Area | Current control | Evidence |
 |---|---|---|
-| Authentication | WorkOS JWT verification, RS256, JWKS cache, `client_id` binding | `src/node/authorizers/verify-token.ts`, tests |
+| Authentication | WorkOS JWT verification, RS256, JWKS cache, `client_id` application binding | `src/node/authorizers/verify-token.ts`, tests |
 | Authorization | Protected route mounting and org membership checks | `src/node/routes/index.ts`, GraphQL resolvers |
 | Input safety | Zod validation, sanitizer depth cap, content-type checks | `src/node/lib/validation/`, `src/node/lib/sanitize.ts` |
 | SQL safety | Drizzle ORM and migrations | `src/node/db/` |
 | Audit trail | Immutable `audit_logs`, redaction, request context, retention cron | `docs/AUDIT_LOGGING_GUIDE.md` |
-| Change management | Protected `staging`/`main`, CI gate, production environment approval | `.github/workflows/ci.yml`, GitHub settings |
+| Change management | CI targets `staging`/`main`; branch protection and production approval must be configured externally | `.github/workflows/ci.yml`, GitHub settings |
 | Deployment safety | Canary, health probes, smoke checks, rollback | `scripts/deploy.ts` |
 | Incident visibility | Sentry capture and Workers Logs | `src/node/lib/sentry.ts`, `wrangler.toml` |
 | Async durability | Cloudflare Queues retries and DLQ audit row | `src/node/queue.ts`, `docs/runbooks/WEBHOOK_DLQ.md` |

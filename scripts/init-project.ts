@@ -9,7 +9,7 @@
  * `wrangler secret put`). Local secrets live in .dev.vars.
  *
  * Usage:
- *   pnpm init-project <project-name> <domain> [--force]
+ *   pnpm init-project <project-name> <domain> [api-subdomain] [--force]
  *
  * Example:
  *   pnpm init-project acme-api acme.dev
@@ -166,7 +166,7 @@ SENTRY_DSN=
 TEST_API_KEY=
 WEBHOOK_SECRET=
 
-# R2 media — Cloudflare R2 Account API token; unset = media returns 503
+# R2 S3 API credentials for presigning/listing; direct upload uses the binding
 R2_ACCOUNT_ID=
 R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
@@ -233,7 +233,7 @@ Next steps:
   1. cp .dev.vars.example .dev.vars   # local secrets for wrangler dev
   2. Fill real values in .dev.vars and .env.staging / .env.production:
      DATABASE_URL, WORKOS_CLIENT_ID, WORKOS_WEBHOOK_SECRET, and (optional)
-     SENTRY_DSN, TEST_API_KEY, WEBHOOK_SECRET, R2 credentials
+     SENTRY_DSN, TEST_API_KEY, WEBHOOK_SECRET, R2 S3 API credentials
   3. Review wrangler.toml, then create the named R2 buckets and queues
   4. pnpm migrate                     # apply schema to the DB
   5. pnpm dev                         # wrangler dev --local
@@ -241,7 +241,7 @@ Next steps:
 
 Custom domains for the API (api.${domain} / api-staging.${domain}) are already
 wired into wrangler.toml. They bind on deploy once the zone is on Cloudflare —
-re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7f.
+re-run \`pnpm set-domain <domain>\` to change it. See docs/CLOUDFLARE_SETUP.md §7e.
 `);
 }
 
@@ -266,7 +266,8 @@ export async function gatherInputs(
 	): Promise<string> {
 		for (;;) {
 			const suffix = fallback ? ` (${fallback})` : "";
-			const answer = (await ask(`${label}${suffix}: `)).trim() || fallback || "";
+			const answer =
+				(await ask(`${label}${suffix}: `)).trim() || fallback || "";
 			const error = validate(answer);
 			if (!error) return answer;
 			logger.log(`  ↳ ${error}`);
@@ -291,7 +292,9 @@ async function runInteractive(root: string): Promise<void> {
 		console.log(
 			`\nWorker: ${inputs.projectName}-backend\nAPI:    ${inputs.apiSubdomain}.${inputs.domain} / ${inputs.apiSubdomain}-staging.${inputs.domain}`,
 		);
-		const confirm = (await rl.question("\nProceed? (Y/n) ")).trim().toLowerCase();
+		const confirm = (await rl.question("\nProceed? (Y/n) "))
+			.trim()
+			.toLowerCase();
 		if (confirm === "n" || confirm === "no") {
 			console.log("Aborted.");
 			return;
@@ -319,7 +322,9 @@ export function main(args = process.argv.slice(2), root = defaultRoot()): void {
 			"Usage: pnpm init-project <project-name> <domain> [api-subdomain] [--force]",
 		);
 		console.error("Example: pnpm init-project acme-api acme.dev");
-		console.error("Or run with no arguments in a terminal for the interactive wizard.");
+		console.error(
+			"Or run with no arguments in a terminal for the interactive wizard.",
+		);
 		process.exit(1);
 	}
 

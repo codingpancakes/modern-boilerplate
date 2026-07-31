@@ -2,8 +2,7 @@
 /**
  * Health-gated gradual deploy with automatic rollback for Cloudflare Workers.
  *
- * Replaces the old AWS CodeDeploy blue-green canary (the one piece of deploy
- * safety the platform doesn't give us out of the box). Flow:
+ * Flow:
  *
  *   1. Record the currently-active version  (the rollback target)
  *   2. Upload the new version at 0% traffic  (`wrangler versions upload`)
@@ -28,6 +27,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync as readFile } from "node:fs";
+import { parseActiveVersionId } from "./lib/deploy-version";
 
 const stage = process.argv[2];
 if (stage !== "staging" && stage !== "production") {
@@ -82,7 +82,9 @@ const soakSeconds = Number(process.env.SOAK_SECONDS || 20);
 const healthAttempts = Number(process.env.HEALTH_ATTEMPTS || 5);
 const smokeCorsOrigin =
 	process.env[`SMOKE_CORS_ORIGIN_${stage.toUpperCase()}`] ||
-	process.env.SMOKE_CORS_ORIGIN || process.env.CORS_TEST_ORIGIN || "";
+	process.env.SMOKE_CORS_ORIGIN ||
+	process.env.CORS_TEST_ORIGIN ||
+	"";
 
 function wrangler(args: string[], capture = true): string {
 	return execFileSync("npx", ["wrangler", ...args, "--env", stage], {
@@ -93,18 +95,9 @@ function wrangler(args: string[], capture = true): string {
 
 /** Version ID currently serving 100% (or the first active split), or null on first deploy. */
 function activeVersionId(): string | null {
-	try {
-		const out = wrangler(["deployments", "status", "--json"]);
-		const json = JSON.parse(out);
-		const versions: Array<{ version_id: string; percentage: number }> =
-			json.versions ?? [];
-		if (versions.length === 0) return null;
-		// Prefer the highest-traffic version as the rollback target.
-		versions.sort((a, b) => b.percentage - a.percentage);
-		return versions[0].version_id;
-	} catch {
-		return null; // no prior deployment
-	}
+	const out = wrangler(["deployments", "status", "--json"]);
+	const json: unknown = JSON.parse(out);
+	return parseActiveVersionId(json);
 }
 
 /**
@@ -126,7 +119,9 @@ function deploySplit(specs: string[]): void {
 
 function checkPendingMigrations(): void {
 	if (process.env.CHECK_PENDING_MIGRATIONS !== "true") {
-		console.log("   migration preflight skipped (set CHECK_PENDING_MIGRATIONS=true)");
+		console.log(
+			"   migration preflight skipped (set CHECK_PENDING_MIGRATIONS=true)",
+		);
 		return;
 	}
 
@@ -325,7 +320,9 @@ async function main() {
 	try {
 		await smokeChecks();
 	} catch (err) {
-		console.error(`❌ Smoke checks failed — rolling back: ${(err as Error).message}`);
+		console.error(
+			`❌ Smoke checks failed — rolling back: ${(err as Error).message}`,
+		);
 		deploySplit([`${oldVersion}@100`]);
 		console.error(`↩️  Rolled back to ${oldVersion}.`);
 		process.exit(1);

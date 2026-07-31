@@ -270,7 +270,7 @@ Done. Still manual (by nature):
 				: "\n  • DATABASE_URL — create a Neon branch (or pass --neon <project-id>)."
 		}
   • WorkOS app + webhook endpoint/secret.
-  • DNS — point your registrar at Cloudflare (see docs/CLOUDFLARE_SETUP.md §7f).
+  • DNS — point your registrar at Cloudflare (see docs/CLOUDFLARE_SETUP.md §7e).
 ${deploy ? "" : `\nNext: pnpm sync-secrets ${stage} && pnpm migrate && pnpm deploy:${stage}`}`);
 }
 

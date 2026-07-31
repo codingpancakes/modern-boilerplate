@@ -76,10 +76,10 @@ const workosAuthData = z
 // and evolving catalog of `authentication.*` events we want to audit without
 // having to enumerate each one. Unknown events are ignored by the handler.
 export const workosWebhookEvent = z.object({
-	id: z.string(),
-	event: z.string().min(1),
+	id: z.string().min(1).max(255),
+	event: z.string().min(1).max(200),
 	data: z.record(z.unknown()),
-	created_at: z.string(),
+	created_at: z.string().datetime(),
 });
 
 export type WorkOSWebhookEvent = z.infer<typeof workosWebhookEvent>;

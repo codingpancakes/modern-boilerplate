@@ -2,15 +2,14 @@
 
 This document explains how the backend protects against common attacks.
 
-The backend is one Cloudflare Worker — there is no API Gateway, no Lambda, and **no
-origin to protect**: the Worker runs at the edge itself, so the whole "direct-to-origin
-bypass" class of problems (the old `X-Origin-Verify` machinery) is gone by construction.
+The backend is one Cloudflare Worker running at the Cloudflare edge. There is no
+separate application origin behind the Worker.
 
 ---
 
 ## Protection Layers
 
-### 1. Cloudflare Edge (DDoS / WAF / CDN)
+### 1. Cloudflare Edge (DDoS / WAF / TLS)
 
 **Location:** Cloudflare platform (account-level config, not code)
 
@@ -18,12 +17,14 @@ bypass" class of problems (the old `X-Origin-Verify` machinery) is gone by const
 - Always-on, unmetered DDoS mitigation in front of every request — included, no budget toggle
 - Cloudflare WAF (managed rulesets, rate-limiting rules) is configured in the Cloudflare
   dashboard/API per zone — review and enable rules before exposing real users
-- TLS termination and CDN caching at the edge
+- TLS termination at the edge
 
-**What changed from AWS:** replaces AWS WAF v2 (+$10/month, `ENABLE_WAF` toggle), API
-Gateway throttling, and CloudFront. Edge protection is no longer defined in this repo —
-there is no infrastructure code to read; treat zone configuration as part of the
-deployment checklist.
+This repository does not configure application-response caching. Add explicit
+Cache API/cache-rule behavior only for responses whose authorization and
+invalidation model makes caching safe.
+
+Edge protection is account-level configuration rather than repository code.
+Treat zone configuration and evidence as part of the deployment checklist.
 
 **Note:** there is also an **application-level per-IP rate limiter** in the Worker
 (see layer 11 below). It complements — does not replace — these zone-level rules and
@@ -41,11 +42,13 @@ rules remain the place for global/per-path limits.
 - Verifies the `Authorization: Bearer <JWT>` on every protected domain
   (`routes/index.ts` applies `requireAuth()` to `/v1/users/*`, `/v1/media/*`, `/v1/graphql/*`)
 - RS256 algorithm pinning (rejects other algorithms)
-- Verifies signature, expiration, issuer, and audience (`WORKOS_CLIENT_ID` binding)
-- JWKS fetched from WorkOS and cached with TTL
+- Verifies signature, expiration, issuer, and the token's `client_id`
+  (`WORKOS_CLIENT_ID` application binding; WorkOS tokens here have no `aud`)
+- JWKS fetched from WorkOS and cached with a controlled refetch cooldown and
+  network timeout
 - Verified claims land on `c.get("claims")` — route code never re-parses tokens
 - **Fails closed unless explicitly local:** an empty `WORKOS_CLIENT_ID` disables the
-  `client_id` audience binding (intended only for local dev), which would accept any
+  `client_id` application binding (intended only for local dev), which would accept any
   WorkOS-signed token. Verification refuses to run with an empty client id unless
   `STAGE` is exactly `local` or `development`, so an unset/typoed stage cannot
   silently verify unbound
@@ -56,7 +59,7 @@ rules remain the place for global/per-path limits.
 2. requireAuth() middleware runs before the route handler
 3. verify-token validates the JWT against the WorkOS JWKS
 4. Valid   → claims set on context, handler runs
-5. Invalid → 401 Unauthorized (legacy-compatible error shape)
+5. Invalid → 401 Unauthorized using the standard error shape
 ```
 
 **Protection against:**
@@ -77,9 +80,10 @@ issued stays valid until it expires**. Therefore:
 > working until its current access token expires; the next refresh then fails and
 > the user is out.
 
-- **Set the access-token duration short** in the WorkOS dashboard (Authentication →
-  Sessions → _Access token duration_). That value *is* your worst-case revocation
-  delay — 5 minutes is a sensible default. This is the intended lever.
+- **Set the access-token duration short** in the WorkOS dashboard (Applications
+  → your application → Sessions). That value is your worst-case revocation
+  delay; choose and document it according to the product's risk and usability
+  requirements.
 - This is standard OAuth/OIDC behaviour, **not a defect**. Every stateless-JWT
   system works this way. Checking the IdP on every request would trade it for
   per-request latency, rate-limit exposure, and an availability dependency on
@@ -99,10 +103,11 @@ issued stays valid until it expires**. Therefore:
 **Location:** `src/node/lib/validation/`
 
 **What it does:**
-- Validates all request bodies, query params, and path params
+- Validates every untrusted body/query/path value that a current endpoint accepts
 - Type-safe validation with TypeScript
-- Rejects malformed or malicious input BEFORE it reaches business logic
-- Object depth limiting (max 10 levels) prevents deeply nested payload DoS
+- Rejects malformed or out-of-bounds input before it reaches business logic
+- Arbitrary JSON fields use `jsonObject` (10-level and 10 KB caps);
+  `sanitizeObject()` has a separate depth backstop
 
 **Example:**
 ```typescript
@@ -111,13 +116,13 @@ const input = parseBody(rawBody, uploadImageRequest);
 
 **Protection against:**
 - SQL Injection — invalid input rejected before DB query
-- XSS — malicious scripts rejected at validation
+- XSS/persisted markup — handled by the separate sanitization step before writes
 - Path Traversal — invalid file paths rejected
 - Type Confusion — wrong data types rejected
 - Nested payload DoS — object depth capped at 10
 
 **Validation schemas:**
-- `validation/media.ts` — file uploads, content types, magic byte checks
+- `validation/media.ts` — file-upload names, sizes, content types, and list queries
 - `validation/users.ts` — user profile updates
 - `validation/webhooks.ts` — webhook payloads
 - `validation/organizations.ts` — organization updates
@@ -131,8 +136,9 @@ const input = parseBody(rawBody, uploadImageRequest);
 
 **What it does:**
 - All database queries use parameterized statements
-- SQL injection is impossible by design
-- No raw SQL strings (migrations are the only SQL)
+- SQL injection is prevented by parameterized Drizzle queries
+- Raw/unparameterized SQL strings are prohibited. Narrow, parameterized Drizzle
+  `sql` fragments require a documented ORM gap and a real-Postgres test
 
 **Example:**
 ```typescript
@@ -148,26 +154,35 @@ await db.select().from(users).where(eq(users.id, userId));
 
 **What it does:**
 - Validates request origin against environment-driven configuration
-- Three layers: exact origins (`CORS_EXACT_ORIGINS`), parent domains
-  (`CORS_PARENT_DOMAINS`), and regex patterns (`CORS_DOMAIN_PATTERNS`) —
-  all set in `wrangler.toml [vars]`
+- Three inputs: exact origins (`CORS_EXACT_ORIGINS`), parent domains
+  (`CORS_PARENT_DOMAINS`), and legacy wildcard/parent-domain entries
+  (`CORS_DOMAIN_PATTERNS`, for example `*.example.com`). The implementation
+  performs hostname suffix matching; these are **not regular expressions**
 - HTTPS enforcement in production (no http origins accepted)
 - Subdomain matching with parent domain min-segment validation
 - No header name leakage in rejection responses
 - Dev/local origins only accepted when `STAGE` is explicitly `local`/`development`
   (`isDevLikeStage()` in `lib/stage.ts`); unknown or missing stages fail closed
-- Answers `OPTIONS` preflight with 204 + the allow headers
+- Answers valid `OPTIONS` preflight with 204 + allow headers; rejects
+  unsupported methods/headers with 405/400
 
 **Protection against:**
-- CSRF — only allowed origins can make browser requests
-- Data theft — unauthorized domains blocked
+- Cross-origin data reading — disallowed browser origins cannot read API responses
+- Accidental browser integration from unapproved origins
+
+CORS is not, by itself, CSRF protection: browsers may still send some
+cross-origin requests even when they cannot read the response. Protected routes
+require an explicit bearer token rather than ambient cookie authentication, and
+mutations must continue to enforce authentication, authorization, and
+idempotency independently of CORS.
 
 ---
 
 ### 6. Security Headers
 
-**Location:** `src/node/lib/cors.ts` (`securityHeaders()`), applied to every response —
-including error responses via `app.ts` `onError`
+**Location:** `src/node/lib/cors.ts` (`securityHeaders()`), applied to every
+non-preflight response, including error responses via `app.ts` `onError`.
+`OPTIONS` responses intentionally contain only the CORS/preflight headers.
 
 **Headers:**
 ```
@@ -195,8 +210,8 @@ registry of names in `.dev.vars.example`; push script `scripts/sync-secrets.ts`
 - All secret/key comparisons in app code use constant-time comparison
   (`src/node/lib/constant-time.ts`)
 
-**What changed from AWS:** replaces Secrets Manager + rotation-TTL caching in `db.ts`.
-Rotation is now: push a new value (`wrangler secret put`), which redeploys the Worker.
+Rotation is performed by pushing a new value with `wrangler secret put`, which
+redeploys the Worker.
 
 ---
 
@@ -225,11 +240,14 @@ Rotation is now: push a new value (`wrangler secret put`), which redeploys the W
 - `sanitizeObject()` strips HTML tags (script/style blocks lose their contents)
   and control characters; stored data stays plain text exactly as the user wrote
   it — escaping is a render-time concern (`escapeHtml()` is exported for that)
-- Blocks dangerous URL schemes (javascript:, data:, vbscript:, blob:)
-- Blocks protocol-relative URLs (`//host/path`)
+- For recognized URL-like keys, blocks dangerous schemes
+  (`javascript:`, `data:`, `vbscript:`, `blob:`), protocol-relative URLs, and
+  non-HTTPS absolute URLs
 - Sanitizes filenames (strips path separators, null bytes)
 - Category and string field character validation
-- Applied after Zod validation, before every DB write
+- Applied after Zod validation before persisting user/provider-controlled
+  domain values. Internal control rows such as idempotency state and audit
+  records use typed constructed values and dedicated redaction/validation.
 
 ---
 
@@ -256,7 +274,8 @@ a token is verified
   Limiting binding (`RATE_LIMITER`) — configured entirely in `wrangler.toml`
   (`simple = { limit = 100, period = 60 }`), no dashboard resource
 - Returns `429` once the limit is exceeded
-- Skips gracefully when the binding is absent (local dev / tests)
+- Skips when the binding is absent only in explicit local development/tests;
+  staging and production return `503 RATE_LIMITER_UNAVAILABLE`
 
 **Scope / caveats:**
 - Per-colo and approximate (the binding's documented behavior), not a single global
@@ -299,11 +318,13 @@ PATCH /v1/users/me
 ```
 
 **Defense:**
-1. Zod validation rejects invalid characters
-2. `sanitizeObject` strips dangerous content
-3. Drizzle ORM uses parameterized queries
+1. Zod enforces the field's type and length; this particular punctuation may
+   remain valid user text
+2. `sanitizeObject` removes unsafe persisted markup/control characters
+3. Drizzle binds the value as a query parameter rather than SQL syntax
 
-**Result:** Attack fails at validation layer
+**Result:** The text may be stored as literal data, but it cannot alter the SQL
+statement.
 
 ---
 
@@ -330,9 +351,11 @@ POST /v1/media/upload-image
 **Defense:**
 1. Cloudflare's always-on DDoS mitigation absorbs volumetric attacks at the edge
 2. Optional zone-level WAF / rate-limiting rules block abusive clients
-3. Workers scale horizontally with no concurrency ceiling — no Lambda pool to exhaust
+3. Workers scale horizontally within Cloudflare platform limits
 
-**Result:** Mitigated at the edge; the cost exposure is per-request billing, not outage
+**Result:** Volumetric exposure is reduced substantially, but application-layer
+abuse, downstream capacity, and request cost still require monitoring and
+zone-level controls.
 
 ---
 
@@ -354,29 +377,37 @@ GET /v1/users/me
 ### CSRF Attack
 
 **Defense:**
-1. CORS validation checks origin against environment-configured allowlist
-2. Malicious origin not in allowlist
-3. Request blocked by browser
+1. Protected routes require an explicit `Authorization: Bearer` token rather
+   than ambient cookie authentication
+2. Every mutation independently enforces authentication and resource-level
+   authorization
+3. CORS prevents unapproved browser origins from reading API responses
+4. Retryable mutations use idempotency controls
 
-**Result:** Browser blocks cross-origin request
+**Result:** A cross-origin page has no ambient credential with which to perform
+an authenticated mutation. CORS is defense in depth, not the primary CSRF
+control.
 
 ---
 
 ## Security Checklist
 
-- **Authentication** — WorkOS JWT via `requireAuth()` (RS256 pinning, JWKS caching, audience binding)
+- **Authentication** — WorkOS JWT via `requireAuth()` (RS256 pinning, JWKS
+  caching, `client_id` application binding)
 - **Authorization** — Role-based access control, org membership checks (`ACTIVE` filter); invites require invitee consent (see below)
-- **Input Validation** — Zod schemas + sanitization on all endpoints
+- **Input Validation** — bounded Zod schemas for accepted domain inputs;
+  protocol-specific verification for auth/signature headers
 - **SQL Injection** — Drizzle ORM (parameterized queries)
 - **XSS** — sanitizeObject + JSON API
-- **CSRF** — Dynamic CORS validation
+- **CSRF** — Explicit bearer authentication; CORS as defense in depth
 - **DDoS** — Cloudflare always-on mitigation (edge)
 - **Rate limiting** — app-level per-IP limiter (`lib/hono/rate-limit.ts`, `RATE_LIMITER` binding, 429 past 100 req/60s); per-colo, pairs with zone rate-limiting rules + DDoS
 - **WAF** — Cloudflare zone configuration (verify before launch; not in code)
 - **Secrets** — wrangler secrets; stdin-only sync; constant-time comparisons
 - **HTTPS** — Cloudflare TLS + HSTS header
 - **Error Handling** — No information leakage (both REST and GraphQL)
-- **Audit Logging** — All mutations logged with `logAudit` / resolver-level audit; DB-immutable
+- **Audit Logging** — Domain mutations use request, transactional, or strict
+  background audit helpers as appropriate; stored rows are DB-immutable
 - **Monitoring** — Workers Logs (`[observability]` in wrangler.toml) + Sentry error tracking
 
 ---
@@ -384,8 +415,8 @@ GET /v1/users/me
 ## Deployments
 
 `pnpm deploy:<stage>` (`scripts/deploy.ts`) runs a **health-gated canary with
-automatic rollback** — it replaces the AWS-era CodeDeploy blue-green machinery. The
-flow: record the active version, upload the new one at 0%, shift `CANARY_PERCENT`
+automatic rollback**. The flow: record the active version, upload the new one
+at 0%, shift `CANARY_PERCENT`
 (default 10%) of traffic and soak, probe `/v1/health/detailed`, promote to 100% and
 re-probe; **any** health failure redeploys the recorded version at 100% and exits
 non-zero. First deploy (no prior version) skips the canary and goes straight to 100%.

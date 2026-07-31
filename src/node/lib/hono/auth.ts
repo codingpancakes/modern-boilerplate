@@ -22,19 +22,17 @@ import type { AppEnv, AuthClaims } from "./types";
  * Auth middleware for the shared Hono app.
  *
  * The bearer token is verified directly with the SHARED verifier
- * (`authorizers/verify-token.ts`) — the single source of auth trust, exactly
- * the validation contract the old API Gateway Lambda authorizer enforced
+ * (`authorizers/verify-token.ts`) — the single source of auth trust
  * (RS256 + issuer + sub + client_id binding). There is no other claims path:
  * the Worker IS the edge, so no upstream authorizer context exists.
  *
- * Resulting claims are stringified like the old authorizer context, so
- * handlers see one claim shape everywhere (`AuthClaims` in ./types).
+ * Resulting claims use the normalized string contract described by
+ * `AuthClaims` in `./types`.
  */
 
 /**
- * Byte-compatible with the legacy withAuth 401 body, which says
- * `error: "Unauthorized"` (Errors.Unauthorized() says "Authentication
- * required" — clients already depend on the former).
+ * Stable authentication failure body. Clients depend on the
+ * `error: "Unauthorized"` message.
  */
 const unauthorized = () => new ApiError(401, "UNAUTHORIZED", "Unauthorized");
 
@@ -101,9 +99,8 @@ async function verifyBearerToken(
 }
 
 /**
- * Mirror the string-only context the old deployed Lambda authorizer built,
- * including `urn:*` custom-claim forwarding, so the claim shape handlers see
- * is unchanged by the platform move.
+ * Normalize verified claims to the string-only handler contract, including
+ * forwarding custom `urn:*` claims.
  */
 function toAuthorizerContext(payload: WorkosTokenClaims): AuthClaims {
 	const payloadData: Record<string, unknown> = payload;

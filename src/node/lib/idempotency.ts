@@ -32,10 +32,9 @@ export interface IdempotencyOptions {
 /**
  * Runtime-agnostic request descriptor for idempotency.
  *
- * The fields feed {@link hashRequest} with EXACTLY the same inputs (and JSON
- * key order) the old API Gateway event produced — `sub`, `method`, `path`,
- * `body`, `queryParams` — so request hashes stored before the platform move
- * stay valid. Parity rules for callers:
+ * The fields feed {@link hashRequest} using the persisted v1 input and JSON
+ * key order — `sub`, `method`, `path`, `body`, `queryParams`. Changing that
+ * encoding would invalidate stored request hashes. Rules for callers:
  *  - `body`: the RAW body string, or `undefined` (never `""`) when bodyless
  *  - `query`: the query-param map, or `undefined` when there are none
  */
@@ -51,9 +50,8 @@ export interface IdempotentRequest {
 }
 
 /**
- * The persisted (and replayed) response shape. Stored rows from the Lambda
- * era hold `{ statusCode, headers, body }` JSON — this type IS that contract,
- * so it must not change shape.
+ * The persisted and replayed response contract:
+ * `{ statusCode, headers, body }`. Existing rows use this exact JSON shape.
  */
 export interface StoredResponse {
 	statusCode: number;

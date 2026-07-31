@@ -99,7 +99,15 @@ users.get("/me", async (c) => {
  *     description: Updates the authenticated user's profile. Only sends fields that need to be updated.
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: header
+ *         name: Idempotency-Key
+ *         required: false
+ *         schema:
+ *           type: string
+ *         description: Replays the stored response for an identical retry
  *     requestBody:
+ *       required: true
  *       content:
  *         application/json:
  *           schema:
@@ -125,6 +133,8 @@ users.get("/me", async (c) => {
  *                   ethnicity: { type: string }
  *                   languages: { type: array, items: { type: string } }
  *                   onboardingCompleted: { type: boolean }
+ *                   persona: { type: object, additionalProperties: true }
+ *                   snapshot: { type: object, additionalProperties: true }
  *     responses:
  *       200:
  *         description: User profile updated successfully
@@ -148,8 +158,8 @@ users.patch("/me", async (c) => {
 			sub: claims.sub,
 			method: c.req.method,
 			path: c.req.path,
-			// Hash parity with the Lambda-era events: bodyless requests hashed
-			// `undefined` (never ""), and an empty query map hashed `undefined`.
+			// Canonical hashing treats a missing body/query as `undefined`, not
+			// as an empty string or empty object.
 			body: rawBody === "" ? undefined : rawBody,
 			query: Object.keys(queryParams).length > 0 ? queryParams : undefined,
 		},

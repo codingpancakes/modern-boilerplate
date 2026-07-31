@@ -1,6 +1,6 @@
 # Audit Logging Guide
 
-**Last updated:** June 2026
+**Last updated:** July 2026
 **Primary files:** `src/node/lib/audit.ts`, `src/node/db/schema/audit.ts`,
 `src/node/handlers/utils/audit-retention.ts`
 
@@ -29,6 +29,7 @@ Each row can include:
 
 - `userId`
 - `organizationId`
+- `orgUnitId`
 - `action`
 - `resourceType`
 - `resourceId`
@@ -73,37 +74,37 @@ void logAudit({
 
 ## GraphQL Pattern
 
-Resolvers write explicit `logAudit()` calls after the mutation, so the resource id
-and change payload stay accurate. Spread `auditRequestContext(context)` (from
-`lib/audit.ts`) to carry the same IP / user-agent / request-id as REST handlers.
+Resolvers validate and delegate; the service that owns the mutation also owns
+its audit event. Pass the GraphQL context (or
+`auditRequestContext(context)`) into that service so it carries the same IP,
+user-agent, and request-id as REST.
 
 ```typescript
 updateProfile: async (_parent, args, context) => {
-  const validated = profileUpdateSchema.parse(args.input);
-  const sanitized = sanitizeObject(validated);
-  const [updated] = await context.db
-    .update(profiles)
-    .set(sanitized)
-    .where(eq(profiles.userId, context.userId))
-    .returning();
-
-  void logAudit({
-    userId: context.userId,
-    ...auditRequestContext(context),
-    action: AUDIT_ACTIONS.UPDATE,
-    resourceType: AUDIT_RESOURCE_TYPES.PROFILE,
-    resourceId: updated.id,
-    changes: { after: updated },
-    status: AUDIT_STATUS.SUCCESS,
-  });
-
-  return updated;
+  try {
+    const result = await updateMyAccount({
+      db: context.db,
+      userId: context.userId,
+      input: { profile: args.input },
+      source: "graphql",
+      auditContext: context,
+    });
+    return result.profile;
+  } catch (error) {
+    throw toGraphQLError(error);
+  }
 },
 ```
 
+`src/node/lib/services/user-account.ts` validates, sanitizes, writes in a
+transaction, constructs the audit entry, and starts `logAudit()` only after the
+transaction commits. Organization resolvers follow the same delegation pattern
+through `lib/services/organizations.ts`.
+
 ## Actions and Resource Types
 
-Use the exported enums from `src/node/db/schema/audit.ts`:
+Application code imports the re-exported enums from `src/node/lib/audit.ts`
+(their definitions live in `src/node/db/schema/audit.ts`):
 
 - `AUDIT_ACTIONS`
 - `AUDIT_RESOURCE_TYPES`
@@ -124,13 +125,21 @@ The retention job is registered in `src/node/cron.ts` and scheduled in `wrangler
 
 ## Failure Behavior
 
-Audit writes must never break the user-facing mutation. On failure, `logAudit()`:
+Normal HTTP/GraphQL request-path audit writes must never break the user-facing
+mutation. On failure, `logAudit()`:
 
 - logs a stable structured error,
 - captures an exception in Sentry when enabled,
 - resolves without throwing to the caller.
 
 This keeps the hot path available while still producing an alertable failure signal.
+
+Writes that must be atomic with a domain transaction use
+`writeAuditLog(tx, ...)`. The DLQ terminal-failure path uses
+`logAuditStrict()`: if that record cannot be written, the current delivery is
+retried rather than explicitly acknowledged. Cloudflare's configured consumer
+retry/retention limits still bound how long the platform keeps retrying, so
+Sentry/Workers alerts remain required operational controls.
 
 ## Querying
 

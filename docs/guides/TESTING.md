@@ -17,10 +17,11 @@ tests/
 │   │   ├── hono-auth.test.ts           ✅ requireAuth middleware (fail-closed client id, 401 vs 503)
 │   │   ├── errors.test.ts              ✅ Error factory + wire format
 │   │   ├── error-utils.test.ts         ✅ Error coercion + unique-violation detection
+│   │   ├── constant-time.test.ts       ✅ Timing-safe string/byte comparisons
 │   │   ├── validation-schemas.test.ts  ✅ Zod schemas
 │   │   ├── db.test.ts                  ✅ Driver-wiring guard (neon-serverless)
 │   │   ├── sanitize.test.ts            ✅ Tag stripping, control chars, render-time escapeHtml
-│   │   ├── audit.test.ts               ✅ Redaction + write-failure metric format
+│   │   ├── audit.test.ts               ✅ Redaction + structured write-failure signal
 │   │   ├── cors.test.ts                ✅ Origin matching + fail-closed stage keying
 │   │   ├── media.test.ts               ✅ Magic-byte / content-type validation
 │   │   ├── rate-limit.test.ts          ✅ Per-IP limiter (allow / 429 / absent binding)
@@ -30,7 +31,7 @@ tests/
 │   ├── routes/
 │   │   ├── webhooks.test.ts            ✅ HMAC signature + replay window (route level)
 │   │   └── test-routes-gate.test.ts    ✅ /v1/test/* stage allowlist fails closed
-│   ├── scripts/init-project.test.ts    ✅ Project scaffolding
+│   ├── scripts/                        ✅ Bootstrap, naming/domain, deploy parsing
 │   ├── cron.test.ts                    ✅ Cron registry ↔ wrangler.toml trigger parity
 │   ├── queue.test.ts                   ✅ Queue consumer ack/retry/DLQ contract
 │   └── graphql/
@@ -44,6 +45,7 @@ tests/
 │   ├── http-routes.test.ts             ✅ Full HTTP stack against real DB (Vitest)
 │   ├── idempotency.test.ts             ✅ Claims, replays, races, stale-lock steal (Vitest)
 │   ├── jit-provisioning.test.ts        ✅ First-login JIT races + tombstones (Vitest)
+│   ├── media-routes.test.ts            ✅ Authenticated media route boundaries (Vitest)
 │   ├── org-invite.test.ts              ✅ Invite consent flow (Vitest)
 │   ├── webhook-processor.test.ts       ✅ Idempotent provisioning core (Vitest)
 │   ├── helpers/test-db.ts              ✅ Real-DB harness (migrations + citext)
@@ -87,7 +89,8 @@ pnpm test tests/unit/lib/auth.test.ts     # one file
   objects, requires `sub`, rejects garbage. (The API-Gateway-event shape is gone; code
   that resurrects it fails to compile.)
 - **Token verification** (`authorizers/verify-token.test.ts`) — RS256 against real
-  generated keys: algorithm pinning, audience/issuer, expiry.
+  generated keys: algorithm pinning, `client_id` application binding, issuer,
+  expiry, and JWKS-infrastructure failure classification.
 - **DB driver guard** (`lib/db.test.ts`) — `lib/db.ts` must stay on the
   WebSocket-capable `neon-serverless` driver; `neon-http` would break `db.transaction()`.
 - **Error wire format** (`lib/errors.test.ts`) — clients depend on
@@ -95,7 +98,7 @@ pnpm test tests/unit/lib/auth.test.ts     # one file
 - **Cron registry parity** (`cron.test.ts`) — every wrangler.toml `[triggers]`
   expression has a registered handler and vice versa.
 - **Yoga limits** (`graphql/yoga.test.ts`) — depth/complexity/mutation limits and
-  Apollo-parity error masking.
+  deployed-environment error masking.
 - **Validation, sanitization, pagination, audit redaction** — the security-relevant
   pure functions.
 
@@ -162,14 +165,18 @@ The shell suites hit a running server — your local Worker by default
 ```
 
 Deployed targets resolve their URL via `scripts/lib/env-helper.sh`: set
-`API_BASE_URL_<STAGE>` (full URL) — or `PROJECT_NAME` + `CF_ACCOUNT_SUBDOMAIN`, which
-build the default `https://<project>-<stage>.<subdomain>.workers.dev` — in
-`.env.<stage>`:
+`API_BASE_URL_<STAGE>` (full URL), or set `WORKERS_SUBDOMAIN`; the helper reads
+the Worker `name` from `wrangler.toml` and builds
+`https://<worker-name>-<stage>.<subdomain>.workers.dev`.
 
 ```bash
-./tests/integration/test-api.sh staging          # uses API_BASE_URL_STAGING / workers.dev default
-./tests/integration/test-api.sh production       # uses API_BASE_URL_PRODUCTION / workers.dev default
+./tests/integration/test-api.sh staging          # observational/manual output
+./tests/integration/test-api.sh production
 ```
+
+`test-api.sh` displays responses for manual inspection; it is not a blocking
+assertion suite. Use `pnpm load:smoke <stage>` or the deploy script's smoke
+checks for an exit-code gate.
 
 Set `CORS_TEST_ORIGIN` to an origin allowed by the target Worker when you want
 `test-api.sh` to exercise the CORS preflight path:
@@ -206,10 +213,10 @@ when the error rate exceeds `LOAD_MAX_ERROR_RATE` (default 1%) or p95 exceeds
 
 ### Get a JWT Token
 
-**Option A: From WorkOS Dashboard** — your application → Test Users → generate a token.
-
-**Option B: From Your Frontend** — log in, open DevTools → Network, copy the
-`Authorization` header value from any API request.
+Sign in through the project's configured AuthKit/frontend flow. In browser
+DevTools → Network, copy the access token from an authenticated API request's
+`Authorization: Bearer …` header. Do not paste a token into documentation,
+committed fixtures, shell history, or shared incident notes.
 
 ### Smoke sequence
 
@@ -232,7 +239,7 @@ curl "http://localhost:8787/__scheduled?cron=0+4+*+*+*"   # daily maintenance: j
 ## 🚀 Testing a Deployment
 
 ```bash
-pnpm deploy:staging                          # seconds, not minutes
+pnpm deploy:staging                          # includes canary soak + health probes
 curl https://api-staging.yourdomain.com/v1/health | jq .
 ./tests/integration/test-api.sh staging
 
@@ -261,7 +268,7 @@ Same for production (`pnpm deploy:production`, `./tests/integration/test-api.sh 
 holds the port; kill it or pass `--port`).
 
 **401 Unauthorized** — JWT expired/invalid, or `WORKOS_CLIENT_ID` in `.dev.vars`
-doesn't match the token's audience.
+doesn't match the token's `client_id` claim.
 
 **503 on media endpoints** — R2 S3-API credentials not configured
 (`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`); see
@@ -284,9 +291,9 @@ Workers Logs are also in the Cloudflare dashboard. Check Sentry if `SENTRY_DSN` 
 # Before committing
 pnpm check
 
-# Full local gate (mirrors the CI pipeline — .github/workflows/ci.yml runs
-# lint, typecheck, unit + integration tests, gitleaks, and pnpm audit on every PR)
-pnpm check && pnpm test:integration:local
+# Broad local CI gate (start Postgres first)
+pnpm test:integration:up
+pnpm check:ci
 
 # Before deploying
 pnpm check && pnpm deploy:staging
@@ -314,4 +321,8 @@ pnpm check && pnpm deploy:staging
 - **Workers-runtime tests** — run the suites under `@cloudflare/vitest-pool-workers` /
   miniflare to catch `nodejs_compat` edge cases in CI
 - **E2E media flow** — auth → presign → upload to R2 → list → verify
-- **Auth identity mapping** — `getUserIdFromClaims` JIT provisioning against a real DB
+
+Hosted CI additionally performs the full-history gitleaks scan, enforces unit
+coverage thresholds, and reports the full dependency audit. Those checks are
+defined in `.github/workflows/ci.yml`; `check:ci` is the broad local equivalent,
+not a byte-for-byte reproduction of hosted CI.

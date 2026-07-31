@@ -100,6 +100,33 @@ describe("audit write failure signaling", () => {
 		);
 	});
 
+	it("fails closed instead of preserving secrets beyond the depth limit", async () => {
+		const values = vi.fn().mockResolvedValue(undefined);
+		getDbMock.mockResolvedValue({
+			insert: () => ({ values }),
+		});
+
+		let deeplyNested: Record<string, unknown> = {
+			accessToken: "must-never-be-persisted",
+		};
+		for (let depth = 0; depth < 10; depth++) {
+			deeplyNested = { nested: deeplyNested };
+		}
+
+		await logAudit({
+			...sampleEntry,
+			metadata: deeplyNested,
+			changes: {
+				after: deeplyNested,
+			},
+		});
+
+		expect(values).toHaveBeenCalledOnce();
+		const serialized = JSON.stringify(values.mock.calls[0]?.[0]);
+		expect(serialized).not.toContain("must-never-be-persisted");
+		expect(serialized).toContain("[TRUNCATED]");
+	});
+
 	it("stays silent (no Sentry) under NODE_ENV=test", async () => {
 		vi.stubEnv("NODE_ENV", "test");
 		getDbMock.mockRejectedValue(new Error("connection refused"));

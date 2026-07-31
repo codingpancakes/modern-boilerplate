@@ -22,18 +22,19 @@ import { routes } from "./routes";
  *
  * Middleware order:
  *   1. request-id        — cf-ray on Cloudflare, generated locally
- *   2. db scope          — per-request DB lifecycle (Workers forbids
+ *   2. rate limit        — per-IP rejection before auth or DB work
+ *   3. db scope          — per-request DB lifecycle (Workers forbids
  *                          cross-request reuse of connections)
- *   3. audit flush       — drain fire-and-forget logAudit() writes, always
- *   4. CORS + security   — answers OPTIONS preflight, decorates responses
- * Auth is per-domain, applied in `routes/index.ts`. (The old CloudFront
- * origin-verify check is gone by construction: the Worker IS the edge.)
+ *   4. audit flush       — drain fire-and-forget logAudit() writes, always
+ *   5. CORS + security   — answers OPTIONS preflight, decorates responses
+ * Auth is per-domain, applied in `routes/index.ts`.
  */
 export const app = new Hono<AppEnv>();
 
 app.use(requestId());
 // Per-IP rate limit early — reject before opening a DB pool or verifying a
-// token. No-op when the RATE_LIMITER binding is absent (local dev / tests).
+// token. Wrangler simulates the binding locally; direct test harnesses may
+// omit it. Deployed environments fail closed if it is absent.
 app.use(rateLimit());
 app.use(dbScope());
 app.use(auditFlush());

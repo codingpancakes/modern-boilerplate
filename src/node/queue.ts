@@ -19,12 +19,15 @@ import {
 	processWorkosEvent,
 	WebhookInProgressError,
 } from "./lib/services/webhook-processor";
-import type { WorkOSWebhookEvent } from "./lib/validation/webhooks";
+import {
+	type WorkOSWebhookEvent,
+	workosWebhookEvent,
+} from "./lib/validation/webhooks";
 import type { WorkerEnv } from "./worker";
 
 /**
- * Cloudflare Queues consumer — the durable retry path that replaces the
- * webhook DLQ. `worker.queue` (src/node/worker.ts) dispatches every batch here.
+ * Cloudflare Queues consumer for the webhook main queue and its DLQ.
+ * `worker.queue` (src/node/worker.ts) dispatches every batch here.
  *
  * Two queues land in this one handler, distinguished by `batch.queue`:
  *
@@ -58,7 +61,11 @@ export async function handleQueueBatch(
 				await runWithDbScope(() =>
 					runWithAuditScope(async () => {
 						try {
-							await processWorkosEvent(message.body);
+							// Treat the queue as a durable trust boundary. The producer
+							// validates before enqueueing, but consumers validate again
+							// before allowing a persisted payload into domain logic.
+							const event = workosWebhookEvent.parse(message.body);
+							await processWorkosEvent(event);
 						} finally {
 							await flushAudits();
 						}
@@ -80,8 +87,9 @@ export async function handleQueueBatch(
 				continue;
 			}
 			// Do NOT ack — let Queues redeliver. For the main queue this leads to
-			// the DLQ after max_retries; for the DLQ itself it retries until the
-			// audit/alert write succeeds (so a DB blip can't drop the record).
+			// the DLQ after max_retries. The DLQ consumer has its own long but
+			// bounded retry budget; Sentry/Workers alerts must page before that
+			// budget can be exhausted.
 			logger.error(
 				isDeadLetter
 					? "Dead-letter handling failed; will retry"

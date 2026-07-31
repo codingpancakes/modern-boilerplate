@@ -1,6 +1,6 @@
 import type { RateLimit } from "@cloudflare/workers-types";
 import { Hono } from "hono";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/errors";
 import { rateLimit } from "@/lib/hono/rate-limit";
 import type { AppEnv } from "@/lib/hono/types";
@@ -32,6 +32,10 @@ function envWithLimiter(success: boolean): {
 }
 
 describe("rateLimit middleware", () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("passes requests when the binding allows the key", async () => {
 		const { env, limit } = envWithLimiter(true);
 
@@ -64,9 +68,18 @@ describe("rateLimit middleware", () => {
 	});
 
 	it("no-ops when the binding is absent", async () => {
+		vi.stubEnv("STAGE", "local");
 		const response = await createApp().request("/ok", {}, {} as WorkerEnv);
 
 		expect(response.status).toBe(200);
 		await expect(response.text()).resolves.toBe("ok");
+	});
+
+	it("fails closed when the binding is absent in a deployed stage", async () => {
+		vi.stubEnv("STAGE", "production");
+		const response = await createApp().request("/ok", {}, {} as WorkerEnv);
+
+		expect(response.status).toBe(500);
+		await expect(response.json()).resolves.toEqual({ code: "INTERNAL_ERROR" });
 	});
 });

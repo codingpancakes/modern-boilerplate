@@ -4,10 +4,9 @@ import type { WorkerBindings } from "../../worker";
  * Claims set by `requireAuth()` (lib/hono/auth.ts) after direct WorkOS token
  * verification via the shared verifier (`authorizers/verify-token.ts`).
  *
- * Values are stringified exactly like the old API Gateway authorizer context
- * (HTTP API simple authorizers stringified every value), so numeric claims
- * (exp/iat) may arrive as strings — downstream code (`lib/auth.ts getClaims`)
- * still normalizes with `Number(...)`, keeping one claim shape everywhere.
+ * Values are normalized to the established handler contract. Numeric claims
+ * (exp/iat) may be strings, so downstream code (`lib/auth.ts getClaims`)
+ * normalizes them with `Number(...)`.
  */
 export type AuthClaims = {
 	sub: string;
@@ -32,8 +31,8 @@ export type AuthClaims = {
  * etc. — see `WorkerBindings` in src/node/worker.ts, the single source of
  * truth). String vars/secrets are mirrored onto `process.env` by
  * nodejs_compat, so plain config reads don't go through `c.env`. Under the
- * local Node server (`@hono/node-server`) non-string bindings are absent at
- * runtime — code using them must guard (e.g. `c.env?.IMAGES`).
+ * direct app/test harness, non-string bindings may be absent at runtime — code
+ * using them must guard (e.g. `c.env?.IMAGES`).
  */
 export type AppEnv = {
 	Bindings: WorkerBindings;

@@ -23,17 +23,15 @@ import { isDevLikeStage } from "../../lib/stage";
 import type { GraphQLContext } from "./context";
 
 /**
- * GraphQL Yoga / envelop plugins — the port of the former Apollo Server
- * plugins (same file, same exported limits). Behavior is wire-compatible
- * with the Apollo harness (`handler.ts`, now removed):
+ * GraphQL Yoga / envelop plugins. These limits and response semantics are
+ * part of the public GraphQL contract:
  *
  *   - depth limit 10            → validation error, HTTP 400, GRAPHQL_VALIDATION_FAILED
- *   - complexity limit 150      → BAD_USER_INPUT, HTTP 500 (Apollo's
- *     `didResolveOperation` throw path returned 500 — kept byte-compatible)
- *   - max 5 mutations/request   → BAD_USER_INPUT, HTTP 500 (same reason)
+ *   - complexity limit 150      → BAD_USER_INPUT, HTTP 500
+ *   - max 5 mutations/request   → BAD_USER_INPUT, HTTP 500
  *   - parse failures            → GRAPHQL_PARSE_FAILED, HTTP 400
- *   - error masking             → identical to Apollo `formatError`: errors
- *     serialize as `{ message, extensions: { code } }` (no locations/path);
+ *   - error masking             → errors serialize as
+ *     `{ message, extensions: { code } }` (no locations/path);
  *     outside dev, messages for non-safe codes collapse to
  *     "Internal server error"
  *   - Sentry capture            → non-client-code execution errors, flushed
@@ -48,9 +46,8 @@ export const MAX_QUERY_DEPTH = 10;
 
 /**
  * Dev-like stages get introspection, GraphiQL, and unmasked error messages;
- * deployed stages (production/staging) get none of them. The Apollo handler
- * keyed this on `STAGE === "development"`; the Workers local stage is
- * `"local"` (wrangler.toml `[vars]`), so this accepts only explicit
+ * deployed stages (production/staging) get none of them. The Workers local
+ * stage is `"local"` (wrangler.toml `[vars]`), so this accepts only explicit
  * local/development values. Unknown or typoed stages fail closed like deployed
  * stages. Read per call: on Workers `process.env` is
  * populated per invocation, so module-init reads could race the first
@@ -195,9 +192,8 @@ function httpStatus(error: GraphQLError): number | undefined {
 
 /**
  * Depth limit + production introspection lockout, applied as validation
- * rules. The after-hook re-tags every validation error exactly like Apollo's
- * `ValidationError` wrapper did: code GRAPHQL_VALIDATION_FAILED (unless the
- * rule set one) and HTTP 400.
+ * rules. The after-hook gives every validation error the stable
+ * GRAPHQL_VALIDATION_FAILED code (unless the rule set one) and HTTP 400.
  */
 export const validationLimitsPlugin: Plugin = {
 	onValidate({ addValidationRule }) {
@@ -226,8 +222,7 @@ export const validationLimitsPlugin: Plugin = {
 };
 
 /**
- * Tag syntax errors like Apollo's `SyntaxError` wrapper:
- * GRAPHQL_PARSE_FAILED with HTTP 400.
+ * Tag syntax errors as GRAPHQL_PARSE_FAILED with HTTP 400.
  */
 export const parseErrorPlugin: Plugin = {
 	onParse() {
@@ -262,8 +257,7 @@ export const complexityPlugin: Plugin<GraphQLContext> = {
 			args.variableValues ?? {},
 		);
 		if (complexity > MAX_QUERY_COMPLEXITY) {
-			// Apollo surfaced this as a thrown didResolveOperation error: body
-			// { errors: [{ message, extensions: { code } }] } with HTTP 500.
+			// Limit failures use the established GraphQL error shape and HTTP 500.
 			setResultAndStopExecution({
 				errors: [
 					new GraphQLError(
@@ -396,8 +390,8 @@ function formatResultError(
 
 	// Preserve the HTTP status the earlier plugins attached (Yoga strips the
 	// `http` extension before serializing). Untagged pre-execution failures
-	// (e.g. context build errors) default to 500 — Apollo's
-	// `sendErrorResponse` fallback; execution errors ride on the default 200.
+	// (e.g. context build errors) default to 500; execution errors ride on the
+	// GraphQL-standard HTTP 200 response.
 	const status = httpStatus(error) ?? (isPreExecution ? 500 : undefined);
 
 	return new GraphQLError(message, {
@@ -419,11 +413,10 @@ function formatExecutionResult(
 }
 
 /**
- * Apollo `formatError` parity: every error serializes as
- * `{ message, extensions: { code } }` — no locations, no path — and non-safe
- * codes are masked outside dev-like stages. Runs last, on the final result,
- * so it sees resolver errors, validation/parse errors, and context-build
- * errors alike.
+ * Stable wire format: every error serializes as
+ * `{ message, extensions: { code } }` — no locations or path — and non-safe
+ * codes are masked outside dev-like stages. This runs last so it sees resolver,
+ * validation, parse, and context-build errors alike.
  */
 export const errorFormattingPlugin: Plugin = {
 	onResultProcess({ result, setResult }) {

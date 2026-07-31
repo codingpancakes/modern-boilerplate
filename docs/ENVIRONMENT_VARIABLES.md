@@ -2,15 +2,17 @@
 
 How configuration and secrets reach the Worker, and which files hold what.
 
-There are exactly **two kinds of values**:
+Worker runtime string settings have two categories:
 
 1. **Non-secret config** → `wrangler.toml [vars]` (committed; per-environment blocks)
 2. **Secrets** → `.dev.vars` locally / `wrangler secret put` deployed (never committed)
 
-With `nodejs_compat` and the 2025+ `compatibility_date`, the Workers runtime populates
-`process.env` from both, so application code reads `process.env.X` everywhere.
-Workers **bindings** (R2 buckets) are not strings — they arrive on `c.env`
-(typed by `WorkerBindings` in `src/node/worker.ts`).
+With `nodejs_compat` and the 2025+ `compatibility_date`, the Workers runtime
+populates `process.env` from both. Non-string platform bindings such as R2,
+Queues, and Rate Limiting are a separate category: they arrive on `c.env`
+(typed by `WorkerBindings` in `src/node/worker.ts`). Deploy-tool credentials
+and overrides exist only in the shell/CI process and are never Worker runtime
+configuration.
 
 ---
 
@@ -38,23 +40,23 @@ inherit `[vars]` or R2 bindings).
 | Variable | Purpose |
 |---|---|
 | `NODE_ENV` | Runtime mode hint (`development` / `staging` / `production`). Core deploy-sensitive behavior is keyed on `STAGE`, not this value |
-| `STAGE` | Deployment stage (`local` / `staging` / `production`). Gates 5xx error masking (`lib/errors.ts`), dev CORS origins (`lib/cors.ts`), and dev-only `/v1/test/*` routes |
-| `PROJECT_NAME` | Project identifier (drives naming, docs) |
-| `API_VERSION` | URL version prefix (`v1`) |
+| `STAGE` | Deployment stage (`local` / `staging` / `production`). Gates error masking, dev CORS/GraphiQL/diagnostics, auth binding requirements, and missing-binding fail-closed behavior |
+| `PROJECT_NAME` | Runtime project label kept aligned by `init-project`; resource names are rewritten by that script rather than derived dynamically at runtime |
+| `API_VERSION` | Version label returned by health responses. Route mounts are currently explicit `/v1` paths and do not read this variable |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag (staging/production blocks only) |
-| `CORS_DOMAIN_PATTERNS` | Regex patterns for allowed origins (comma-separated) |
+| `CORS_DOMAIN_PATTERNS` | Legacy comma-separated wildcard/parent domains such as `*.example.com`; implementation uses hostname suffix matching, **not regex** |
 | `CORS_EXACT_ORIGINS` | Exact allowed origins (comma-separated) |
 | `CORS_PARENT_DOMAINS` | Parent domains whose subdomains are allowed |
 | `IMAGES_BUCKET` | R2 bucket name — must match the `[[r2_buckets]]` binding's `bucket_name` |
-| `IMAGES_CDN_URL` | Public/custom-domain URL of the R2 bucket (was CloudFront) |
+| `IMAGES_CDN_URL` | Public/custom-domain URL of the R2 bucket |
 
 ## Bindings — `wrangler.toml`
 
 | Binding | Declared as | Purpose |
 |---|---|---|
 | `IMAGES` | `[[r2_buckets]]` | R2 images bucket, available as `c.env.IMAGES`. Simulated on disk under `.wrangler/state` in local dev |
-| `RATE_LIMITER` | `[[ratelimits]]` (+ per-env) | Cloudflare Workers Rate Limiting binding for the per-IP limiter (`lib/hono/rate-limit.ts`), available as `c.env.RATE_LIMITER`. **No dashboard resource** — configured entirely in `wrangler.toml` (`simple = { limit = 100, period = 60 }`). Absent under `wrangler dev` → the limiter no-ops |
-| `WEBHOOK_QUEUE` | `[[queues.producers]]` (+ per-env `[[queues.consumers]]`) | Cloudflare Queues producer for verified WorkOS webhook events (`routes/webhooks.ts` enqueues; `src/node/queue.ts` consumes; `*-dlq-*` holds exhausted retries). Queues must exist before first deploy — see `docs/runbooks/WEBHOOK_DLQ.md` |
+| `RATE_LIMITER` | `[[ratelimits]]` (+ per-env) | Cloudflare Workers Rate Limiting binding for the per-IP limiter (`lib/hono/rate-limit.ts`), available as `c.env.RATE_LIMITER`. **No dashboard resource** — configured entirely in `wrangler.toml` (`simple = { limit = 100, period = 60 }`). Wrangler simulates it locally. A direct test harness may omit it; staging/production fail closed with 503 |
+| `WEBHOOK_QUEUE` | `[[queues.producers]]` (+ per-env `[[queues.consumers]]`) | Cloudflare Queues producer for verified WorkOS webhook events (`routes/webhooks.ts` enqueues; `src/node/queue.ts` consumes; `*-dlq-*` receives exhausted retries). Wrangler simulates it locally. An unbound direct test harness processes inline; staging/production fail closed with 503. Queues must exist before first deploy — see `docs/runbooks/WEBHOOK_DLQ.md` |
 
 Add a property to `WorkerBindings` in `src/node/worker.ts` whenever you add a binding.
 
@@ -69,22 +71,22 @@ exactly what `pnpm sync-secrets <stage>` pushes. Current registry:
 | Secret | Purpose |
 |---|---|
 | `DATABASE_URL` | Neon Postgres connection string |
-| `WORKOS_CLIENT_ID` | WorkOS client id — JWT audience binding (`authorizers/verify-token.ts`). An empty value disables the `client_id` audience check (local-dev only); auth **fails closed** unless `STAGE` is exactly `local` or `development` (`lib/hono/auth.ts` refuses to verify unbound) |
+| `WORKOS_CLIENT_ID` | WorkOS client id — binds accepted tokens by their `client_id` claim (`authorizers/verify-token.ts`; these tokens do not use `aud`). An empty value disables that application binding for local development only; auth **fails closed** unless `STAGE` is exactly `local` or `development` (`lib/hono/auth.ts` refuses to verify unbound) |
+| `WORKOS_WEBHOOK_SECRET` | WorkOS signature verification. It may be empty for local work that never calls the webhook, but deployed detailed health treats it as required |
 
 ### Feature-dependent
 | Secret | Purpose |
 |---|---|
-| `WORKOS_WEBHOOK_SECRET` | Signature verification for `POST /v1/webhooks/workos` |
 | `SENTRY_DSN` | Sentry error reporting (empty = disabled) |
 | `TEST_API_KEY` | Constant-time-compared key for `GET /v1/test/api-key` (dev/staging only) |
 | `WEBHOOK_SECRET` | HMAC secret for `POST /v1/test/webhook` (dev/staging only) |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 S3-API credentials for presigning/listing (`lib/media.ts`). Unset → media endpoints return 503 `MEDIA_STORAGE_NOT_CONFIGURED` |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | R2 S3-API credentials for presigning/listing (`lib/media.ts`). Unset → those operations and the direct-upload fallback return 503 `MEDIA_STORAGE_NOT_CONFIGURED`; direct upload still works when the `IMAGES_BUCKET` binding is available |
 
 ### Optional overrides (commented out in the registry — not synced)
 | Variable | Purpose |
 |---|---|
 | `AUTH_ISSUER` | JWT issuer override; defaults to `https://api.workos.com/` |
-| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARN` / `ERROR` for `lib/logger.ts` (default `INFO`; `POWERTOOLS_LOG_LEVEL` honored first for parity) |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARN` / `ERROR` for `lib/logger.ts` (default `INFO`) |
 | `R2_BUCKET` | Override; falls back to `IMAGES_BUCKET` |
 
 ---
@@ -113,14 +115,31 @@ not secrets. In CI they are GitHub repo variables/secrets; locally you `export` 
 
 | Variable | Purpose |
 |---|---|
-| `WORKERS_SUBDOMAIN` | Your `*.workers.dev` subdomain. The deploy script derives the health-check URL as `https://<worker-name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev`. In CI it's a GitHub repo variable (`vars.WORKERS_SUBDOMAIN`) |
-| `HEALTH_URL` | Explicit health-check URL override (use for custom domains); takes precedence over the `WORKERS_SUBDOMAIN`-derived URL |
+| `WORKERS_SUBDOMAIN` | Your `*.workers.dev` subdomain. Used to derive `https://<worker-name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev` only when neither `HEALTH_URL` nor a stage custom-domain route is available. In CI it is a GitHub repo variable (`vars.WORKERS_SUBDOMAIN`) |
+| `HEALTH_URL` | Explicit base-URL override. It takes precedence over a custom-domain route detected in `wrangler.toml` and the `WORKERS_SUBDOMAIN` fallback |
 | `SMOKE_CORS_ORIGIN_STAGING` / `SMOKE_CORS_ORIGIN_PRODUCTION` | Stage-specific origins to verify during the deploy smoke-test CORS preflight. Use an origin present in that stage's `CORS_EXACT_ORIGINS` / parent-domain / pattern config |
 | `SMOKE_CORS_ORIGIN` | Generic CORS smoke origin fallback when the stage-specific variable is unset |
 | `CHECK_PENDING_MIGRATIONS` | Set to `true` to run `pnpm migrations:check` as a blocking deploy preflight. Requires `DATABASE_URL` in the deploy environment |
 | `CANARY_PERCENT` | Canary traffic share before promotion (default 10) |
 | `SOAK_SECONDS` | Canary soak duration before probing health (default 20) |
 | `HEALTH_ATTEMPTS` | Health-probe retry count |
+
+## Test/load tooling environment
+
+These variables are consumed by scripts, not injected into the Worker:
+
+| Variable | Purpose |
+|---|---|
+| `API_BASE_URL_STAGING` / `API_BASE_URL_PRODUCTION` | Explicit deployed base URL for live shell tests and load smoke |
+| `API_URL` | Generic live shell-test URL fallback |
+| `CORS_TEST_ORIGIN` | Origin used by live CORS checks; also a deploy-smoke fallback |
+| `LOAD_TEST_URL` | Explicit `load:smoke` target |
+| `LOAD_DURATION_SECONDS`, `LOAD_RPS`, `LOAD_CONCURRENCY`, `LOAD_TIMEOUT_MS` | Load-smoke shape and timeout |
+| `LOAD_MAX_ERROR_RATE`, `LOAD_MAX_P95_MS` | Load-smoke pass/fail thresholds |
+
+When no explicit live-test URL is set, `scripts/lib/env-helper.sh` reads the
+Worker `name` from `wrangler.toml` and combines it with
+`WORKERS_SUBDOMAIN`.
 
 ---
 
@@ -132,17 +151,3 @@ not secrets. In CI they are GitHub repo variables/secrets; locally you `export` 
   `[env.*.vars]` blocks (no inheritance).
 - **Binding (R2 etc.)?** Add to `wrangler.toml` (all three scopes) and type it in
   `WorkerBindings` (`src/node/worker.ts`).
-
----
-
-## Gone since the AWS era (do not re-add)
-
-| Variable | Why it's gone |
-|---|---|
-| `ORIGIN_VERIFY_SECRET` | The Worker **is** the edge — there is no origin URL to protect |
-| `WORKOS_SECRET_ARN`, `DB_SECRET_ARN`, `AWS_REGION` | Secrets Manager is gone; secrets are wrangler secrets |
-| `ENABLE_WAF`, `ALERT_EMAIL`, SSM parameters | Cloudflare WAF/DDoS is account-level platform config, not deploy-time toggles |
-| `HOSTED_ZONE_ID`, `HOSTED_ZONE_NAME`, `GITHUB_*` (as deploy inputs) | No CDK/CodePipeline/Route53. (`pnpm docs:generate` takes optional `PROJECT_NAME` and `API_BASE_URL_*` overrides via the environment; without `PROJECT_NAME`, the spec title uses `package.json`) |
-
-The AWS-era version of this document is preserved in git history and the surrounding
-setup in [legacy-aws/BOILERPLATE_SETUP.md](./legacy-aws/BOILERPLATE_SETUP.md).

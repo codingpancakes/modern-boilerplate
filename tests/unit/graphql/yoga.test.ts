@@ -102,7 +102,7 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({
 			code: "GRAPHQL_VALIDATION_FAILED",
 		});
-		// Apollo's formatError dropped locations/path — the shape must not grow.
+		// The public error shape excludes locations/path and must not grow.
 		expect(body.errors[0]).not.toHaveProperty("locations");
 		expect(body.errors[0]).not.toHaveProperty("path");
 		// Validation fails before context creation — no DB touched.
@@ -114,7 +114,7 @@ describe("GraphQL Yoga route", () => {
 		dbError = new Error("connect ECONNREFUSED neon-internal-host:5432");
 
 		const res = await post("query { me { id } }");
-		// Execution errors ride on HTTP 200, exactly like Apollo.
+		// GraphQL execution errors ride on HTTP 200.
 		expect(res.status).toBe(200);
 
 		const body = await res.json();
@@ -160,7 +160,7 @@ describe("GraphQL Yoga route", () => {
 		expect(body.errors[0].extensions).toEqual({ code: "NOT_FOUND" });
 	});
 
-	it("rejects queries over the complexity limit (Apollo-parity 500 + BAD_USER_INPUT)", async () => {
+	it("rejects queries over the complexity limit (500 + BAD_USER_INPUT)", async () => {
 		vi.stubEnv("STAGE", "production");
 
 		const res = await post(

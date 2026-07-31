@@ -170,6 +170,20 @@ describe("handleQueueBatch — main webhook queue", () => {
 		expect(message.ack).not.toHaveBeenCalled();
 	});
 
+	it("revalidates persisted messages before domain processing", async () => {
+		const message = fakeMessage({
+			...event("evt_invalid"),
+			created_at: "not-a-timestamp",
+		});
+		const batch = fakeBatch("sidedoor-webhooks-staging", [message]);
+
+		await handleQueueBatch(batch, env, ctx);
+
+		expect(processWorkosEventMock).not.toHaveBeenCalled();
+		expect(message.retry).toHaveBeenCalledOnce();
+		expect(message.ack).not.toHaveBeenCalled();
+	});
+
 	it("delays redelivery past the staleness window when the event lock is held (no ack)", async () => {
 		// A crashed attempt's fresh "processing" lock: acking would drop the
 		// event forever; an immediate retry would find the same non-stale lock.

@@ -19,16 +19,15 @@ import { typeDefs } from "../handlers/graphql/schema";
 import type { AppEnv } from "../lib/hono/types";
 
 /**
- * GraphQL on the shared Hono app — GraphQL Yoga (Workers-native), replacing
- * the old Apollo-on-Lambda harness.
+ * GraphQL Yoga on the shared Hono app.
  *
  * Mounted at `/v1/graphql` behind `requireAuth()` by the route barrel
  * (`routes/index.ts`) — auth lives at the barrel, never re-applied here. The
  * schema, resolvers, DataLoaders, and the depth/complexity/mutation limits
- * port unchanged; CORS + security headers and audit draining come from the
- * app-level middleware (`app.ts`), exactly like every REST route.
+ * are enforced by plugins; CORS, security headers, and audit draining come
+ * from the app-level middleware (`app.ts`), exactly like every REST route.
  *
- * Wire compatibility with the Apollo handler:
+ * Wire contract:
  *   - errors serialize as { message, extensions: { code } } and non-safe
  *     codes are masked outside dev (see plugins.ts errorFormattingPlugin)
  *   - introspection and GraphiQL (GET) exist only outside production/staging
@@ -82,14 +81,14 @@ const yoga = createYoga<GraphQLServerContext, GraphQLContext>({
 	// sub-app at /v1/graphql, so the raw request path is always exactly this).
 	graphqlEndpoint: "/v1/graphql",
 	context: ({ honoContext }) => createContext(honoContext),
-	// Apollo-parity error shaping/masking lives in errorFormattingPlugin;
-	// Yoga's own masking would double-wrap and change the wire shape.
+	// Error shaping/masking lives in errorFormattingPlugin; Yoga's own masking
+	// would double-wrap and change the wire shape.
 	maskedErrors: false,
 	// CORS, security headers, and OPTIONS preflight are handled by the shared
 	// app middleware (lib/hono/middleware.ts) — same as every REST route.
 	cors: false,
 	landingPage: false,
-	// The Apollo endpoint never accepted multipart (file-upload) requests.
+	// File uploads use the dedicated REST media routes, not multipart GraphQL.
 	multipart: false,
 	// Responses are fully BUFFERED: incremental delivery (@defer/@stream) is an
 	// opt-in plugin (@graphql-yoga/plugin-defer-stream) that is deliberately NOT
@@ -98,8 +97,8 @@ const yoga = createYoga<GraphQLServerContext, GraphQLContext>({
 	// middleware) — a streamed body would have resolvers touching a closed pool.
 	// If you ever add defer/stream, move the pool drain to ctx.waitUntil first.
 	logging: false,
-	// GraphiQL on GET only outside production/staging (the old /graphql/docs
-	// behavior); stage is checked per request, not at module init.
+	// GraphiQL on GET only outside production/staging; stage is checked per
+	// request, not at module initialization.
 	graphiql: () =>
 		isDevelopmentStage() && {
 			title: "GraphQL API Documentation",

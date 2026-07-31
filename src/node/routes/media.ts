@@ -44,17 +44,15 @@ import { parseJsonBody as parseRawJsonBody } from "../lib/validation/helpers";
  */
 export const media = new Hono<AppEnv>();
 
-// One logger per endpoint so log service names stay identical to the
-// per-Lambda loggers the old entry files created.
+// One logger per endpoint so operations remain easy to filter in Workers Logs.
 const uploadImageLogger = createLogger({ serviceName: "media-upload-image" });
 const uploadDirectLogger = createLogger({ serviceName: "media-upload-direct" });
 const listImagesLogger = createLogger({ serviceName: "media-list-images" });
 
 /**
- * Hono port of `parseBody` (lib/validation/helpers.ts) — same error bodies:
- * missing body and malformed JSON throw `Errors.BadRequest` with the exact
- * legacy messages, and schema failures throw `Errors.ValidationError` via the
- * shared `validate()`.
+ * Parse and validate JSON with the standard REST error contract: missing or
+ * malformed bodies throw `Errors.BadRequest`; schema failures throw
+ * `Errors.ValidationError` through the shared `validate()`.
  */
 async function parseValidatedJsonBody<T>(
 	c: Context<AppEnv>,
@@ -92,7 +90,7 @@ function requestAuditContext(c: Context<AppEnv>) {
  *     tags:
  *       - Media
  *     security:
- *       - bearerAuth: []
+ *       - BearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -102,6 +100,7 @@ function requestAuditContext(c: Context<AppEnv>) {
  *             required:
  *               - filename
  *               - contentType
+ *               - fileSize
  *             properties:
  *               filename:
  *                 type: string
@@ -116,6 +115,11 @@ function requestAuditContext(c: Context<AppEnv>) {
  *                 type: string
  *                 description: Category of the image (profile, document, etc.)
  *                 example: "profile"
+ *               fileSize:
+ *                 type: integer
+ *                 minimum: 1
+ *                 maximum: 15728640
+ *                 description: Exact upload size in bytes; bound into the signed request
  *     responses:
  *       200:
  *         description: Presigned upload URL generated successfully
@@ -133,18 +137,20 @@ function requestAuditContext(c: Context<AppEnv>) {
  *                     uploadUrl:
  *                       type: string
  *                       description: Presigned URL for uploading the image
- *                     imageKey:
+ *                     imageUrl:
+ *                       type: string
+ *                       description: Public URL after the upload succeeds
+ *                     key:
  *                       type: string
  *                       description: Storage key where the image will be stored
- *                     expiresIn:
- *                       type: number
- *                       description: URL expiry time in seconds
  *       400:
  *         description: Invalid request parameters
  *         schema: { $ref: '#/components/schemas/ErrorResponse' }
  *       401:
  *         description: Unauthorized
  *         schema: { $ref: '#/components/schemas/ErrorResponse' }
+ *       503:
+ *         description: Media storage is not configured
  */
 media.post("/upload-image", async (c) => {
 	// Get internal user ID from verified claims (lookup + JIT provisioning)
@@ -183,7 +189,7 @@ media.post("/upload-image", async (c) => {
  *     summary: Upload an image directly to storage
  *     tags: [Media]
  *     security:
- *       - bearerAuth: []
+ *       - BearerAuth: []
  *     requestBody:
  *       required: true
  *       content:
@@ -225,18 +231,17 @@ media.post("/upload-image", async (c) => {
  *                     key:
  *                       type: string
  *                       description: Storage key of the uploaded image
- *                     url:
+ *                     imageUrl:
  *                       type: string
  *                       description: Public URL of the uploaded image
- *                     size:
- *                       type: number
- *                       description: Size of the uploaded image in bytes
  *       400:
  *         description: Invalid request
  *       401:
  *         description: Unauthorized
  *       500:
  *         description: Internal server error
+ *       503:
+ *         description: Media storage is not configured
  */
 media.post("/upload-image-direct", async (c) => {
 	// Get internal user ID from verified claims (lookup + JIT provisioning)
@@ -260,8 +265,8 @@ media.post("/upload-image-direct", async (c) => {
 	const base64Data = input.imageData.replace(/^data:[^;]*;base64,/, "");
 	const imageBuffer = Buffer.from(base64Data, "base64");
 
-	// Keep the legacy direct-upload cap (was bounded by Lambda's ~6MB payload
-	// limit; base64 adds ~33%, so ~4.5MB decoded). Larger files use presigning.
+	// Keep direct uploads small: base64 adds ~33% and buffers the full payload
+	// in the isolate. Larger files must use presigning.
 	const maxSize = 4.5 * 1024 * 1024;
 	if (imageBuffer.length > maxSize) {
 		throw Errors.BadRequest(
@@ -297,7 +302,7 @@ media.post("/upload-image-direct", async (c) => {
 			},
 		});
 	} else {
-		// No binding (local Node server): R2 S3 API via aws4fetch.
+		// No binding (direct app/test harness): R2 S3 API via aws4fetch.
 		await putImageObject(key, imageBuffer, input.contentType, {
 			userid: userId,
 			originalfilename: input.filename,
@@ -345,7 +350,7 @@ media.post("/upload-image-direct", async (c) => {
  *     tags:
  *       - Media
  *     security:
- *       - bearerAuth: []
+ *       - BearerAuth: []
  *     parameters:
  *       - in: query
  *         name: prefix
@@ -396,11 +401,16 @@ media.post("/upload-image-direct", async (c) => {
  *                             type: string
  *                     continuationToken:
  *                       type: string
+ *                       nullable: true
  *                       description: Token for retrieving next page
+ *                     count:
+ *                       type: integer
  *                     hasMore:
  *                       type: boolean
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       503:
+ *         description: Media storage is not configured
  */
 media.get("/images", async (c) => {
 	// Get internal user ID from verified claims (lookup + JIT provisioning)

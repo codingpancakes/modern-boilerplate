@@ -36,18 +36,43 @@ src/node/
   lib/               Shared cross-cutting libs (db, errors, audit, sanitize, idempotency, cors).
   lib/hono/          auth (requireAuth), middleware, respond, types (AppEnv).
   lib/validation/    Zod schemas by domain. Export {domain}Schemas, re-export from index.ts.
-  lib/services/      Business logic (organizations, user-account, user-provisioning,
-                     webhook-processor, media-upload). Routes/resolvers stay thin; logic lives here.
+  lib/services/      Shared/mutation business logic (organizations, user-account,
+                     user-provisioning, webhook-processor, media-upload).
   db/schema/         Drizzle schema. db/migrations/ holds SQL + journal (drizzle-kit generated).
 wrangler.toml        Worker config: [vars], R2 bindings, [triggers], env.staging/env.production.
 docs/                Human docs. .cursor/rules/ holds per-domain agent patterns.
 ```
 
-Layering is strict: `routes → lib/services → lib → db`. Routes orchestrate; they don't hold logic.
+Dependency direction is inward: routes/resolvers may orchestrate shared libraries
+and perform small, scoped reads; reusable rules, authorization, and mutation
+workflows live in `lib/services`; persistence uses Drizzle/schema modules. Do not
+put branching business workflows in routes or duplicate service rules there.
 
-There is **no CDK, no Lambda, no API Gateway, no Express dev server** on this branch.
-Local dev is `pnpm dev` (`wrangler dev --local`) running the exact production app —
-one routing layer, zero dev/prod drift.
+Cloudflare Workers is the only runtime. Local dev is `pnpm dev`
+(`wrangler dev --local`) running the exact production app—one routing layer,
+zero dev/prod drift.
+
+---
+
+## Task-specific agent handbook
+
+This file is the repository-wide contract. Before changing code, also read every
+task-specific playbook that applies:
+
+| Change touches | Required playbook |
+| --- | --- |
+| Scoping a new schema, domain, or API from product requirements | [`docs/agents/FEATURE_REQUEST_TEMPLATE.md`](docs/agents/FEATURE_REQUEST_TEMPLATE.md) |
+| Any endpoint, resolver, service, or domain | [`docs/agents/FEATURE_WORKFLOW.md`](docs/agents/FEATURE_WORKFLOW.md) |
+| Copying an implementation shape, including WorkOS auth | [`docs/agents/CANONICAL_CODE_PATTERNS.md`](docs/agents/CANONICAL_CODE_PATTERNS.md) |
+| Auth, roles, organizations, memberships, invitations, or PII | [`docs/agents/AUTHORIZATION_AND_DATA_BOUNDARIES.md`](docs/agents/AUTHORIZATION_AND_DATA_BOUNDARIES.md) |
+| Schema, migrations, transactions, idempotency, or concurrency | [`docs/agents/DATABASE_AND_CONCURRENCY.md`](docs/agents/DATABASE_AND_CONCURRENCY.md) |
+| Tests, review, CI, or completion claims | [`docs/agents/TESTING_AND_VERIFICATION.md`](docs/agents/TESTING_AND_VERIFICATION.md) |
+| Bindings, secrets, queues, cron, health, or deploys | [`docs/agents/OPERATIONS_AND_BINDINGS.md`](docs/agents/OPERATIONS_AND_BINDINGS.md) |
+
+The routing index and instruction precedence are in
+[`docs/agents/README.md`](docs/agents/README.md). When a canonical pattern
+changes, update its playbook in the same patch so agent guidance cannot drift
+from the implementation.
 
 ---
 
@@ -56,16 +81,24 @@ one routing layer, zero dev/prod drift.
 These are enforced across the codebase. Breaking one is a regression, even if it "works":
 
 1. **No try-catch in route handlers.** `app.ts` `onError` catches and formats all errors
-   (Sentry capture + the legacy `{ success:false, error, details }` wire shape).
-2. **Zod-validate every input.** `parseBody(rawBody, schema)` / query parsing for REST;
-   `schema.parse(input)` in resolvers.
-3. **`sanitizeObject()` before every DB write.** No exceptions for "trusted" input.
-4. **`logAudit()` on every mutation.** Call it fire-and-forget (`void logAudit(...)`); never
-   `await` it on the hot path. The app-level `auditFlush()` middleware drains in-flight writes
-   after every request — an un-awaited promise alone is *not* guaranteed to finish once the
-   response is sent.
-5. **Drizzle ORM only.** Never raw SQL in app code (migrations are the only SQL).
-6. **`ACTIVE` filter on all membership queries:** `eq(organizationMembers.status, "ACTIVE")`.
+   (Sentry capture + the standard `{ success:false, error, details }` wire shape).
+2. **Validate every untrusted input at its boundary.** Use bounded Zod schemas for
+   REST body/query/path data and GraphQL arguments. Protocol headers (bearer tokens,
+   webhook signatures, idempotency keys) use their dedicated parsers/verifiers.
+3. **`sanitizeObject()` before persisting user/provider-controlled domain values.**
+   Internal control rows (idempotency state, audit rows, fixed foreign-key-only
+   records) use typed, constructed values and their own validation/redaction helpers.
+4. **Audit every user-visible/domain mutation.** Request-path audit writes use
+   fire-and-forget `void logAudit(...)`; the app-level `auditFlush()` drains them
+   before the request ends. Writes that must commit with a transaction use
+   `writeAuditLog(tx, ...)`; terminal background paths use `logAuditStrict()`.
+5. **Drizzle ORM only.** Never construct or execute raw SQL strings in app code.
+   A parameterized Drizzle `sql` fragment is allowed only when the ORM has no typed
+   primitive (for example an advisory transaction lock or partial-index predicate);
+   keep it local, explain the invariant, and prove it against real Postgres.
+   Migrations remain the normal home for DDL.
+6. **`ACTIVE` filter on every ordinary membership authorization/listing query:**
+   `eq(organizationMembers.status, "ACTIVE")`.
    This is also the **invite-consent boundary**: `inviteMember` verifies the target user
    exists and creates a `PENDING` membership (not `ACTIVE`), so the invitee stays invisible
    to member/user listings until they call `acceptInvitation` (→ `ACTIVE`) or
@@ -106,12 +139,13 @@ These are enforced across the codebase. Breaking one is a regression, even if it
 
 Before you consider a change complete, verify all of these:
 
-- [ ] Input validated with a Zod schema (bounded arrays/strings; `jsonObject` for arbitrary JSON).
-- [ ] `sanitizeObject()` applied before any DB write.
+- [ ] Untrusted body/query/path input validated with a bounded Zod schema
+      (`jsonObject` for arbitrary JSON); protocol headers use their canonical verifier.
+- [ ] User/provider-controlled domain values sanitized before persistence.
 - [ ] Auth enforced (`requireAuth()` on the domain) and **org-scoped** where data is org-owned.
 - [ ] Null-guard every DB result before use (`if (!row) throw ...`).
-- [ ] `logAudit()` on mutations, with request context (`c.get("requestId")`, `cf-connecting-ip`,
-      `user-agent` — copy a sibling route's audit call).
+- [ ] Domain mutation audited with the correct durability helper and request
+      context (`c.get("requestId")`, `cf-connecting-ip`, `user-agent`).
 - [ ] Multi-step writes wrapped in a transaction.
 - [ ] Errors thrown via the factory; no internal details leak (5xx masked in deployed envs).
 - [ ] **Recursive utilities are depth-bounded** (mirror `redactSensitive`'s depth guard).
@@ -185,18 +219,16 @@ If a checkbox doesn't apply, that should be obvious — not assumed.
   script via `wrangler triggers deploy`.)
 - **Secrets:** `pnpm sync-secrets <stage>` pushes every name in `.dev.vars.example` from
   `.env.<stage>`. Never commit `.env*` / `.dev.vars` (gitignored).
-- **Edge security:** Cloudflare WAF/DDoS is account-level platform config, not code. The
-  Lambda-era `ORIGIN_VERIFY_SECRET` / `ENABLE_WAF` toggles are gone by construction — do not
-  re-add them.
+- **Edge security:** Cloudflare WAF/DDoS is account-level platform config, not code.
 
 ---
 
 ## Reference
 
+- Agent handbook: `docs/agents/README.md`.
 - Setup from zero: `docs/CLOUDFLARE_SETUP.md`.
 - Deep docs: `docs/` (`AUDIT_LOGGING_GUIDE`, `SECURITY`, `DATA_RETENTION_POLICY`,
   `SOC2_READINESS_CHECKLIST`, `ENVIRONMENT_VARIABLES`, `guides/TESTING`).
-- Direction: `docs/direction/` (`NORTH_STAR`, `MIGRATION_PLAN`).
-- Pre-migration AWS docs: `docs/legacy-aws/` (reference only — do not follow them).
-- Per-domain patterns: `.cursor/rules/` — Cloudflare-native since the migration;
-  where they conflict with this file, this file wins.
+- Architecture direction: `docs/direction/NORTH_STAR.md`.
+- Cursor routing: `.cursor/rules/project.mdc` points back to this contract and
+  the task-specific handbook; it contains no duplicate implementation rules.

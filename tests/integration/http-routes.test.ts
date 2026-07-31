@@ -16,7 +16,7 @@ import {
  * Request-level integration tests for the Hono HTTP routes.
  *
  * Drives the REAL exported `app` via `app.fetch(new Request(...), env, ctx)` —
- * the same entrypoint the Worker/Node server uses — so middleware order, the
+ * the same app entrypoint the Worker uses — so middleware order, the
  * onError/notFound wire shape, CORS + security headers, per-domain auth, Zod
  * validation, and the route handlers are all exercised together. The
  * lib/resolver layer is unit-tested elsewhere; this file covers the wire.
@@ -169,6 +169,8 @@ afterEach(() => {
 		iss: "https://api.workos.com/",
 		email: "ada@example.com",
 	});
+	process.env.STAGE = "local";
+	delete process.env.WORKOS_CLIENT_ID;
 	for (const key of ["IMAGES_BUCKET", "IMAGES_CDN_URL"]) {
 		delete process.env[key];
 	}
@@ -242,6 +244,23 @@ describe("HTTP routes — public / unauthenticated", () => {
 		expect(body.success).toBe(true);
 		expect(body.data.status).toBe("degraded");
 		expect(body.data).not.toHaveProperty("checks");
+	});
+
+	it("GET /v1/health/detailed is unhealthy when deployed WorkOS config is incomplete", async () => {
+		process.env.STAGE = "staging";
+		delete process.env.WORKOS_CLIENT_ID;
+
+		const res = await fetchApp("/v1/health/detailed", undefined, {
+			RATE_LIMITER: {
+				limit: vi.fn().mockResolvedValue({ success: true }),
+			},
+			WEBHOOK_QUEUE: {},
+		} as unknown as Parameters<typeof app.fetch>[1]);
+
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.success).toBe(true);
+		expect(body.data.status).toBe("unhealthy");
 	});
 
 	it("unknown path → 404 with the formatError wire shape", async () => {
@@ -335,6 +354,42 @@ describe("HTTP routes — public / unauthenticated", () => {
 		expect(body.success).toBe(false);
 		expect(body.details.code).toBe("BAD_REQUEST");
 		expect(body.error).toBe("Malformed JSON payload");
+	});
+
+	it("POST /v1/webhooks/workos fails closed without a deployed queue binding", async () => {
+		process.env.STAGE = "staging";
+		const payload = JSON.stringify({
+			id: "evt_missing_queue",
+			event: "user.created",
+			data: {
+				id: "user_missing_queue",
+				email: "queue@example.com",
+				first_name: "Queue",
+				last_name: "Test",
+			},
+			created_at: "2026-07-24T00:00:00Z",
+		});
+
+		const res = await fetchApp(
+			"/v1/webhooks/workos",
+			{
+				method: "POST",
+				headers: {
+					"content-type": "application/json",
+					"workos-signature": workosSignatureFor(payload),
+				},
+				body: payload,
+			},
+			{
+				RATE_LIMITER: {
+					limit: vi.fn().mockResolvedValue({ success: true }),
+				},
+			} as unknown as Parameters<typeof app.fetch>[1],
+		);
+
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.details.code).toBe("WEBHOOK_QUEUE_UNAVAILABLE");
 	});
 });
 

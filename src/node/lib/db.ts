@@ -44,8 +44,8 @@ const STATEMENT_TIMEOUT_MS = 8000;
  * Cloudflare Workers FORBIDS reusing I/O objects (sockets, in-flight fetches)
  * across requests: a module-level cached Pool created during request A throws
  * "Cannot perform I/O on behalf of a different request" when request B uses
- * it. So instead of the old warm-Lambda singleton, every request gets its own
- * pool, carried in AsyncLocalStorage so `getDb()` call sites stay unchanged:
+ * it. Every request therefore gets its own pool, carried in AsyncLocalStorage
+ * so `getDb()` call sites stay simple:
  *
  *   - The `dbScope()` Hono middleware (lib/hono/middleware.ts) wraps each
  *     request in {@link runWithDbScope}; every `getDb()` within the request —
