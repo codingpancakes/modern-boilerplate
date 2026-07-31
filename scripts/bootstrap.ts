@@ -59,7 +59,10 @@ function defaultRoot(): string {
  * init-project, so filtering by suffix reliably excludes the local + other-env
  * resources. Pure — no I/O.
  */
-export function parseStageResources(toml: string, stage: Stage): StageResources {
+export function parseStageResources(
+	toml: string,
+	stage: Stage,
+): StageResources {
 	const suffix = `-${stage}`;
 	const queues = new Set<string>();
 	let bucket: string | undefined;
@@ -67,11 +70,17 @@ export function parseStageResources(toml: string, stage: Stage): StageResources 
 	for (const raw of toml.split("\n")) {
 		const line = raw.trim();
 		const queueMatch = line.match(/^queue\s*=\s*"([^"]+)"/);
-		if (queueMatch?.[1]?.endsWith(suffix) && queueMatch[1].includes("webhooks")) {
+		if (
+			queueMatch?.[1]?.endsWith(suffix) &&
+			queueMatch[1].includes("webhooks")
+		) {
 			queues.add(queueMatch[1]);
 		}
 		const bucketMatch = line.match(/^bucket_name\s*=\s*"([^"]+)"/);
-		if (bucketMatch?.[1]?.endsWith(suffix) && bucketMatch[1].includes("images")) {
+		if (
+			bucketMatch?.[1]?.endsWith(suffix) &&
+			bucketMatch[1].includes("images")
+		) {
 			bucket = bucketMatch[1];
 		}
 	}
@@ -170,13 +179,20 @@ function provisionNeon(
 	writeEnvVar(path.join(root, `.env.${stage}`), "DATABASE_URL", url, logger);
 }
 
+function readOptionalFile(file: string): string | undefined {
+	try {
+		return fs.readFileSync(file, "utf-8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
 /** Read a KEY's value from a .env file, or undefined if absent. */
 function readEnvVar(file: string, key: string): string | undefined {
-	if (!fs.existsSync(file)) return undefined;
-	const line = fs
-		.readFileSync(file, "utf-8")
-		.split("\n")
-		.find((l) => l.startsWith(`${key}=`));
+	const contents = readOptionalFile(file);
+	if (contents === undefined) return undefined;
+	const line = contents.split("\n").find((l) => l.startsWith(`${key}=`));
 	return line?.slice(key.length + 1).replace(/^["']|["']$/g, "") || undefined;
 }
 
@@ -187,11 +203,11 @@ function writeEnvVar(
 	value: string,
 	logger: Logger,
 ): void {
-	if (!fs.existsSync(file)) {
+	const contents = readOptionalFile(file);
+	if (contents === undefined) {
 		logger.log(`  ⚠️  ${path.basename(file)} not found — set ${key} manually`);
 		return;
 	}
-	const contents = fs.readFileSync(file, "utf-8");
 	const re = new RegExp(`^${key}=.*$`, "m");
 	const next = re.test(contents)
 		? contents.replace(re, `${key}=${value}`)
@@ -228,7 +244,9 @@ export function bootstrap(options: BootstrapOptions): void {
 	);
 	for (const command of plan) {
 		if (dryRun) {
-			logger.log(`→ ${command.label}  (${command.cmd} ${command.args.join(" ")})`);
+			logger.log(
+				`→ ${command.label}  (${command.cmd} ${command.args.join(" ")})`,
+			);
 		} else {
 			runCommand(command, logger);
 		}
@@ -245,7 +263,10 @@ export function bootstrap(options: BootstrapOptions): void {
 		// migrate the STAGE database, not local. `pnpm migrate` reads .dev.vars by
 		// default; force the stage's DATABASE_URL (from .env.<stage>, which --neon
 		// may have just written) so we never migrate the wrong DB.
-		const stageDbUrl = readEnvVar(path.join(root, `.env.${stage}`), "DATABASE_URL");
+		const stageDbUrl = readEnvVar(
+			path.join(root, `.env.${stage}`),
+			"DATABASE_URL",
+		);
 		if (stageDbUrl) {
 			execFileSync("pnpm", ["migrate"], {
 				stdio: "inherit",

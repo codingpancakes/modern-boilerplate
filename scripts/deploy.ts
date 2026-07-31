@@ -16,7 +16,7 @@
  * Wired:  pnpm deploy:staging | pnpm deploy:production
  *
  * Env overrides:
- *   HEALTH_URL        full health-check URL (default: derived per stage below)
+ *   HEALTH_URL        public HTTPS origin override (default: derived per stage)
  *   SMOKE_CORS_ORIGIN allowed origin to verify CORS preflight (optional)
  *   SMOKE_CORS_ORIGIN_STAGING / _PRODUCTION stage-specific CORS smoke origins
  *   CHECK_PENDING_MIGRATIONS run a blocking DB migration drift preflight
@@ -27,13 +27,19 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync as readFile } from "node:fs";
+import {
+	customDomainForStage,
+	type DeployStage,
+	normalizePublicHttpsBase,
+} from "./lib/deploy-url";
 import { parseActiveVersionId } from "./lib/deploy-version";
 
-const stage = process.argv[2];
-if (stage !== "staging" && stage !== "production") {
+const stageArgument = process.argv[2];
+if (stageArgument !== "staging" && stageArgument !== "production") {
 	console.error("Usage: tsx scripts/deploy.ts <staging|production>");
 	process.exit(1);
 }
+const stage: DeployStage = stageArgument;
 
 /**
  * Health-check base URL, project-agnostic so the boilerplate needs no edits:
@@ -44,21 +50,16 @@ if (stage !== "staging" && stage !== "production") {
  *      → https://<name>-<stage>.<WORKERS_SUBDOMAIN>.workers.dev
  * Fails fast if none is available.
  */
-function customDomainForStage(toml: string): string | undefined {
-	// Match the pattern inside this stage's routes block (set-domain writes a
-	// [[env.<stage>.routes]] block with `pattern = "<host>"`).
-	const re = new RegExp(
-		`\\[\\[env\\.${stage}\\.routes\\]\\]\\s*\\n\\s*pattern\\s*=\\s*"([^"]+)"`,
-	);
-	return toml.match(re)?.[1];
-}
-
 function resolveHealthBase(): string {
-	if (process.env.HEALTH_URL) return process.env.HEALTH_URL;
+	if (process.env.HEALTH_URL) {
+		return normalizePublicHttpsBase(process.env.HEALTH_URL);
+	}
 
 	const toml = readFile("wrangler.toml", "utf-8");
-	const customDomain = customDomainForStage(toml);
-	if (customDomain) return `https://${customDomain}`;
+	const customDomain = customDomainForStage(toml, stage);
+	if (customDomain) {
+		return normalizePublicHttpsBase(`https://${customDomain}`);
+	}
 
 	const subdomain = process.env.WORKERS_SUBDOMAIN;
 	if (!subdomain) {
@@ -72,10 +73,12 @@ function resolveHealthBase(): string {
 		console.error("Could not read Worker `name` from wrangler.toml.");
 		process.exit(1);
 	}
-	return `https://${name}-${stage}.${subdomain}.workers.dev`;
+	return normalizePublicHttpsBase(
+		`https://${name}-${stage}.${subdomain}.workers.dev`,
+	);
 }
 
-const deployBaseUrl = resolveHealthBase().replace(/\/$/, "");
+const deployBaseUrl = resolveHealthBase();
 const healthUrl = `${deployBaseUrl}/v1/health/detailed`;
 const canaryPercent = Number(process.env.CANARY_PERCENT || 10);
 const soakSeconds = Number(process.env.SOAK_SECONDS || 20);

@@ -11,6 +11,16 @@ describe("sanitizeObject", () => {
 		expect(out.bio).toBe("likes  pictures");
 	});
 
+	it("handles malformed spacing and nested tag prefixes without leaving executable markup", () => {
+		const out = sanitizeString(
+			"safe <<script src='x'>alert(1)</script\t\n ignored> text <style>bad</style>",
+		);
+		expect(out).not.toContain("alert(1)");
+		expect(out).not.toContain("bad");
+		expect(out).not.toContain("script");
+		expect(out).not.toContain("style");
+	});
+
 	it("stores benign text EXACTLY as written — escaping is a render-time concern", () => {
 		const input = {
 			name: "O'Brien",
@@ -90,6 +100,14 @@ describe("sanitizeString (allowHtml)", () => {
 		expect(out).toContain("<em>em</em>");
 		expect(out).not.toContain("onclick");
 		expect(out).not.toContain("<script>");
+	});
+
+	it("drops every attribute from allowed formatting tags", () => {
+		const out = sanitizeString(
+			'<a href="javascript:alert(1)" style="color:red">link</a>',
+			{ allowHtml: true },
+		);
+		expect(out).toBe("<a>link</a>");
 	});
 });
 

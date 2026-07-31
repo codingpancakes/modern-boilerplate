@@ -72,27 +72,124 @@ export function sanitizeString(
  * closing `>` ("a < b", "I <3 you") survive untouched.
  */
 function stripAllTags(input: string): string {
-	return input
-		.replace(/<script[\s>][\s\S]*?<\/script\s*>/gi, "")
-		.replace(/<style[\s>][\s\S]*?<\/style\s*>/gi, "")
-		.replace(/<\/?[a-zA-Z][a-zA-Z0-9]*\b[^>]*>/g, "");
+	return filterMarkup(input, false);
 }
 
-const SAFE_TAG_RE =
-	/^\/?(b|i|em|strong|p|br|ul|ol|li|a|span|blockquote|code|pre|h[1-6])$/i;
+const SAFE_TAGS = new Set([
+	"a",
+	"b",
+	"blockquote",
+	"br",
+	"code",
+	"em",
+	"h1",
+	"h2",
+	"h3",
+	"h4",
+	"h5",
+	"h6",
+	"i",
+	"li",
+	"ol",
+	"p",
+	"pre",
+	"span",
+	"strong",
+	"ul",
+]);
+
+interface MarkupToken {
+	closing: boolean;
+	end: number;
+	name: string;
+}
+
+/** Parse one tag without using regex-based HTML filtering. */
+function markupTokenAt(input: string, start: number): MarkupToken | undefined {
+	if (input[start] !== "<") return undefined;
+	let cursor = start + 1;
+	while (cursor < input.length && /\s/.test(input[cursor] ?? "")) cursor++;
+	const closing = input[cursor] === "/";
+	if (closing) {
+		cursor++;
+		while (cursor < input.length && /\s/.test(input[cursor] ?? "")) cursor++;
+	}
+	const nameStart = cursor;
+	while (cursor < input.length && /[a-zA-Z0-9]/.test(input[cursor] ?? "")) {
+		cursor++;
+	}
+	if (cursor === nameStart || !/[a-zA-Z]/.test(input[nameStart] ?? "")) {
+		return undefined;
+	}
+	const name = input.slice(nameStart, cursor).toLowerCase();
+
+	let quote: '"' | "'" | undefined;
+	for (; cursor < input.length; cursor++) {
+		const char = input[cursor];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === ">") {
+			return {
+				closing,
+				end: cursor + 1,
+				name,
+			};
+		}
+	}
+	return undefined;
+}
+
+/**
+ * Tokenize markup, discard script/style blocks, and optionally reconstruct a
+ * formatting-only whitelist with every attribute removed.
+ */
+function filterMarkup(input: string, allowSafeTags: boolean): string {
+	let output = "";
+	let suppressed: "script" | "style" | undefined;
+	let cursor = 0;
+
+	while (cursor < input.length) {
+		if (input[cursor] !== "<") {
+			if (!suppressed) output += input[cursor];
+			cursor++;
+			continue;
+		}
+
+		const token = markupTokenAt(input, cursor);
+		if (!token) {
+			if (!suppressed) output += "<";
+			cursor++;
+			continue;
+		}
+		cursor = token.end;
+
+		if (token.name === "script" || token.name === "style") {
+			if (token.closing && suppressed === token.name) suppressed = undefined;
+			else if (!token.closing && !suppressed) suppressed = token.name;
+			continue;
+		}
+		if (suppressed) continue;
+		if (allowSafeTags && SAFE_TAGS.has(token.name)) {
+			output += `<${token.closing ? "/" : ""}${token.name}>`;
+		}
+	}
+
+	return output;
+}
 
 /**
  * Strip all HTML tags except a safe formatting whitelist.
- * Also strips event-handler attributes (on*) from surviving tags.
+ * Reconstruct surviving tags without attributes, so event handlers, styles,
+ * and dangerous URL schemes cannot cross the persistence boundary.
  */
 function stripUnsafeTags(input: string): string {
-	return input
-		.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (match, tag: string) => {
-			if (!SAFE_TAG_RE.test(tag)) return "";
-			return match.replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/gi, "");
-		})
-		.replace(/<script[\s>][\s\S]*?<\/script>/gi, "")
-		.replace(/<style[\s>][\s\S]*?<\/style>/gi, "");
+	return filterMarkup(input, true);
 }
 
 /**
